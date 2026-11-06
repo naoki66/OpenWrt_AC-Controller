@@ -272,10 +272,17 @@
   }
   .mx-cell.off { color: #4b535e; border-style: dashed; border-color: #303743; background: transparent; }
   .mx-cell.t { color: #d4d8de; background: #2a313b; border-color: #3a424e; }
+  /* U 与 U● 必须一眼能分：蓝 = 只有 untagged 成员；绿 = 同时是该端口的 PVID，
+     再加金色角标与底部金线，避免只靠一个极小的点来区分。 */
   .mx-cell.u { color: #cfe2ff; background: #1c3a63; border-color: #2b578f; }
-  .mx-cell.ustar { color: #cfe2ff; background: #1c3a63; border-color: #2b578f; }
+  .mx-cell.ustar {
+    color: #d9ffe6; background: #14502c; border-color: #2f855a;
+    border-bottom: 2px solid #f0b429;
+    box-shadow: inset 0 0 0 1px #1f6b3a;
+  }
   .mx-cell .mx-pvid {
-    position: absolute; right: 4px; top: 1px; font-size: 9px; color: #ffd166;
+    position: absolute; right: 4px; top: 0; font-size: 12px; line-height: 1;
+    color: #ffd166; text-shadow: 0 0 3px rgba(0, 0, 0, .65);
   }
   .mx-cell.changed { border-left: 3px solid var(--accent); }
   .mx-cell.changed::after {
