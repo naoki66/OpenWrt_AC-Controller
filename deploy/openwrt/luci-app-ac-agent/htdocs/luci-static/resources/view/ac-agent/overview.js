@@ -79,6 +79,21 @@ function steeringLabel(daemon) {
 	return daemon === 'none' ? _('agent') : daemon;
 }
 
+/* The controller serves its web UI on the same host:port the agent talks to.
+ * A bare "10.10.30.5:8090" from the config gets an http scheme; anything that
+ * already carries one is left alone. */
+function controllerURL(addr) {
+	if (!addr)
+		return null;
+
+	var url = String(addr).trim();
+	if (!url)
+		return null;
+	if (!/^(https?:\/\/)/i.test(url))
+		url = 'http://' + url;
+	return url.replace(/\/+$/, '') + '/';
+}
+
 function fmtTime(iso) {
 	if (!iso)
 		return '-';
@@ -345,10 +360,23 @@ return view.extend({
 		]));
 
 		if (status) {
-			this.card.appendChild(valueRow(_('Controller'),
-				status.ac_addr
-					? [ status.ac_addr, ' ', E('em', {}, '(' + sourceLabel(status.ac_addr_source) + ')') ]
-					: '-'));
+			var controller = status.ac_addr
+				? [ status.ac_addr, ' ', E('em', {}, '(' + sourceLabel(status.ac_addr_source) + ')') ]
+				: [ '-' ];
+
+			/* One click from "is the AP managed" to "manage it". The link opens in a
+			 * new tab so the AP's own page and its poll loop stay put. */
+			var url = controllerURL(status.ac_addr);
+			if (url)
+				controller.push(' ', E('a', {
+					class: 'btn cbi-button cbi-button-action',
+					href: url,
+					target: '_blank',
+					rel: 'noopener noreferrer',
+					title: _('Open the controller web interface in a new tab')
+				}, _('Open controller')));
+
+			this.card.appendChild(valueRow(_('Controller'), controller));
 
 			this.card.appendChild(valueRow(_('Controller ID'), status.ac_id || '-'));
 			this.card.appendChild(valueRow(_('Configuration'), fmtRev(status)));

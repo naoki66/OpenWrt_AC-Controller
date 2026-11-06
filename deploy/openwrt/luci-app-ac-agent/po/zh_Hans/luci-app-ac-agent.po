@@ -70,6 +70,12 @@ msgstr "状态"
 msgid "Controller"
 msgstr "控制器"
 
+msgid "Open controller"
+msgstr "打开控制器"
+
+msgid "Open the controller web interface in a new tab"
+msgstr "在新窗口打开控制器 Web 界面"
+
 msgid "configured address"
 msgstr "手动配置的地址"
 

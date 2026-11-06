@@ -71,6 +71,12 @@ msgstr ""
 msgid "Controller"
 msgstr ""
 
+msgid "Open controller"
+msgstr ""
+
+msgid "Open the controller web interface in a new tab"
+msgstr ""
+
 msgid "configured address"
 msgstr ""
 
