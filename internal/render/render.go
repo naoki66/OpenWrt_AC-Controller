@@ -236,6 +236,9 @@ func Network(t model.Template, opts Options) ([]byte, error) {
 	var b strings.Builder
 	br := t.Bridge
 
+	vlans := append([]model.BridgeVLAN(nil), br.VLANs...)
+	sort.SliceStable(vlans, func(i, j int) bool { return vlans[i].VLAN < vlans[j].VLAN })
+
 	if br.Name != "" && len(br.Ports) > 0 {
 		name := ""
 		if opts.Prefix != "" {
@@ -247,13 +250,20 @@ func Network(t model.Template, opts Options) ([]byte, error) {
 		for _, p := range br.Ports {
 			list(&b, "ports", p)
 		}
+		// bridge-vlan sections are inert unless the bridge itself filters
+		// VLANs. The editor sets this field when VLANs are enabled, so the
+		// package turns on br-lan's VLAN filtering instead of leaving the
+		// operator to set it by hand on every AP. Nil keeps the option out of
+		// the file (and out of the pinned baseline); a template that declares
+		// no VLANs never emits it, because filtering a bridge with no VLANs
+		// would cut every port.
+		if br.VLANFiltering != nil && len(vlans) > 0 {
+			option(&b, "vlan_filtering", boolstr(*br.VLANFiltering))
+		}
 		if br.IGMPSnooping != nil {
 			option(&b, "igmp_snooping", boolstr(*br.IGMPSnooping))
 		}
 	}
-
-	vlans := append([]model.BridgeVLAN(nil), br.VLANs...)
-	sort.SliceStable(vlans, func(i, j int) bool { return vlans[i].VLAN < vlans[j].VLAN })
 
 	for _, v := range vlans {
 		// The deployed baseline writes these sections anonymously. A named

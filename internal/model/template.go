@@ -296,6 +296,11 @@ type Bridge struct {
 	Ports        []string     `json:"ports,omitempty"`
 	IGMPSnooping *bool        `json:"igmp_snooping,omitempty"`
 	VLANs        []BridgeVLAN `json:"vlans"`
+	// VLANFiltering turns on `option vlan_filtering` for the bridge. Nil means
+	// the option is not rendered at all, which keeps packages generated before
+	// this field existed byte-identical and lets an AP keep its own setting.
+	// The template editor sets it together with a non-empty VLAN list.
+	VLANFiltering *bool `json:"vlan_filtering,omitempty"`
 	// Interfaces are the netifd interfaces created on top of each bridge VLAN.
 	Interfaces []Interface `json:"interfaces"`
 }
@@ -305,6 +310,11 @@ type Bridge struct {
 type BridgeVLAN struct {
 	VLAN  int      `json:"vlan"`
 	Ports []string `json:"ports"`
+	// Name and Note are operator-facing metadata for the VLAN matrix. UCI has
+	// no place for them, so they are stored in the template JSON and never
+	// rendered.
+	Name string `json:"name,omitempty"`
+	Note string `json:"note,omitempty"`
 }
 
 // ManagesNetwork reports whether this template renders anything into the
@@ -676,6 +686,10 @@ type DeviceNetwork struct {
 	IPAddr map[string][]string `json:"ipaddr,omitempty"`
 	// IGMPSnooping overrides Bridge.IGMPSnooping.
 	IGMPSnooping *bool `json:"igmp_snooping,omitempty"`
+	// VLANFiltering overrides Bridge.VLANFiltering. The editor sets it to true
+	// when this unit's VLAN override is enabled, so the generated bridge filters
+	// the VLANs it declares.
+	VLANFiltering *bool `json:"vlan_filtering,omitempty"`
 }
 
 // IsZero reports whether the override changes anything. A zero override means
@@ -683,7 +697,7 @@ type DeviceNetwork struct {
 // wireless-only template.
 func (d DeviceNetwork) IsZero() bool {
 	return len(d.BridgePorts) == 0 && len(d.VLANs) == 0 &&
-		len(d.IPAddr) == 0 && d.IGMPSnooping == nil
+		len(d.IPAddr) == 0 && d.IGMPSnooping == nil && d.VLANFiltering == nil
 }
 
 // WithDeviceNetwork returns a copy of the template with the per-unit values
@@ -780,6 +794,10 @@ func (t Template) WithDeviceNetwork(ov DeviceNetwork) Template {
 	if ov.IGMPSnooping != nil {
 		v := *ov.IGMPSnooping
 		out.Bridge.IGMPSnooping = &v
+	}
+	if ov.VLANFiltering != nil {
+		v := *ov.VLANFiltering
+		out.Bridge.VLANFiltering = &v
 	}
 	if len(ov.VLANs) > 0 {
 		out.Bridge.VLANs = append([]BridgeVLAN(nil), ov.VLANs...)

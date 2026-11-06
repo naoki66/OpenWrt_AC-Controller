@@ -231,6 +231,72 @@
     font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
     max-height: 340px; overflow: auto;
   }
+  /* 端口 × VLAN 矩阵：结构化表格 + 视觉编码，不再用一列自由文本 */
+  .vlan-matrix { margin-top: 10px; }
+  .vlan-summary { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .vlan-summary span {
+    border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px;
+    font-size: 12px; color: var(--muted); background: #12161b;
+  }
+  .vlan-summary b { color: var(--text); font-weight: 500; }
+  .vlan-legend { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .vlan-legend .key { display: inline-flex; align-items: center; gap: 5px; }
+  .vlan-legend .sw { width: 22px; height: 18px; display: inline-grid; place-items: center; border-radius: 4px; font-size: 11px; }
+  .vlan-filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .vlan-filters label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  .vlan-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  .vlan-grid { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; background: var(--panel); }
+  .vlan-grid th, .vlan-grid td {
+    padding: 0; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+    text-align: center; font-size: 12px;
+  }
+  .vlan-grid thead th {
+    position: sticky; top: 0; z-index: 3; background: #1a1f26;
+    padding: 6px 8px; color: var(--muted); font-weight: 400; min-width: 74px;
+  }
+  .vlan-grid .mx-port-col {
+    position: sticky; left: 0; z-index: 4; background: #1a1f26;
+    text-align: left; padding: 6px 10px; min-width: 116px; max-width: 160px;
+  }
+  .vlan-grid tbody .mx-port-col { background: #161a20; z-index: 2; }
+  .vlan-grid .mx-sum-col { min-width: 150px; text-align: left; padding: 6px 10px; color: var(--muted); }
+  .vlan-grid .mx-vlan { color: var(--text); font-size: 12.5px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vlan-grid .mx-count { color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .vlan-grid th.mx-hot, .vlan-grid td.mx-hot { background: #1d2838; }
+  .vlan-grid tr.mx-hot-row .mx-port-col { background: #1d2838; }
+  .vlan-grid tr.mx-hot-row td.mx-sum-col { background: #17202c; }
+  .mx-cell {
+    display: inline-grid; place-items: center; width: 56px; height: 40px;
+    margin: 3px; border-radius: 5px; cursor: pointer; position: relative;
+    user-select: none; border: 1px solid transparent;
+  }
+  .mx-cell.off { color: #4b535e; border-style: dashed; border-color: #303743; background: transparent; }
+  .mx-cell.t { color: #d4d8de; background: #2a313b; border-color: #3a424e; }
+  .mx-cell.u { color: #cfe2ff; background: #1c3a63; border-color: #2b578f; }
+  .mx-cell.ustar { color: #cfe2ff; background: #1c3a63; border-color: #2b578f; }
+  .mx-cell .mx-pvid {
+    position: absolute; right: 4px; top: 1px; font-size: 9px; color: #ffd166;
+  }
+  .mx-cell.changed { border-left: 3px solid var(--accent); }
+  .mx-cell.changed::after {
+    content: ""; position: absolute; right: 3px; bottom: 3px; width: 5px; height: 5px;
+    border-radius: 50%; background: var(--accent);
+  }
+  .mx-compact .mx-cell { width: 40px; height: 24px; font-size: 11px; }
+  .mx-compact .vlan-grid thead th, .mx-compact .vlan-grid .mx-port-col,
+  .mx-compact .vlan-grid .mx-sum-col { padding: 4px 6px; }
+  .mx-del {
+    border: 0; background: transparent; color: var(--muted); padding: 0 2px;
+    margin-left: 4px; font-size: 12px; cursor: pointer;
+  }
+  .mx-del:hover { color: #f2a0a0; background: transparent; }
+  .mx-fold { color: var(--muted); font-size: 12px; margin: 6px 0 8px; }
+  .mx-fold button { margin-left: 6px; }
+  .vlan-map { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; }
+  .vlan-map .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; }
+  .mx-warn { color: var(--warn); }
+  .vlan-add { display: flex; align-items: flex-end; gap: 8px; margin-top: 10px; }
+  .vlan-add label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -519,6 +585,20 @@
         </h2>
         <p class="note">模板描述整机共享的二层布局；每台机器的差异放在下面的设备覆盖里</p>
         <div id="port-template-body"><div class="empty">选择模板…</div></div>
+
+        <div class="form" style="margin-top:10px">
+          <label>启用 VLAN（同时开启 br-lan 的 VLAN 过滤）
+            <input type="checkbox" id="port-template-vlan-enabled" />
+          </label>
+          <button id="port-template-vlan-save" class="primary">保存模板 VLAN</button>
+        </div>
+        <div id="port-template-vlan-editor" hidden>
+          <div id="port-template-matrix" class="vlan-matrix"></div>
+          <div class="vlan-add">
+            <button id="port-template-add-vlan" class="primary">新增 VLAN</button>
+          </div>
+        </div>
+        <div class="msg" id="port-template-vlan-msg"></div>
       </div>
 
       <div class="panel">
@@ -545,11 +625,19 @@
           </label>
         </div>
 
-        <table>
-          <thead><tr><th>VLAN</th><th>端口（wan:t / lan2:u*）</th><th></th></tr></thead>
-          <tbody id="port-vlan-rows"></tbody>
-        </table>
-        <button id="port-add-vlan" style="margin-top:10px">添加 VLAN</button>
+        <div class="form" style="margin-bottom:10px">
+          <label>启用本机 VLAN 覆盖
+            <input type="checkbox" id="port-vlan-enabled" />
+          </label>
+        </div>
+
+        <div id="port-vlan-editor" hidden>
+          <table>
+            <thead><tr><th>VLAN</th><th>端口（wan:t / lan2:u*）</th><th></th></tr></thead>
+            <tbody id="port-vlan-rows"></tbody>
+          </table>
+          <button id="port-add-vlan" style="margin-top:10px">添加 VLAN</button>
+        </div>
         <div class="msg" id="port-msg"></div>
       </div>
     </section>
@@ -2855,6 +2943,11 @@ function renderPortTemplate() {
   const tpl = templates.find(t => t.id === portTemplateId);
   if (!tpl) {
     host.innerHTML = '<div class="empty">选择模板…</div>';
+    $('port-template-vlan-enabled').checked = false;
+    $('port-template-vlan-editor').hidden = true;
+    $('port-template-matrix').innerHTML = '<div class="empty">选择模板…</div>';
+    tplMatrix = null;
+    sayTemplateVLAN('');
     return;
   }
   const br = tpl.bridge || {};
@@ -2865,18 +2958,25 @@ function renderPortTemplate() {
 
   const vlans = br.vlans || [];
   if (vlans.length) {
-    html += '<table><thead><tr><th>VLAN</th><th>端口</th></tr></thead><tbody>' +
-      vlans.map(v => '<tr><td class="mono">' + esc(v.vlan) + '</td><td class="mono">' +
-        (esc((v.ports || []).join(', ')) || '—') + '</td></tr>').join('') + '</tbody></table>';
+    html += '<div class="hint">VLAN：' + vlans.length + ' 个（在下方“启用 VLAN”里编辑）</div>';
   }
   if ((br.interfaces || []).length) {
     html += '<div class="hint">接口：' + br.interfaces
       .map(i => '<code>' + esc(i.name) + '</code> → ' + esc(i.device)).join('，') + '</div>';
   }
   host.innerHTML = html;
+  renderTemplateVLANEditor(tpl);
 }
 
-function addVLANRow(vlan, ports) {
+function sayTemplateVLAN(text, kind) {
+  const m = $('port-template-vlan-msg');
+  m.textContent = text || '';
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+// The template editor and the per-device override share the same row shape.
+// tbody is explicit because the two tables must never write into each other.
+function addVLANRow(tbodyId, vlan, ports) {
   const tr = document.createElement('tr');
 
   const v = document.createElement('td');
@@ -2905,7 +3005,384 @@ function addVLANRow(vlan, ports) {
   del.appendChild(db);
   tr.appendChild(del);
 
-  $('port-vlan-rows').appendChild(tr);
+  $(tbodyId).appendChild(tr);
+}
+
+// --- 模板 VLAN 矩阵 --------------------------------------------------------
+// 主视图是“端口 × VLAN”矩阵：列是 VLAN，行是端口，单元格用 U/T/U● 表达，
+// 不再让操作员手写 "lan2:u* / wan:t" 这种串。底层仍然序列化成同一份 UCI
+// 端口语法，所以后端和 agent 完全不需要知道界面长什么样。
+
+let tplMatrix = null;
+let tplMatrixBridge = null;
+
+function parsePortSpec(spec) {
+  const s = String(spec || '').trim();
+  if (!s) return null;
+  const i = s.indexOf(':');
+  if (i < 0) return { port: s, mode: 'u' };
+  const port = s.slice(0, i);
+  const suffix = s.slice(i + 1);
+  let mode = 'u';
+  if (suffix === 't') mode = 't';
+  else if (suffix === 'u*') mode = 'u*';
+  else if (suffix === 'u' || suffix === '') mode = 'u';
+  return { port: port, mode: mode };
+}
+
+function buildMatrix(vlans, ports) {
+  const m = {
+    ports: [], vlans: [], cells: {}, meta: {},
+    hideUnused: false, compact: false, showTrunkOnly: false, riskAccepted: false,
+    original: null,
+  };
+  const addPort = (p) => {
+    if (p && m.ports.indexOf(p) < 0) m.ports.push(p);
+  };
+  (ports || []).forEach(addPort);
+
+  for (const v of vlans || []) {
+    const id = Number(v && v.vlan);
+    if (!id || id < 1 || id > 4094 || m.cells[id]) continue;
+    m.vlans.push(id);
+    m.cells[id] = {};
+    m.meta[id] = { name: v.name || '', note: v.note || '' };
+    for (const spec of (v.ports || [])) {
+      const p = parsePortSpec(spec);
+      if (!p) continue;
+      addPort(p.port);
+      m.cells[id][p.port] = p.mode;
+    }
+  }
+  m.vlans.sort((a, b) => a - b);
+  for (const id of m.vlans)
+    for (const p of m.ports)
+      if (!m.cells[id][p]) m.cells[id][p] = 'off';
+
+  m.original = JSON.parse(JSON.stringify(m.cells));
+  return m;
+}
+
+function isTrunkOnly(m, id) {
+  const members = m.ports.filter(p => m.cells[id][p] !== 'off');
+  return members.length > 0 && members.every(p => m.cells[id][p] === 't');
+}
+
+function vlanMembers(m, id) {
+  return m.ports.filter(p => m.cells[id][p] !== 'off');
+}
+
+function cellHint(mode, id, port) {
+  if (mode === 't') return 'TAG：出方向带 VLAN ' + id + ' 标签，入方向接受该 VLAN 的带标签帧。';
+  if (mode === 'u') return 'UNTAG：出方向去标签；本行还没有 PVID，该端口的默认 VLAN 未定义。';
+  if (mode === 'u*') return 'UNTAG + PVID：入方向不带标签则打 VLAN ' + id + ' 标签，出方向去标签。该端口默认 VLAN 为 ' + id + '。';
+  return port + ' 不属于 VLAN ' + id + '。';
+}
+
+function matrixRowSummary(m, port) {
+  const tags = m.vlans.filter(id => m.cells[id][port] === 't');
+  const untagged = m.vlans.filter(id => m.cells[id][port] === 'u' || m.cells[id][port] === 'u*');
+  const pvids = m.vlans.filter(id => m.cells[id][port] === 'u*');
+
+  if (pvids.length > 1) return '⚠ 多个 PVID';
+  if (untagged.length > 1) return '⚠ 多个 untagged（PVID → ' + (pvids[0] || '无') + '）';
+  if (tags.length && untagged.length)
+    return 'Trunk · ' + tags.length + ' VLAN' + (pvids[0] ? ' · PVID ' + pvids[0] : ' · ⚠ 未设 PVID');
+  if (tags.length) return 'Trunk · ' + tags.length + ' VLAN';
+  if (pvids.length === 1) return 'Access → ' + pvids[0];
+  if (untagged.length === 1) return '⚠ 未设 PVID';
+  return '未配置';
+}
+
+function matrixSummaryHTML(m, bridge) {
+  const chips = [];
+  const ifaces = (bridge && bridge.interfaces) || [];
+  const mgmt = ifaces.find(i => (i.ipaddr || []).length > 0);
+  if (mgmt) {
+    const mm = new RegExp('^' + (bridge.name || 'br-lan').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.(\\d+)$').exec(mgmt.device || '');
+    if (mm) chips.push('<span><b>管理 VLAN</b> ' + mm[1] + '（' + esc(mgmt.name) + '）</span>');
+  }
+
+  const trunks = m.ports.filter(p => m.vlans.filter(id => m.cells[id][p] === 't').length > 1);
+  if (trunks.length) {
+    chips.push('<span><b>Trunk 口</b> ' + trunks.map(p => esc(p) + '(' +
+      m.vlans.filter(id => m.cells[id][p] === 't').length + ')').join('、') + '</span>');
+  }
+
+  const access = m.ports.filter(p => {
+    const un = m.vlans.filter(id => m.cells[id][p] === 'u' || m.cells[id][p] === 'u*');
+    const tg = m.vlans.filter(id => m.cells[id][p] === 't');
+    return tg.length === 0 && un.length === 1 && m.cells[un[0]][p] === 'u*';
+  });
+  if (access.length) {
+    chips.push('<span><b>Access 口</b> ' + access.map(p =>
+      esc(p) + '→' + m.vlans.find(id => m.cells[id][p] === 'u*')).join('、') + '</span>');
+  }
+
+  chips.push('<span><b>IGMP snooping</b> ' +
+    (bridge && bridge.igmp_snooping === true ? '开启' :
+      bridge && bridge.igmp_snooping === false ? '关闭' : '未设置') + '</span>');
+  return '<div class="vlan-summary">' + chips.join('') + '</div>';
+}
+
+function matrixTableHTML(m, bridge) {
+  const visibleVLANs = m.vlans.filter(id => m.showTrunkOnly || !isTrunkOnly(m, id));
+  const hiddenVLANs = m.vlans.filter(id => !visibleVLANs.includes(id));
+  const visiblePorts = m.ports.filter(p =>
+    !m.hideUnused || m.vlans.some(id => m.cells[id][p] !== 'off'));
+
+  let html = matrixSummaryHTML(m, bridge);
+  html += '<div class="vlan-legend">' +
+    '<span class="key"><span class="sw" style="border:1px dashed #303743">·</span>不属于</span>' +
+    '<span class="key"><span class="sw mx-cell t" style="margin:0;width:22px;height:18px">T</span>TAG / tagged</span>' +
+    '<span class="key"><span class="sw mx-cell u" style="margin:0;width:22px;height:18px">U</span>UNTAG / untagged</span>' +
+    '<span class="key"><span class="sw mx-cell ustar" style="margin:0;width:22px;height:18px">U<span class="mx-pvid">●</span></span>UNTAG + PVID</span>' +
+    '</div>';
+  html += '<div class="vlan-filters">' +
+    '<label><input type="checkbox" data-mx-filter="hideUnused"' + (m.hideUnused ? ' checked' : '') + '> 仅显示有配置的端口（列）</label>' +
+    '<label><input type="checkbox" data-mx-filter="compact"' + (m.compact ? ' checked' : '') + '> 紧凑模式</label>' +
+    '<span class="hint" style="margin:0">单击单元格循环：— → T → U → U● → —；每个端口最多一个 PVID</span>' +
+    '</div>';
+
+  if (hiddenVLANs.length) {
+    html += '<div class="mx-fold">' + hiddenVLANs.length + ' 个仅 Trunk 的 VLAN（' +
+      hiddenVLANs.join(' / ') + '）<button data-mx-expand="1">展开</button></div>';
+  } else if (m.showTrunkOnly && m.vlans.some(id => isTrunkOnly(m, id))) {
+    html += '<div class="mx-fold"><button data-mx-expand="0">折叠仅 Trunk 的 VLAN</button></div>';
+  }
+
+  if (!visibleVLANs.length) {
+    html += '<div class="empty">尚未添加 VLAN；点下方“新增 VLAN”建立第一条。</div>';
+  } else if (!visiblePorts.length) {
+    html += '<div class="empty">没有已配置的端口；取消“仅显示有配置的端口”即可看到全部列。</div>';
+  } else {
+    // 行 = VLAN，列 = 端口。端口列头带该端口在所有 VLAN 里的摘要，
+    // 这样“哪个口是 Access、哪个口是 Trunk”不用单独占一列。
+    html += '<div class="vlan-scroll' + (m.compact ? ' mx-compact' : '') +
+      '"><table class="vlan-grid"><thead><tr>' +
+      '<th class="mx-port-col">VLAN</th>' +
+      visiblePorts.map(p => {
+        const sum = matrixRowSummary(m, p);
+        return '<th data-col="' + esc(p) + '"><div class="mx-vlan mono">' + esc(p) +
+          '</div><div class="mx-count' + (sum.indexOf('⚠') >= 0 ? ' mx-warn' : '') + '">' +
+          esc(sum) + '</div></th>';
+      }).join('') +
+      '</tr></thead><tbody>';
+
+    for (const id of visibleVLANs) {
+      const name = m.meta[id] && m.meta[id].name;
+      const note = m.meta[id] && m.meta[id].note;
+      const title = [name, note].filter(Boolean).join(' · ');
+      html += '<tr data-vlan="' + id + '"><th class="mx-port-col">' +
+        '<div class="mx-vlan" title="' + esc(title) + '">VLAN ' + id +
+        (name ? ' · ' + esc(name) : '') +
+        '<button class="mx-del" data-mx-del="' + id + '" title="删除 VLAN">×</button></div>' +
+        '<div class="mx-count">' + vlanMembers(m, id).length + ' 口</div></th>';
+      for (const p of visiblePorts) {
+        const mode = m.cells[id][p] || 'off';
+        const changed = m.original[id] && m.original[id][p] !== mode;
+        const sym = mode === 't' ? 'T' : mode === 'u' ? 'U' :
+          mode === 'u*' ? 'U<span class="mx-pvid">●</span>' : '·';
+        const cls = mode === 'off' ? 'off' : mode === 'u*' ? 'ustar' : mode;
+        html += '<td data-col="' + esc(p) + '"><span class="mx-cell ' + cls +
+          (changed ? ' changed' : '') + '" data-mx-cell="1" data-vlan="' + id +
+          '" data-port="' + esc(p) + '" title="' + esc(cellHint(mode, id, p)) + '">' +
+          sym + '</span></td>';
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+  }
+
+  const ifaceChips = ((bridge && bridge.interfaces) || []).map(i =>
+    '<span class="chip" title="' + esc((i.name || '') + ' → ' + (i.device || '') +
+      (i.proto ? ' · ' + i.proto : '') + (i.ipaddr && i.ipaddr.length ? ' · ' + i.ipaddr.join(', ') : '')) +
+      '">' + esc(i.name) + ' → ' + esc(i.device) + '</span>').join('');
+  if (ifaceChips) html += '<div class="vlan-map"><span>接口映射：</span>' + ifaceChips + '</div>';
+  return html;
+}
+
+function paintTemplateMatrix() {
+  const host = $('port-template-matrix');
+  if (!host) return;
+  if (!tplMatrix) {
+    host.innerHTML = '<div class="empty">尚未启用 VLAN。</div>';
+    return;
+  }
+  const scrollEl = host.querySelector('.vlan-scroll');
+  const keepLeft = scrollEl ? scrollEl.scrollLeft : 0;
+  host.innerHTML = matrixTableHTML(tplMatrix, tplMatrixBridge || {});
+  const after = host.querySelector('.vlan-scroll');
+  if (after) after.scrollLeft = keepLeft;
+}
+
+function renderTemplateVLANEditor(tpl) {
+  const bridge = (tpl && tpl.bridge) || {};
+  const vlans = bridge.vlans || [];
+  const enabled = vlans.length > 0;
+  $('port-template-vlan-enabled').checked = enabled;
+  $('port-template-vlan-editor').hidden = !enabled;
+  tplMatrixBridge = bridge;
+  if (enabled) {
+    tplMatrix = buildMatrix(vlans, bridge.ports || []);
+    paintTemplateMatrix();
+  } else {
+    tplMatrix = null;
+    $('port-template-matrix').innerHTML = '<div class="empty">尚未启用 VLAN。</div>';
+  }
+  sayTemplateVLAN('');
+}
+
+function openVLANModal() {
+  if (!tplMatrix) return;
+  const ports = tplMatrix.ports.slice();
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  mask.id = 'vlan-add-mask';
+  mask.innerHTML =
+    '<div class="panel" style="width:min(560px,100%);max-height:90vh;overflow:auto">' +
+      '<h2 style="font-size:14px;margin:0 0 12px">新增 VLAN</h2>' +
+      '<div class="form" style="flex-direction:column;gap:10px">' +
+        '<label>VLAN ID<input id="vlan-add-id" type="number" min="1" max="4094" placeholder="1-4094" /></label>' +
+        '<label>名称<input id="vlan-add-name" type="text" maxlength="50" placeholder="可选，1-50 个字符" /></label>' +
+        '<label>备注<input id="vlan-add-note" type="text" maxlength="50" placeholder="可选，1-50 个字符" /></label>' +
+      '</div>' +
+      '<div style="margin:12px 0 6px;color:var(--text);font-size:13px">选择端口成员</div>' +
+      (ports.length ? ports.map(p =>
+        '<div class="vlan-member" data-member="' + esc(p) + '" style="display:flex;align-items:center;gap:12px;margin:7px 0">' +
+          '<label style="display:inline-flex;align-items:center;gap:6px;min-width:110px">' +
+            '<input type="checkbox" data-mx-member="' + esc(p) + '"> 端口 ' + esc(p) + '</label>' +
+          '<span style="color:var(--muted);font-size:12px">出口规则</span>' +
+          '<select data-mx-rule="' + esc(p) + '">' +
+            '<option value="u*">UNTAG + PVID</option>' +
+            '<option value="u">UNTAG</option>' +
+            '<option value="t">TAG</option>' +
+          '</select>' +
+          '<span class="hint" style="margin:0">勾选后加入该 VLAN</span>' +
+        '</div>').join('')
+        : '<div class="empty" style="padding:14px">模板没有声明 bridge 端口，无法选择成员。</div>') +
+      '<div class="msg err" id="vlan-add-err"></div>' +
+      '<div style="margin-top:8px;display:flex;gap:8px">' +
+        '<button id="vlan-add-ok" class="primary">确定</button>' +
+        '<button id="vlan-add-cancel">取消</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(mask);
+  $('vlan-add-cancel').addEventListener('click', closeVLANModal);
+  $('vlan-add-ok').addEventListener('click', addVLANFromModal);
+  mask.addEventListener('click', (e) => { if (e.target === mask) closeVLANModal(); });
+  $('vlan-add-id').focus();
+}
+
+function closeVLANModal() {
+  const mask = $('vlan-add-mask');
+  if (mask) mask.remove();
+}
+
+function vlanPickConflict(m, picks) {
+  for (const pick of picks) {
+    const other = m.vlans.find(v => {
+      const mode = m.cells[v][pick.port];
+      if (pick.rule === 'u*' || pick.rule === 'u')
+        return mode === 'u' || mode === 'u*';
+      return false;
+    });
+    if (!other) continue;
+    if (pick.rule === 'u*')
+      return 'PVID 冲突：端口 ' + pick.port + ' 已在 VLAN ' + other +
+        ' 配置为 untagged/PVID；一个端口只能有一个 PVID';
+    return '端口成员冲突：端口 ' + pick.port + ' 已在 VLAN ' + other +
+      ' 作为 untagged 成员；一个端口只能属于一个 untagged VLAN';
+  }
+  return '';
+}
+
+function addVLANFromModal() {
+  try {
+  const id = Number($('vlan-add-id').value);
+  if (!id || id < 1 || id > 4094) throw new Error('VLAN ID 必须在 1-4094');
+  if (tplMatrix.cells[id]) throw new Error('VLAN ' + id + ' 已存在，不能重复添加');
+  const name = $('vlan-add-name').value.trim();
+  const note = $('vlan-add-note').value.trim();
+  if (name.length > 50 || note.length > 50) throw new Error('名称/备注最多 50 个字符');
+
+  // 先收集并校验，再改状态：校验失败时不能把半成品 VLAN 留在矩阵里。
+  const picks = [];
+  const picked = {};
+  for (const el of document.querySelectorAll('[data-mx-member]')) {
+    if (!el.checked) continue;
+    const port = el.dataset.mxMember;
+    if (picked[port]) throw new Error('端口 ' + port + ' 被重复选择');
+    picked[port] = true;
+    const rule = document.querySelector('[data-mx-rule="' + port + '"]').value;
+    picks.push({ port: port, rule: rule });
+  }
+
+  const conflict = vlanPickConflict(tplMatrix, picks);
+  if (conflict) throw new Error(conflict);
+
+  tplMatrix.vlans.push(id);
+  tplMatrix.vlans.sort((a, b) => a - b);
+  tplMatrix.cells[id] = {};
+  tplMatrix.meta[id] = { name: name, note: note };
+  tplMatrix.original[id] = {};
+  for (const p of tplMatrix.ports) {
+    tplMatrix.cells[id][p] = 'off';
+    tplMatrix.original[id][p] = 'off';
+  }
+  for (const pick of picks) tplMatrix.cells[id][pick.port] = pick.rule;
+
+  const chosen = picks.map(p => p.port);
+  closeVLANModal();
+  paintTemplateMatrix();
+  sayTemplateVLAN('已添加 VLAN ' + id +
+    (chosen.length ? '，成员：' + chosen.join('、') : '（尚未选择端口成员）'), 'ok');
+  } catch (e) {
+    const el = $('vlan-add-err');
+    if (el) el.textContent = e.message;
+  }
+}
+
+function removeVLAN(id) {
+  const members = vlanMembers(tplMatrix, id);
+  if (members.length && !confirm('VLAN ' + id + ' 有 ' + members.length + ' 个端口成员，删除会同时移除这些成员。继续？')) return;
+  const base = (tplMatrixBridge && tplMatrixBridge.name) || 'br-lan';
+  const bound = ((tplMatrixBridge && tplMatrixBridge.interfaces) || []).find(i =>
+    (i.device || '') === base + '.' + id);
+  if (bound) throw new Error('接口 ' + bound.name + ' 仍绑定在 ' + bound.device + '，请先调整模板接口');
+  tplMatrix.vlans = tplMatrix.vlans.filter(v => v !== id);
+  delete tplMatrix.cells[id];
+  delete tplMatrix.meta[id];
+  paintTemplateMatrix();
+  sayTemplateVLAN('已删除 VLAN ' + id, 'ok');
+}
+
+function serializeMatrix(m) {
+  return m.vlans.map(id => {
+    const out = { vlan: id };
+    if (m.meta[id] && m.meta[id].name) out.name = m.meta[id].name;
+    if (m.meta[id] && m.meta[id].note) out.note = m.meta[id].note;
+    out.ports = m.ports.filter(p => m.cells[id][p] !== 'off').map(p => {
+      const mode = m.cells[id][p];
+      return mode === 't' ? p + ':t' : mode === 'u*' ? p + ':u*' : p + ':u';
+    });
+    return out;
+  });
+}
+
+function collectVLANs(tbodyId) {
+  const vlans = [];
+  for (const tr of $(tbodyId).querySelectorAll('tr')) {
+    const raw = tr.querySelector('[data-field=vlan]').value.trim();
+    if (!raw) continue;
+    const num = Number(raw);
+    if (num < 1 || num > 4094) throw new Error('VLAN 必须在 1-4094');
+    vlans.push({
+      vlan: num,
+      ports: tr.querySelector('[data-field=ports]').value.split(/[\s,]+/).filter(Boolean),
+    });
+  }
+  return vlans;
 }
 
 function renderPortDevice() {
@@ -2914,6 +3391,8 @@ function renderPortDevice() {
   if (!dev) {
     $('port-bridge').value = '';
     $('port-igmp').value = '';
+    $('port-vlan-enabled').checked = false;
+    $('port-vlan-editor').hidden = true;
     renderPortCheckboxes();
     return;
   }
@@ -2924,8 +3403,10 @@ function renderPortDevice() {
   $('port-bridge').value = (ov.bridge_ports || []).join(' ');
   $('port-igmp').value = ov.igmp_snooping === true ? '1' : ov.igmp_snooping === false ? '0' : '';
   const vlans = ov.vlans || [];
-  for (const v of vlans) addVLANRow(v.vlan, v.ports || []);
-  if (!vlans.length) addVLANRow('', []);
+  const enabled = vlans.length > 0;
+  $('port-vlan-enabled').checked = enabled;
+  $('port-vlan-editor').hidden = !enabled;
+  for (const v of vlans) addVLANRow('port-vlan-rows', v.vlan, v.ports || []);
   renderPortCheckboxes();
 }
 
@@ -3049,7 +3530,137 @@ $('port-device').addEventListener('change', () => {
   renderPortDevice();
 });
 
-$('port-add-vlan').addEventListener('click', () => addVLANRow('', []));
+$('port-template-vlan-enabled').addEventListener('change', () => {
+  const on = $('port-template-vlan-enabled').checked;
+  $('port-template-vlan-editor').hidden = !on;
+  if (on) {
+    if (!tplMatrix) {
+      const tpl = templates.find(t => t.id === portTemplateId) || {};
+      tplMatrixBridge = tpl.bridge || {};
+      tplMatrix = buildMatrix(tplMatrixBridge.vlans || [], tplMatrixBridge.ports || []);
+    }
+    paintTemplateMatrix();
+  }
+  sayTemplateVLAN('');
+});
+
+$('port-template-add-vlan').addEventListener('click', openVLANModal);
+
+$('port-template-matrix').addEventListener('click', (e) => {
+  if (!tplMatrix) return;
+  const del = e.target.closest('[data-mx-del]');
+  if (del) {
+    try { removeVLAN(Number(del.dataset.mxDel)); }
+    catch (err) { sayTemplateVLAN(err.message, 'err'); }
+    return;
+  }
+  const expand = e.target.closest('[data-mx-expand]');
+  if (expand) {
+    tplMatrix.showTrunkOnly = expand.dataset.mxExpand === '1';
+    paintTemplateMatrix();
+    return;
+  }
+  const cell = e.target.closest('[data-mx-cell]');
+  if (cell) cycleMatrixCell(Number(cell.dataset.vlan), cell.dataset.port);
+});
+
+$('port-template-matrix').addEventListener('change', (e) => {
+  if (!tplMatrix || !e.target.matches('[data-mx-filter]')) return;
+  tplMatrix[e.target.dataset.mxFilter] = e.target.checked;
+  paintTemplateMatrix();
+});
+
+$('port-template-matrix').addEventListener('mouseover', (e) => {
+  const cell = e.target.closest('td[data-col], th[data-col]');
+  if (!cell) return;
+  clearMatrixHot();
+  const col = cell.dataset.col;
+  const row = cell.closest('tr');
+  if (row) row.classList.add('mx-hot-row');
+  for (const td of $('port-template-matrix').querySelectorAll('[data-col="' + col + '"]'))
+    td.classList.add('mx-hot');
+});
+
+$('port-template-matrix').addEventListener('mouseleave', clearMatrixHot);
+
+function clearMatrixHot() {
+  const host = $('port-template-matrix');
+  if (!host) return;
+  for (const el of host.querySelectorAll('.mx-hot')) el.classList.remove('mx-hot');
+  for (const el of host.querySelectorAll('.mx-hot-row')) el.classList.remove('mx-hot-row');
+}
+
+function cycleMatrixCell(id, port) {
+  const m = tplMatrix;
+  if (!m) return;
+  const next = { off: 't', t: 'u', u: 'u*', 'u*': 'off' }[m.cells[id][port] || 'off'];
+  if ((port === 'wan' || id === 1) && !m.riskAccepted) {
+    if (!confirm('修改 wan 或 VLAN 1 的成员关系可能导致当前连接中断。' +
+      '请确认保留一个可达的管理口后再保存。')) return;
+    m.riskAccepted = true;
+  }
+  if (next === 'u*') {
+    const old = m.vlans.find(v => v !== id && m.cells[v][port] === 'u*');
+    if (old) {
+      m.cells[old][port] = 'u';
+      sayTemplateVLAN('已将 ' + port + ' 的 PVID 从 VLAN ' + old + ' 移至 VLAN ' + id, 'ok');
+    }
+  }
+  m.cells[id][port] = next;
+  paintTemplateMatrix();
+}
+
+$('port-vlan-enabled').addEventListener('change', () => {
+  const on = $('port-vlan-enabled').checked;
+  $('port-vlan-editor').hidden = !on;
+  if (on && !$('port-vlan-rows').children.length)
+    addVLANRow('port-vlan-rows', '', []);
+  sayPort('');
+});
+
+$('port-add-vlan').addEventListener('click', () => addVLANRow('port-vlan-rows', '', []));
+
+async function saveTemplateVLANs() {
+  const tpl = templates.find(t => t.id === portTemplateId);
+  if (!tpl) throw new Error('请选择模板');
+  const enabled = $('port-template-vlan-enabled').checked;
+  const vlans = enabled && tplMatrix ? serializeMatrix(tplMatrix) : [];
+  if (enabled && !vlans.length) throw new Error('启用 VLAN 时至少需要一个 VLAN');
+
+  const copy = JSON.parse(JSON.stringify(tpl));
+  if (!copy.bridge) copy.bridge = {};
+  if (enabled && (!copy.bridge.name || !(copy.bridge.ports || []).length)) {
+    throw new Error('该模板未声明 bridge 名称/端口，不能在这里启用 VLAN；' +
+      '请使用全接管模板，或在“设备覆盖”里为本机配置 VLAN');
+  }
+  const base = (copy.bridge.name || 'br-lan') + '.';
+  const vlanIDs = new Set(vlans.map(v => v.vlan));
+  const dangling = (copy.bridge.interfaces || []).filter(i => {
+    const dev = i.device || '';
+    if (!dev.startsWith(base)) return false;
+    const n = Number(dev.slice(base.length));
+    return Number.isInteger(n) && !vlanIDs.has(n);
+  });
+  if (dangling.length) {
+    throw new Error('关闭/精简 VLAN 会移除接口 ' + dangling
+      .map(i => i.name + '(' + i.device + ')').join('、') +
+      ' 所依赖的 bridge-vlan；请先调整模板接口');
+  }
+
+  copy.bridge.vlans = vlans;
+  if (enabled) copy.bridge.vlan_filtering = true;
+  else delete copy.bridge.vlan_filtering;
+  await api('POST', '/api/v1/templates', copy);
+  await loadTemplates();
+  fillTemplatePicker($('port-template'), portTemplateId);
+  renderPortTemplate();
+  sayTemplateVLAN('模板 ' + copy.id + ' 的 VLAN 已保存；已采纳设备重新下发后生效', 'ok');
+}
+
+$('port-template-vlan-save').addEventListener('click', async () => {
+  try { await saveTemplateVLANs(); }
+  catch (e) { if (!noteUnauthorized(e)) sayTemplateVLAN(e.message, 'err'); }
+});
 
 async function savePortOverride(clear) {
   if (!portDeviceMac) throw new Error('请选择设备');
@@ -3064,6 +3675,7 @@ async function savePortOverride(clear) {
     delete ov.bridge_ports;
     delete ov.igmp_snooping;
     delete ov.vlans;
+    delete ov.vlan_filtering;
 
     const bridge = $('port-bridge').value.trim();
     if (bridge) ov.bridge_ports = bridge.split(/[\s,]+/).filter(Boolean);
@@ -3071,18 +3683,18 @@ async function savePortOverride(clear) {
     const igmp = $('port-igmp').value;
     if (igmp !== '') ov.igmp_snooping = igmp === '1';
 
-    const vlans = [];
-    for (const tr of $('port-vlan-rows').querySelectorAll('tr')) {
-      const raw = tr.querySelector('[data-field=vlan]').value.trim();
-      if (!raw) continue;
-      const num = Number(raw);
-      if (num < 1 || num > 4094) throw new Error('VLAN 必须在 1-4094');
-      vlans.push({
-        vlan: num,
-        ports: tr.querySelector('[data-field=ports]').value.split(/[\s,]+/).filter(Boolean),
-      });
+    if ($('port-vlan-enabled').checked) {
+      const tpl = templates.find(t => t.id === dev.template_id) || {};
+      const tbr = tpl.bridge || {};
+      const ports = ov.bridge_ports || tbr.ports || [];
+      if (!tbr.name || !ports.length) {
+        throw new Error('模板未声明 bridge 名称/端口；请改用全接管模板，或在此填写 bridge 端口');
+      }
+      const vlans = collectVLANs('port-vlan-rows');
+      if (!vlans.length) throw new Error('启用 VLAN 时至少需要一个 VLAN');
+      ov.vlans = vlans;
+      ov.vlan_filtering = true;
     }
-    if (vlans.length) ov.vlans = vlans;
   }
 
   const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(portDeviceMac) + '/network', ov);

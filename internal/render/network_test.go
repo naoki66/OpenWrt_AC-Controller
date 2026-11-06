@@ -77,6 +77,52 @@ func TestManagedNetworkPrefixesInventedSections(t *testing.T) {
 	}
 }
 
+// A bridge with VLANs must also filter them, otherwise the bridge-vlan
+// sections are inert. Turning VLANs on in the editor therefore has to turn on
+// vlan_filtering for br-lan in the same package.
+func TestNetworkEnablesVLANFilteringWhenVLANsDeclared(t *testing.T) {
+	tpl := networkTemplate()
+	on := true
+	tpl.Bridge.VLANFiltering = &on
+
+	net, err := Network(tpl, Options{Prefix: ACPrefix})
+	if err != nil {
+		t.Fatalf("render network: %v", err)
+	}
+	if !strings.Contains(string(net), "option vlan_filtering '1'") {
+		t.Errorf("VLANs declared and filtering enabled, but option missing:\n%s", net)
+	}
+}
+
+// Without VLANs the option stays out, so disabling VLANs restores the
+// device's own bridge behaviour instead of writing an explicit zero.
+func TestNetworkOmitsVLANFilteringWithoutVLANs(t *testing.T) {
+	tpl := networkTemplate()
+	on := true
+	tpl.Bridge.VLANFiltering = &on
+	tpl.Bridge.VLANs = nil
+
+	net, err := Network(tpl, Options{Prefix: ACPrefix})
+	if err != nil {
+		t.Fatalf("render network: %v", err)
+	}
+	if strings.Contains(string(net), "vlan_filtering") {
+		t.Errorf("vlan_filtering emitted without VLANs:\n%s", net)
+	}
+}
+
+// Nil is the pre-existing behaviour: no option, so the deployed baseline and
+// packages generated before the field existed stay byte-identical.
+func TestNetworkOmitsVLANFilteringWhenUnset(t *testing.T) {
+	net, err := Network(networkTemplate(), Options{Prefix: ACPrefix})
+	if err != nil {
+		t.Fatalf("render network: %v", err)
+	}
+	if strings.Contains(string(net), "vlan_filtering") {
+		t.Errorf("vlan_filtering emitted with a nil override:\n%s", net)
+	}
+}
+
 // A wireless-only template keeps pointing at the device's own interfaces. This
 // is the mode both APs run today: adding a prefix here would point every SSID at
 // an interface that does not exist.
