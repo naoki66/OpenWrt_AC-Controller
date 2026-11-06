@@ -1,0 +1,3889 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AC 控制器</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a20;
+    --line: #262b33;
+    --text: #e6e8eb;
+    --muted: #8b929c;
+    --accent: #3b82f6;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .layout { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 200px;
+    border-right: 1px solid var(--line);
+    padding: 20px 12px;
+    flex-shrink: 0;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 8px 20px;
+    font-weight: 500; font-size: 15px;
+  }
+  .brand-mark {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: var(--accent);
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 500; color: #fff;
+  }
+  .nav a {
+    display: block; padding: 8px 10px; border-radius: 6px;
+    color: var(--muted); text-decoration: none; margin-bottom: 2px;
+  }
+  .nav a.active, .nav a:hover { background: #1d232b; color: var(--text); }
+  .nav a.dim { color: #4b535e; cursor: not-allowed; }
+  .main { flex: 1; padding: 24px 28px; max-width: 1240px; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .card .k { color: var(--muted); font-size: 12px; }
+  .card .v { font-size: 20px; font-weight: 500; margin-top: 4px; }
+  /* 32 位十六进制的控制器 ID 比卡片宽，必须能断行 */
+  .card .v.mono { word-break: break-all; font-size: 12.5px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--muted); font-weight: 400; font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 20px;
+    font-size: 12px; border: 1px solid transparent;
+  }
+  .badge.pending { color: var(--warn); border-color: #4a3410; background: #221a08; }
+  .badge.adopted { color: var(--ok); border-color: #14421f; background: #0d1f13; }
+  .badge.failed { color: #f2a0a0; border-color: #5a1f1f; background: #2a1010; }
+  /* Silence is not an error: an AP that is simply unplugged is grey, not red. */
+  .badge.offline { color: #8d99a6; border-color: #2f3742; background: #1a1f26; }
+  .rev { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .empty { padding: 32px; text-align: center; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 12.5px; margin-top: 14px; line-height: 1.8; }
+  code { background: #1d232b; padding: 1px 6px; border-radius: 4px; font-size: 12.5px; }
+  .actions { white-space: nowrap; }
+  button {
+    font: inherit; font-size: 12.5px;
+    padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    background: #1d232b; color: var(--text); border: 1px solid var(--line);
+  }
+  button:hover:not(:disabled) { border-color: #3a424e; background: #232a33; }
+  button.primary { background: #17335c; border-color: #1e4a86; color: #cfe2ff; }
+  button.primary:hover:not(:disabled) { background: #1b3d6e; }
+  button + button { margin-left: 6px; }
+  button:disabled { opacity: .45; cursor: default; }
+  .msg { min-height: 20px; font-size: 12.5px; margin-top: 12px; color: var(--muted); }
+  .msg.err { color: #f2a0a0; }
+  .msg.ok { color: #86e0a5; }
+  #auth-bar {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 18px; padding: 10px 12px;
+    border: 1px solid var(--warn); border-radius: 8px;
+    background: rgba(245, 158, 11, 0.08);
+    font-size: 12.5px; color: var(--muted);
+  }
+  #auth-bar[hidden] { display: none; }
+  #auth-token {
+    flex: 1 1 220px; min-width: 180px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; font: inherit; font-size: 12.5px;
+  }
+  #auth-bar button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+    padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  #auth-bar button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  /* 信号强度按 dBm 分档着色：弱信号必须一眼可见 */
+  .sig { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .sig.good { color: #4ade80; }
+  .sig.fair { color: #facc15; }
+  .sig.weak { color: #fb923c; }
+  .sig.poor { color: #f87171; }
+  .sig-bar {
+    display: inline-block; width: 34px; height: 4px; border-radius: 2px;
+    background: #2b323b; margin-right: 8px; vertical-align: middle; overflow: hidden;
+  }
+  .sig-bar > i { display: block; height: 100%; background: currentColor; }
+  .hidden { display: none; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button {
+    border: 0; border-radius: 0; background: transparent; color: var(--muted);
+    padding: 4px 12px; margin: 0;
+  }
+  .seg button + button { border-left: 1px solid var(--line); margin: 0; }
+  .seg button.on { background: #1d232b; color: var(--text); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
+  }
+  .panel > h2 {
+    font-size: 13px; font-weight: 500; margin: 0 0 2px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .panel > .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  svg.chart { width: 100%; height: auto; display: block; }
+  svg.chart text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+  svg.chart .grid { stroke: var(--line); stroke-width: 1; }
+  select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12.5px;
+  }
+  input[type="text"], input:not([type]), input[type="number"], input[type="time"] {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12.5px;
+    min-width: 90px;
+  }
+  input[type="number"] { width: 74px; min-width: 0; }
+  textarea {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12.5px;
+    min-width: 120px; resize: vertical;
+  }
+  .wl-fields > label > textarea { color: var(--text); width: 100%; }
+  .form { display: flex; flex-wrap: wrap; gap: 14px; margin: 4px 0 14px; }
+  .form label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12px; }
+  .form label > * { color: var(--text); }
+  .form label.wide { flex: 1 1 320px; }
+  .form label.wide input { width: 100%; }
+  .radio-table input, .radio-table select { padding: 2px 6px; }
+  input[type="file"] { color: var(--muted); font-size: 12.5px; }
+  /* SSID 列表与单条编辑表单：列表只做概览，字段都在右侧表单里 */
+  .wl-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; align-items: start; }
+  .wl-list tbody tr { cursor: pointer; }
+  .wl-list tbody tr.sel td { background: #1d232b; }
+  .wl-editor {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; background: #12161b; min-height: 120px;
+  }
+  .wl-editor h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
+  .wl-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .wl-fields > label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+  .wl-fields > label > input, .wl-fields > label > select { color: var(--text); width: 100%; }
+  .wl-span2 { grid-column: 1 / -1; }
+  .wl-checks { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 12.5px; }
+  .wl-checks label { display: inline-flex; align-items: center; gap: 5px; color: var(--text); cursor: pointer; }
+  .wl-roam-title { color: var(--muted); font-size: 12px; }
+  .wl-editor > .hint { margin-top: 10px; }
+  #wl-dirty[hidden] { display: none; }
+  /* 模板名可能很长；不约束宽度会把「未保存/保存 SSID」挤出视口 */
+  #wl-template { max-width: 420px; min-width: 0; flex: 0 1 auto; }
+  @media (max-width: 1040px) { .wl-grid { grid-template-columns: 1fr; } }
+  /* AP 诊断输出可能很长，保持等宽、可滚动，不撑破面板 */
+  pre.diag-out {
+    background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; margin: 8px 0 0; color: var(--text);
+    font-size: 12px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+    max-height: 340px; overflow: auto;
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">AC</span> 无线控制器</div>
+    <nav class="nav">
+      <a href="#" data-view="devices" class="active">设备</a>
+      <a href="#" data-view="clients">客户端</a>
+      <a href="#" data-view="telemetry">遥测</a>
+      <a href="#" data-view="wireless">无线网络</a>
+      <a href="#" data-view="rf">射频</a>
+      <a href="#" data-view="ports">端口 / VLAN</a>
+      <a href="#" data-view="firmware">固件</a>
+      <a href="#" data-view="system">系统</a>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div id="auth-bar" hidden>
+      <span id="auth-why">此控制器要求管理令牌（AC_ADMIN_TOKEN）。</span>
+      <input id="auth-token" type="password" placeholder="管理令牌" autocomplete="current-password" />
+      <button id="auth-save">确定</button>
+      <button id="auth-clear" class="ghost">清除</button>
+    </div>
+
+    <section id="view-devices">
+      <h1>接入点</h1>
+      <div class="sub">通过 UDP 广播自动发现，端口 29820</div>
+
+      <div class="cards">
+        <div class="card"><div class="k">已发现</div><div class="v" id="total">–</div></div>
+        <div class="card"><div class="k">在线 AP</div><div class="v" id="ap-online">–</div></div>
+        <div class="card"><div class="k">待采纳</div><div class="v" id="pending">–</div></div>
+        <div class="card"><div class="k">已采纳</div><div class="v" id="adopted">–</div></div>
+        <div class="card"><div class="k">在线客户端</div><div class="v" id="clients-online">–</div></div>
+        <div class="card"><div class="k">控制器 ID</div><div class="v mono" id="acid">–</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          AP 共享密钥
+          <span class="badge offline" id="sec-source" hidden></span>
+        </h2>
+        <p class="note">
+          AP 上报与拉取配置包时使用的凭据。这里设置的是对环境变量
+          AC_SHARED_SECRET 的运行时覆盖，立即生效并持久化（重启不丢）；
+          留空保存即恢复使用环境变量。轮换后 AP 需要把新密钥写入
+          /etc/config/ac 才能继续上报，已采纳设备的配置包不受影响。
+        </p>
+        <div class="form">
+          <label class="wide"><span>当前生效密钥</span><input id="sec-current" readonly></label>
+          <label class="wide"><span>新密钥（至少 8 字符；留空保存 = 恢复环境变量值）</span>
+            <input id="sec-new" type="password" placeholder="••••••••" autocomplete="new-password"></label>
+        </div>
+        <button id="sec-save" class="primary">保存密钥</button>
+        <div class="msg" id="sec-msg"></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>主机名</th><th>型号</th><th>MAC</th><th>地址</th><th>固件</th>
+            <th>状态</th><th>漫游引导</th><th>最后心跳</th><th>运行时长</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="10" class="empty">等待 AP 上线…</td></tr>
+        </tbody>
+      </table>
+
+      <div class="msg" id="msg"></div>
+
+      <div class="panel">
+        <h2>周期重启</h2>
+        <p class="note">
+          到点后控制器通过动作队列下发一条重启命令，与手动重启走同一条路径；离线 AP 会跳过本次，
+          下一个周期再排。时间为控制器本地时区。
+        </p>
+        <div class="form">
+          <label>设备
+            <select id="rb-device"><option value="">选择设备…</option></select>
+          </label>
+          <label>周期（天，0 关闭）
+            <input id="rb-days" type="number" min="0" max="365" placeholder="0" />
+          </label>
+          <label>时间（HH:MM）
+            <input id="rb-at" type="time" value="03:00" />
+          </label>
+        </div>
+        <button id="rb-save" class="primary">保存周期重启</button>
+        <button id="rb-off" class="ghost">关闭</button>
+        <div class="msg" id="rb-msg"></div>
+      </div>
+
+      <div class="panel">
+        <h2>状态 LED</h2>
+        <p class="note">
+          立即开/关 AP 上名字含 status 的灯（XR1710G 为红/绿/蓝/白四色 status 灯）。
+          「开」只点亮绿色运行灯，其余颜色保持熄灭，避免 RGB 灯变白。
+          定时按控制器本地时区，到点经动作队列下发；离线 AP 跳过本次，下个周期再排。
+        </p>
+        <div class="form">
+          <label>设备
+            <select id="led-device"><option value="">选择设备…</option></select>
+          </label>
+          <label>定时开灯（HH:MM，留空=不定时）
+            <input id="led-on" type="time" />
+          </label>
+          <label>定时关灯（HH:MM，留空=不定时）
+            <input id="led-off" type="time" />
+          </label>
+        </div>
+        <button id="led-on-now" class="primary">立即开灯</button>
+        <button id="led-off-now">立即关灯</button>
+        <button id="led-save" class="primary">保存定时</button>
+        <button id="led-clear" class="ghost">关闭定时</button>
+        <div class="msg" id="led-msg"></div>
+      </div>
+
+      <div class="panel">
+        <h2>AP 分组</h2>
+        <p class="note">
+          分组把一批 AP 绑定到同一个模板。已采纳设备加入带模板的分组时立即生成下一版并下发；
+          待采纳设备只记录归属，采纳时默认使用分组模板（在采纳表单里显式选择的模板优先）。
+        </p>
+        <div class="form">
+          <label>分组名称
+            <input id="grp-name" maxlength="64" placeholder="例如：一层办公区" />
+          </label>
+          <label>绑定模板
+            <select id="grp-template"><option value="">不绑定模板</option></select>
+          </label>
+        </div>
+        <button id="grp-create" class="primary">创建分组</button>
+        <div class="msg" id="grp-msg"></div>
+        <table style="margin-top:12px">
+          <thead>
+            <tr><th>分组</th><th>绑定模板</th><th>设备数</th><th>操作</th></tr>
+          </thead>
+          <tbody id="grp-rows">
+            <tr><td colspan="4" class="empty">尚未创建分组</td></tr>
+          </tbody>
+        </table>
+        <div class="form" style="margin-top:14px">
+          <label>设备
+            <select id="grp-device"><option value="">选择设备…</option></select>
+          </label>
+          <label>目标分组
+            <select id="grp-target"><option value="">选择分组…</option></select>
+          </label>
+        </div>
+        <button id="grp-bind" class="primary">加入分组</button>
+        <button id="grp-unbind" class="ghost">移出分组</button>
+        <div class="msg" id="grp-bind-msg"></div>
+      </div>
+
+      <p class="hint">
+        采纳后控制器按模板渲染配置、生成并签名的配置包，AP 拉取后需用
+        <code>ed25519</code> 公钥验签：<code id="pubkey">–</code><br />
+        速率限制、定时开关尚未实现。
+      </p>
+    </section>
+
+    <section id="view-clients" class="hidden">
+      <h1>客户端</h1>
+      <div class="sub">数据由 AP 每 20 秒上报；控制器不在数据面，无法自行观测</div>
+
+      <div class="cards">
+        <div class="card"><div class="k">在线</div><div class="v" id="c-online">–</div></div>
+        <div class="card"><div class="k">历史记录</div><div class="v" id="c-total">–</div></div>
+        <div class="card"><div class="k">2.4G / 5G / 6G</div><div class="v" id="c-bands" style="font-size:16px">–</div></div>
+      </div>
+
+      <div class="form" style="margin-bottom:10px">
+        <label style="flex-direction:row;align-items:center;gap:6px">
+          <input type="checkbox" id="client-tracked-only" /> 仅显示追踪
+        </label>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th><th>MAC</th><th>IP</th><th>SSID</th><th>频段</th>
+            <th>信号</th><th>协商速率</th><th>所属 AP</th><th>在线时长</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="client-rows">
+          <tr><td colspan="10" class="empty">暂无客户端上报</td></tr>
+        </tbody>
+      </table>
+
+      <div id="client-detail" class="wl-editor hidden" style="margin-top:14px"></div>
+
+      <p class="hint">
+        IP 为尽力而为：AP 是纯二层设备，从不与客户端做三层通信，邻接表通常为空。
+        要准确的 IP 列表，应从站点 DHCP（10.0.10.1）取，或在 AP 上启用 DHCP snooping。<br />
+        漫游引导由 AP 本地的 <code>nrsyncd</code>（只发布 802.11k 邻居报告，由客户端自行决策）承担；
+        控制器不做实时踢除——毫秒级决策放到网络另一端只会适得其反。
+      </p>
+    </section>
+
+    <section id="view-rf" class="hidden">
+      <h1>射频</h1>
+      <div class="sub">实时状态来自 AP 上报的无线采样，随页面轮询刷新；模板中的信道/带宽/功率在下一次下发时生效</div>
+
+      <div class="panel">
+        <h2>实时状态</h2>
+        <p class="note">
+          这是 AP 最近一次上报的采样（每分钟一次，见“采样”列），不是控制器下发的期望值；
+          灰色行属于离线 AP。信道是 radio 实际落到的信道，不是配置里的 auto——后者只有 ACS 知道答案
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>AP</th><th>radio</th><th>频段</th><th>状态</th><th>模式</th><th>信道</th><th>频点</th>
+              <th>带宽</th><th>功率</th><th>国家</th><th>占用率</th><th>客户端</th><th>采样</th>
+            </tr>
+          </thead>
+          <tbody id="rf-rows">
+            <tr><td colspan="13" class="empty">暂无射频上报</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>
+          模板工作频率
+          <select id="rf-template"><option value="">选择模板…</option></select>
+          <button id="rf-save" class="primary">保存模板</button>
+        </h2>
+        <p class="note">
+          模式 / 信道 / 通道宽度 / 功率档位来自 XR1710G 真机
+          <code>iwinfo htmodelist / freqlist / txpowerlist</code> 实测；
+          修改的是共享模板，已采纳的设备需在设备页“重新下发”后才生效。
+          信道 <code>auto</code> 交给 AP 的 ACS。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>频段</th><th>模式</th><th>信道</th><th>通道宽度</th>
+              <th>最大传输功率</th><th>国家代码</th><th>启用</th>
+            </tr>
+          </thead>
+          <tbody id="rf-edit-rows">
+            <tr><td colspan="7" class="empty">选择模板…</td></tr>
+          </tbody>
+        </table>
+        <div class="msg" id="rf-msg"></div>
+      </div>
+    </section>
+
+    <section id="view-ports" class="hidden">
+      <h1>端口 / VLAN</h1>
+      <div class="sub">DSA bridge-vlan：access 用 <code>:u*</code>（untagged + PVID），trunk 用 <code>:t</code>；无 PoE 控制</div>
+
+      <div class="panel">
+        <h2>
+          模板端口与 VLAN
+          <select id="port-template"><option value="">选择模板…</option></select>
+        </h2>
+        <p class="note">模板描述整机共享的二层布局；每台机器的差异放在下面的设备覆盖里</p>
+        <div id="port-template-body"><div class="empty">选择模板…</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          设备覆盖
+          <select id="port-device"><option value="">选择设备…</option></select>
+          <button id="port-save" class="primary">保存覆盖</button>
+          <button id="port-clear">清除覆盖</button>
+        </h2>
+        <p class="note">留空表示沿用模板；清除后设备回到“模板原样”。端口写法：<code>lan2</code>、<code>wan:t</code>、<code>lan2:u*</code></p>
+
+        <div class="form">
+          <label>bridge 端口
+            <input id="port-bridge" placeholder="lan2 lan3 lan4（空格分隔）" />
+          </label>
+          <label>IGMP snooping
+            <select id="port-igmp">
+              <option value="">继承模板</option>
+              <option value="1">开启</option>
+              <option value="0">关闭</option>
+            </select>
+          </label>
+        </div>
+
+        <table>
+          <thead><tr><th>VLAN</th><th>端口（wan:t / lan2:u*）</th><th></th></tr></thead>
+          <tbody id="port-vlan-rows"></tbody>
+        </table>
+        <button id="port-add-vlan" style="margin-top:10px">添加 VLAN</button>
+        <div class="msg" id="port-msg"></div>
+      </div>
+    </section>
+
+    <section id="view-wireless" class="hidden">
+      <h1>无线网络</h1>
+      <div class="sub">SSID 属于共享模板；改完保存，已采纳的设备需重新下发才生效</div>
+
+      <div class="panel">
+        <h2>
+          模板 SSID
+          <select id="wl-template"><option value="">选择模板…</option></select>
+          <input id="wl-rename-input" type="text" hidden placeholder="模板名称" style="width:220px">
+          <button id="wl-rename-ok" class="primary" hidden>确定</button>
+          <button id="wl-rename-cancel" hidden>取消</button>
+          <button id="wl-rename">改名</button>
+          <button id="wl-clone">克隆</button>
+          <button id="wl-delete" class="ghost">删除模板</button>
+          <span class="rev" id="wl-refs"></span>
+          <span class="badge pending" id="wl-dirty" hidden>未保存</span>
+          <button id="wl-save" class="primary">保存 SSID</button>
+        </h2>
+        <p class="note">
+          左侧列表只做概览，右侧编辑一条 SSID；安全项用预设选择，只填该预设需要的字段。
+          频段至少要选一个且对应射频已启用；漫游 r 需要 4 位十六进制 mobility domain。
+          保存只写 SSID 列表，不影响模板里的网络（bridge/VLAN）与射频配置。
+        </p>
+        <div class="msg" id="wl-msg"></div>
+        <div class="wl-grid">
+          <div class="wl-list">
+            <table>
+              <thead>
+                <tr><th>启用</th><th>SSID</th><th>频段</th><th>安全</th><th>网络</th><th>操作</th></tr>
+              </thead>
+              <tbody id="wl-list">
+                <tr><td colspan="6" class="empty">选择模板…</td></tr>
+              </tbody>
+            </table>
+            <button id="wl-add" style="margin-top:10px">添加 SSID</button>
+          </div>
+          <div class="wl-editor" id="wl-editor">
+            <div class="empty" style="padding:20px">选择模板…</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          重新下发
+          <select id="wl-device"><option value="">选择设备…</option></select>
+          <button id="wl-repush" class="primary">下发</button>
+        </h2>
+        <p class="note">
+          让 AP 按最新模板重新生成配置包并拉取；采纳状态不受影响。
+          模板改动对所有使用它的设备生效，但每台设备需各自触发一次。
+        </p>
+      </div>
+    </section>
+
+    <section id="view-firmware" class="hidden">
+      <h1>固件</h1>
+      <div class="sub">控制器只保存镜像与目标版本；下载、校验、sysupgrade 都在 AP 上完成</div>
+
+      <div class="panel">
+        <h2>镜像仓库</h2>
+        <p class="note">
+          按（型号, 版本）保存，重复版本会被拒绝——替换正被刷写的字节是事故。
+          上传后请核对摘要；“下载”取回的是 AP 将拉取的同一份字节。
+          目标版本指向不存在的镜像时，控制器不会下发任何指令。
+        </p>
+        <div class="form">
+          <label>型号
+            <input id="fw-model" placeholder="XR1710G" />
+          </label>
+          <label>版本
+            <input id="fw-version" placeholder="20261026" />
+          </label>
+          <label class="wide">镜像文件
+            <input id="fw-file" type="file" />
+          </label>
+        </div>
+        <button id="fw-upload" class="primary">上传镜像</button>
+        <div class="msg" id="fw-msg"></div>
+
+        <table style="margin-top:14px">
+          <thead>
+            <tr><th>型号</th><th>版本</th><th>大小</th><th>SHA-256</th><th>上传时间</th><th></th></tr>
+          </thead>
+          <tbody id="fw-rows">
+            <tr><td colspan="6" class="empty">仓库为空</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>设备升级</h2>
+        <p class="note">
+          目标只写库，随下一次 Hello 下发；AP 下载前先上报“下载中”，下载后校验大小与 SHA-256
+          再调度 sysupgrade。失败后控制器不再重发，重试需要重新设定目标；选择“不升级”并应用会清除目标。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>AP</th><th>型号</th><th>当前固件</th><th>目标</th>
+              <th>状态</th><th>消息</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="fw-dev-rows">
+            <tr><td colspan="7" class="empty">暂无设备</td></tr>
+          </tbody>
+        </table>
+        <div class="msg" id="fw-dev-msg"></div>
+      </div>
+    </section>
+
+    <section id="view-system" class="hidden">
+      <h1>系统</h1>
+      <div class="sub">控制器状态、配置快照、事件日志与 AP 诊断</div>
+
+      <div class="cards">
+        <div class="card"><div class="k">控制器版本</div><div class="v mono" id="sys-version">–</div></div>
+        <div class="card"><div class="k">设备（在线/总数）</div><div class="v" id="sys-devices">–</div></div>
+        <div class="card"><div class="k">客户端（在线/总数）</div><div class="v" id="sys-clients">–</div></div>
+        <div class="card"><div class="k">事件总数</div><div class="v" id="sys-events">–</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>控制器诊断</h2>
+        <p class="note">只报告是否要求鉴权，不回显共享密钥本身</p>
+        <table style="margin-top:12px"><tbody id="sys-rows"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>配置导入 / 导出</h2>
+        <p class="note">
+          JSON 快照包含模板、AP 分组与设备级网络覆盖，不包含固件镜像、动作历史与共享密钥。
+          导入按 ID 覆盖同名对象，不会删除控制器上已有的其它对象，也不会自动重新下发 AP。
+        </p>
+        <div class="form">
+          <button id="cfg-export">导出配置</button>
+          <label class="wide"><span>导入配置文件（.json）</span><input type="file" id="cfg-file" accept=".json,application/json"></label>
+          <button id="cfg-import">导入</button>
+        </div>
+        <div class="msg" id="cfg-msg"></div>
+      </div>
+
+      <div class="panel">
+        <h2>AP 诊断与日志</h2>
+        <p class="note">
+          命令通过动作通道下发，AP 在下次心跳执行并把输出随结果带回。
+          为安全起见只提供固定检查项，没有自由 shell。
+        </p>
+        <div class="form">
+          <label><span>设备</span><select id="diag-device"></select></label>
+          <label><span>类型</span><select id="diag-kind">
+            <option value="network">网络（地址 / 路由）</option>
+            <option value="system">系统日志</option>
+            <option value="kernel">内核日志</option>
+          </select></label>
+          <button id="diag-run">执行</button>
+        </div>
+        <div class="msg" id="diag-msg"></div>
+        <pre class="diag-out" id="diag-out">尚未执行诊断</pre>
+      </div>
+
+      <div class="panel">
+        <h2>事件日志</h2>
+        <table style="margin-top:12px">
+          <thead><tr><th>时间</th><th>类型</th><th>设备</th><th>内容</th></tr></thead>
+          <tbody id="event-rows">
+            <tr><td colspan="4" class="empty">暂无事件</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="view-telemetry" class="hidden">
+      <h1>遥测</h1>
+      <div class="sub">AP 每分钟采样一次，由控制器入库；默认保留 7 天</div>
+
+      <div class="panel">
+        <h2>
+          时间范围
+          <span class="seg" id="range-seg">
+            <button data-range="1h">1 小时</button>
+            <button data-range="6h" class="on">6 小时</button>
+            <button data-range="24h">24 小时</button>
+            <button data-range="7d">7 天</button>
+          </span>
+          <span class="note" id="telem-hint" style="margin:0"></span>
+        </h2>
+      </div>
+
+      <div class="panel">
+        <h2>在线客户端数</h2>
+        <p class="note">按 AP 分系列；来自客户端采样表，与客户端页同一数据源</p>
+        <div id="chart-counts"></div>
+        <div class="legend" id="legend-counts"></div>
+      </div>
+
+      <div class="panel">
+        <h2>信道占用率</h2>
+        <p class="note">hostapd 的 airtime busy 百分比；这是控制器不在数据面时唯一能拿到的干扰信号</p>
+        <div id="chart-util"></div>
+        <div class="legend" id="legend-util"></div>
+      </div>
+
+      <div class="panel">
+        <h2>信道</h2>
+        <p class="note">
+          阶梯图：信道是状态不是测量值，所以取每个区间内的最后一次观测，而不是平均——
+          36 与 149 的平均是 92.5，那不是一个信道
+        </p>
+        <div id="chart-channel"></div>
+        <div class="legend" id="legend-channel"></div>
+      </div>
+
+      <div class="panel">
+        <h2>
+          单个客户端
+          <select id="client-pick"><option value="">选择客户端…</option></select>
+        </h2>
+        <p class="note">信号强度与协商速率各用一条纵轴——dBm 是负数且跨度为几十，Mbps 跨度上千，
+          挤在同一个轴上只会两条都看不清</p>
+        <div id="chart-client-signal"></div>
+        <div class="legend"><span><i style="background:#60a5fa"></i>信号 dBm</span></div>
+        <div id="chart-client-rate" style="margin-top:10px"></div>
+        <div class="legend">
+          <span><i style="background:#f472b6"></i>下行 Mbps</span>
+          <span><i style="background:#34d399"></i>上行 Mbps</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const rows = $('rows');
+const clientRows = $('client-rows');
+const clientDetail = $('client-detail');
+const msg = $('msg');
+
+let apNames = {};   // ap_mac → hostname
+
+function ago(ts) {
+  if (!ts) return '–';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (s < 60) return s + ' 秒前';
+  if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
+  return Math.floor(s / 3600) + ' 小时前';
+}
+
+function duration(sec) {
+  if (!sec || sec < 0) return '–';
+  if (sec < 60) return sec + ' 秒';
+  if (sec < 3600) return Math.floor(sec / 60) + ' 分钟';
+  if (sec < 86400) return Math.floor(sec / 3600) + ' 小时 ' + Math.floor((sec % 3600) / 60) + ' 分';
+  return Math.floor(sec / 86400) + ' 天 ' + Math.floor((sec % 86400) / 3600) + ' 小时';
+}
+
+function cell(tr, text, cls) {
+  const td = document.createElement('td');
+  if (cls) td.className = cls;
+  td.textContent = text == null || text === '' ? '–' : text;
+  tr.appendChild(td);
+  return td;
+}
+
+function say(text, kind) {
+  msg.textContent = text || '';
+  msg.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+function button(label, action, mac, cls) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.dataset.action = action;
+  b.dataset.mac = mac;
+  if (cls) b.className = cls;
+  return b;
+}
+
+// 信号分档：>-55 好，>-65 可，>-75 弱，其余极差
+function signalCell(tr, dbm) {
+  const td = document.createElement('td');
+  td.className = 'sig';
+  if (!dbm) { td.textContent = '–'; tr.appendChild(td); return; }
+  let cls = 'poor', pct = 15;
+  if (dbm > -55) { cls = 'good'; pct = 100; }
+  else if (dbm > -65) { cls = 'fair'; pct = 70; }
+  else if (dbm > -75) { cls = 'weak'; pct = 40; }
+  td.classList.add(cls);
+  const bar = document.createElement('span');
+  bar.className = 'sig-bar';
+  const fill = document.createElement('i');
+  fill.style.width = pct + '%';
+  bar.appendChild(fill);
+  td.appendChild(bar);
+  td.appendChild(document.createTextNode(dbm + ' dBm'));
+  tr.appendChild(td);
+}
+
+let busy = false;
+let currentView = 'devices';
+
+// 固件状态的中文标签。下载中与升级中分开：大镜像的下载可能持续数分钟，
+// 在此之前控制器只能看到旧固件，操作员会以为指令丢了。
+const FW_STATE_LABELS = {
+  downloading: ['下载中', 'pending'],
+  upgrading: ['升级中', 'pending'],
+  applied: ['已应用', 'adopted'],
+  failed: ['失败', 'failed'],
+};
+
+// The token lives in localStorage rather than a cookie: the UI is a static page
+// and the API is a plain Bearer scheme, so there is no session to attach to.
+// It is sent only to same-origin /api paths.
+const TOKEN_KEY = 'ac.admin_token';
+let adminToken = localStorage.getItem(TOKEN_KEY) || '';
+let authRequired = false;
+
+const authBar = $('auth-bar');
+const authToken = $('auth-token');
+const authWhy = $('auth-why');
+
+function showAuth(why) {
+  authRequired = true;
+  authWhy.textContent = why || '此控制器要求管理令牌（AC_ADMIN_TOKEN）。';
+  authToken.value = adminToken;
+  authBar.hidden = false;
+}
+
+function hideAuth() {
+  authRequired = false;
+  authBar.hidden = true;
+}
+
+function setToken(value) {
+  adminToken = value || '';
+  if (adminToken) localStorage.setItem(TOKEN_KEY, adminToken);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+$('auth-save').addEventListener('click', () => {
+  setToken(authToken.value.trim());
+  if (adminToken) hideAuth();
+  refresh();
+});
+authToken.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('auth-save').click(); });
+$('auth-clear').addEventListener('click', () => { setToken(''); authToken.value = ''; refresh(); });
+
+// A 401 means "credential problem", not "operation failed": surface the bar once
+// instead of letting every row of the table fail on its own. A 429 is the
+// server's failed-attempt budget: retrying immediately would only extend it.
+function noteUnauthorized(err) {
+  if (err && err.status === 429) {
+    showAuth('鉴权失败次数过多，请稍后再试。');
+    return true;
+  }
+  if (err && err.status !== 401 && !/401/.test(err.message || '')) return false;
+  showAuth(adminToken ? '令牌无效或已更换，请重新输入。' : '此控制器要求管理令牌（AC_ADMIN_TOKEN）。');
+  return true;
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (adminToken) opts.headers['Authorization'] = 'Bearer ' + adminToken;
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const resp = await fetch(path, opts);
+  const text = await resp.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: text }; }
+  if (!resp.ok) throw Object.assign(
+    new Error((data && data.error) || ('HTTP ' + resp.status)),
+    { status: resp.status });
+  return data;
+}
+
+// window.location cannot carry an Authorization header, and the bundle holds
+// PSKs, so downloading one has to go through fetch.
+async function downloadPackage(mac, rev) {
+  const path = '/api/v1/devices/' + encodeURIComponent(mac) + '/package' + (rev ? '?rev=' + rev : '');
+  const headers = {};
+  if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+  const resp = await fetch(path, { headers });
+  if (!resp.ok) throw Object.assign(new Error('HTTP ' + resp.status), { status: resp.status });
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'acpkg-' + mac.replace(/[:]/g, '') + (rev ? '-rev' + rev : '') + '.tar.gz';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function act(action, mac, btn) {
+  if (busy) return;
+  busy = true;
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  say('正在执行…');
+  try {
+    const base = '/api/v1/devices/' + encodeURIComponent(mac);
+    if (action === 'adopt') {
+      // 模板必须由操作员选定。控制器侧的 default 只是开机种子示例，
+      // 用它采纳真机会把二层布局换成示例的三层配置。
+      const sel = btn && btn.parentElement ? btn.parentElement.querySelector('select.adopt-template') : null;
+      const templateId = sel ? sel.value : '';
+      if (!templateId) {
+        say('请先选择采纳使用的模板（default 只是占位示例，不要用于真机）', 'err');
+        return;
+      }
+      const res = await api('POST', base + '/adopt', { template_id: templateId });
+      say(mac + ' 已采纳到模板 ' + templateId + '，生成 rev ' + res.rev + '（' + res.size + ' 字节）', 'ok');
+    } else if (action === 'repush') {
+      const res = await api('POST', base + '/repush');
+      say(mac + ' 已重新下发，rev ' + res.rev, 'ok');
+    } else if (action === 'release') {
+      await api('POST', base + '/release');
+      say(mac + ' 已解绑，回到待采纳', 'ok');
+    } else if (action === 'download') {
+      await downloadPackage(mac);
+      say(mac + ' 配置包已下载', 'ok');
+    } else if (action === 'wifi_reload') {
+      if (!confirm(mac + ' 重启无线？客户端会短暂断连后自动重连。')) return;
+      const res = await api('POST', base + '/actions', { type: 'wifi_reload' });
+      say(mac + ' 已下发重启无线（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    } else if (action === 'reboot') {
+      if (!confirm(mac + ' 重启整机？AP 将离线约 1 分钟，无线会中断。')) return;
+      const res = await api('POST', base + '/actions', { type: 'reboot' });
+      say(mac + ' 已下发重启（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    } else if (action === 'factory_reset') {
+      if (!confirm(mac + ' 恢复出厂？将还原为控制器接管前的无线/网络配置，并解除采纳后重启。')) return;
+      if (!confirm('这是不可逆的现场变更，确认继续？')) return;
+      const res = await api('POST', base + '/actions', { type: 'factory_reset' });
+      say(mac + ' 已下发恢复出厂（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    }
+  } catch (e) {
+    if (!noteUnauthorized(e)) say(action + ' 失败：' + e.message, 'err');
+  } finally {
+    busy = false;
+    await refresh();
+  }
+}
+
+rows.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-action]');
+  if (b) act(b.dataset.action, b.dataset.mac, b);
+});
+
+// 周期重启面板。下拉每轮重绘但保留选择；输入值只在切换设备或保存后回填，
+// 否则 5 秒轮询会把操作员正在输入的数字覆盖掉。
+let rbDeviceMac = '';
+let rbLoadedMac = '';
+
+function fillRebootPicker(list) {
+  const sel = $('rb-device');
+  const adopted = list.filter(d => d.state === 'adopted');
+  sel.innerHTML = '<option value="">选择设备…</option>';
+  for (const dev of adopted) {
+    const o = document.createElement('option');
+    o.value = dev.mac;
+    o.textContent = (dev.hostname || dev.mac)
+      + (dev.reboot_period_days > 0 ? '（每 ' + dev.reboot_period_days + ' 天 ' + dev.reboot_at + '）' : '');
+    sel.appendChild(o);
+  }
+  if (!adopted.some(x => x.mac === rbDeviceMac)) rbDeviceMac = adopted.length ? adopted[0].mac : '';
+  sel.value = rbDeviceMac;
+  loadRebootValues(list, false);
+}
+
+function loadRebootValues(list, force) {
+  if (!force && rbLoadedMac === rbDeviceMac) return;
+  const dev = list.find(x => x.mac === rbDeviceMac);
+  rbLoadedMac = rbDeviceMac;
+  if (!dev) { $('rb-days').value = ''; $('rb-at').value = '03:00'; return; }
+  $('rb-days').value = dev.reboot_period_days || '';
+  $('rb-at').value = dev.reboot_at || '03:00';
+}
+
+function sayRB(text, kind) {
+  const el = $('rb-msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+async function saveRebootSchedule(days) {
+  if (!rbDeviceMac) { sayRB('请选择设备', 'err'); return; }
+  const at = $('rb-at').value || '03:00';
+  try {
+    const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(rbDeviceMac) + '/reboot-schedule',
+      { period_days: days, at: days > 0 ? at : '' });
+    rbLoadedMac = '';
+    if (days > 0)
+      sayRB('已设置每 ' + days + ' 天 ' + at + ' 重启；下次 '
+        + new Date(res.reboot_next_at * 1000).toLocaleString(), 'ok');
+    else
+      sayRB('已关闭周期重启', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayRB('保存失败：' + e.message, 'err');
+  }
+}
+
+$('rb-device').addEventListener('change', () => {
+  rbDeviceMac = $('rb-device').value;
+  loadRebootValues(deviceCache, true);
+});
+$('rb-save').addEventListener('click', () => {
+  const days = Math.max(0, Math.min(365, parseInt($('rb-days').value, 10) || 0));
+  saveRebootSchedule(days);
+});
+$('rb-off').addEventListener('click', () => saveRebootSchedule(0));
+
+// --- 状态 LED ---------------------------------------------------------------
+// 与周期重启同一套交互：下拉每轮重建但保留选择，输入值只在切换设备或保存
+// 后回填，避免 5 秒轮询覆盖操作员正在输入的时间。
+let ledDeviceMac = '';
+let ledLoadedMac = '';
+
+function fillLEDPicker(list) {
+  const sel = $('led-device');
+  const adopted = list.filter(d => d.state === 'adopted');
+  sel.innerHTML = '<option value="">选择设备…</option>';
+  for (const dev of adopted) {
+    const o = document.createElement('option');
+    o.value = dev.mac;
+    o.textContent = (dev.hostname || dev.mac)
+      + (dev.led_on_at || dev.led_off_at
+        ? '（开 ' + (dev.led_on_at || '—') + ' / 关 ' + (dev.led_off_at || '—') + '）'
+        : '');
+    sel.appendChild(o);
+  }
+  if (!adopted.some(x => x.mac === ledDeviceMac)) ledDeviceMac = adopted.length ? adopted[0].mac : '';
+  sel.value = ledDeviceMac;
+  loadLEDValues(list, false);
+}
+
+function loadLEDValues(list, force) {
+  if (!force && ledLoadedMac === ledDeviceMac) return;
+  const dev = list.find(x => x.mac === ledDeviceMac);
+  ledLoadedMac = ledDeviceMac;
+  $('led-on').value = dev ? (dev.led_on_at || '') : '';
+  $('led-off').value = dev ? (dev.led_off_at || '') : '';
+}
+
+function sayLED(text, kind) {
+  const el = $('led-msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+async function ledSwitch(state) {
+  if (!ledDeviceMac) { sayLED('请选择设备', 'err'); return; }
+  try {
+    const res = await api('POST', '/api/v1/devices/' + encodeURIComponent(ledDeviceMac) + '/actions',
+      { type: 'led_set', args: { state } });
+    sayLED((apNames[ledDeviceMac] || ledDeviceMac) + ' 已下发'
+      + (state === 'on' ? '开灯' : '关灯') + '（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayLED('下发失败：' + e.message, 'err');
+  }
+}
+
+async function saveLEDSchedule(clear) {
+  if (!ledDeviceMac) { sayLED('请选择设备', 'err'); return; }
+  const on = clear ? '' : ($('led-on').value || '');
+  const off = clear ? '' : ($('led-off').value || '');
+  if (on && off && on === off) { sayLED('开灯与关灯时间不能相同', 'err'); return; }
+  try {
+    const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(ledDeviceMac) + '/led-schedule',
+      { on_at: on, off_at: off });
+    ledLoadedMac = '';
+    if (clear || (!on && !off)) {
+      sayLED('已关闭 LED 定时', 'ok');
+    } else {
+      const parts = [];
+      if (on) parts.push('开 ' + on);
+      if (off) parts.push('关 ' + off);
+      sayLED('已保存 LED 定时（' + parts.join(' / ') + '）', 'ok');
+    }
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayLED('保存失败：' + e.message, 'err');
+  }
+}
+
+$('led-device').addEventListener('change', () => {
+  ledDeviceMac = $('led-device').value;
+  loadLEDValues(deviceCache, true);
+});
+$('led-on-now').addEventListener('click', () => ledSwitch('on'));
+$('led-off-now').addEventListener('click', () => ledSwitch('off'));
+$('led-save').addEventListener('click', () => saveLEDSchedule(false));
+$('led-clear').addEventListener('click', () => saveLEDSchedule(true));
+
+// --- AP 分组 ---------------------------------------------------------------
+// 分组只是控制器侧的归属关系：AP 的配置包里没有组的概念，改绑模板最终仍
+// 要通过重新生成配置包让 AP 拉取。绑定已采纳设备时后端会立即生成下一版。
+let groupsCache = [];
+let grpDeviceMac = '';
+
+function sayGrp(text, kind) {
+  const el = $('grp-msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+function sayGrpBind(text, kind) {
+  const el = $('grp-bind-msg');
+  el.textContent = text || '';
+  el.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+function templateOption(sel, emptyLabel, selected) {
+  sel.innerHTML = '';
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = emptyLabel;
+  sel.appendChild(none);
+  for (const t of templates) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name ? t.id + ' · ' + t.name : t.id;
+    sel.appendChild(o);
+  }
+  sel.value = selected || '';
+}
+
+function renderGroups(groups, list) {
+  groupsCache = groups || [];
+
+  // 创建表单的模板下拉：保留操作员已经选中的值，别被轮询重置。
+  const tplSel = $('grp-template');
+  const keepTpl = tplSel.value;
+  templateOption(tplSel, '不绑定模板', keepTpl);
+
+  const rowsEl = $('grp-rows');
+  if (!groupsCache.length) {
+    rowsEl.innerHTML = '<tr><td colspan="4" class="empty">尚未创建分组</td></tr>';
+  } else {
+    rowsEl.innerHTML = '';
+    for (const g of groupsCache) {
+      const tr = document.createElement('tr');
+      cell(tr, g.name);
+
+      // 模板绑定就在行内改：这样改绑不用先删分组再建，也不会丢掉成员。
+      const tcell = document.createElement('td');
+      const sel = document.createElement('select');
+      templateOption(sel, '不绑定模板', g.template_id);
+      sel.addEventListener('change', () => updateGroup(g, sel));
+      tcell.appendChild(sel);
+      tr.appendChild(tcell);
+
+      cell(tr, String(g.device_count || 0));
+
+      const ops = document.createElement('td');
+      ops.className = 'actions';
+      const del = document.createElement('button');
+      del.textContent = '删除';
+      del.addEventListener('click', () => deleteGroup(g));
+      ops.appendChild(del);
+      tr.appendChild(ops);
+      rowsEl.appendChild(tr);
+    }
+  }
+
+  // 设备选择器保留当前选中的设备；分组选择器保留目标分组。
+  const dsel = $('grp-device');
+  dsel.innerHTML = '<option value="">选择设备…</option>';
+  for (const d of list) {
+    const o = document.createElement('option');
+    o.value = d.mac;
+    o.textContent = (d.hostname || d.mac) + ' · ' + d.mac;
+    dsel.appendChild(o);
+  }
+  if (!list.some(d => d.mac === grpDeviceMac)) grpDeviceMac = list.length ? list[0].mac : '';
+  dsel.value = grpDeviceMac;
+
+  const gsel = $('grp-target');
+  const keepGroup = gsel.value;
+  gsel.innerHTML = '<option value="">选择分组…</option>';
+  for (const g of groupsCache) {
+    const o = document.createElement('option');
+    o.value = g.id;
+    o.textContent = g.name + (g.template_id ? ' → ' + g.template_id : '');
+    gsel.appendChild(o);
+  }
+  if (groupsCache.some(g => g.id === keepGroup)) gsel.value = keepGroup;
+  else if (groupsCache.length) gsel.value = groupsCache[0].id;
+}
+
+async function createGroup() {
+  const name = $('grp-name').value.trim();
+  if (!name) { sayGrp('请填写分组名称', 'err'); return; }
+  try {
+    await api('POST', '/api/v1/groups', { name, template_id: $('grp-template').value });
+    $('grp-name').value = '';
+    sayGrp('已创建分组「' + name + '」', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayGrp('创建失败：' + e.message, 'err');
+  }
+}
+
+async function updateGroup(g, sel) {
+  try {
+    await api('PUT', '/api/v1/groups/' + encodeURIComponent(g.id),
+      { name: g.name, template_id: sel.value });
+    sayGrp('已更新「' + g.name + '」的模板绑定', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayGrp('更新失败：' + e.message, 'err');
+    sel.value = g.template_id || '';
+  }
+}
+
+async function deleteGroup(g) {
+  if (!confirm('删除分组「' + g.name + '」？组内设备必须先移出。')) return;
+  try {
+    await api('DELETE', '/api/v1/groups/' + encodeURIComponent(g.id));
+    sayGrp('已删除分组「' + g.name + '」', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayGrp('删除失败：' + e.message, 'err');
+  }
+}
+
+async function bindGroup(groupID) {
+  if (!grpDeviceMac) { sayGrpBind('请选择设备', 'err'); return; }
+  try {
+    const d = await api('PUT', '/api/v1/devices/' + encodeURIComponent(grpDeviceMac) + '/group',
+      { group_id: groupID || '' });
+    sayGrpBind(groupID ? '已加入分组，模板 ' + (d.template_id || '未变')
+      + '（rev ' + (d.config_rev || 0) + '）' : '已移出分组', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayGrpBind('操作失败：' + e.message, 'err');
+  }
+}
+
+$('grp-create').addEventListener('click', createGroup);
+$('grp-device').addEventListener('change', () => { grpDeviceMac = $('grp-device').value; });
+$('grp-bind').addEventListener('click', () => {
+  const gid = $('grp-target').value;
+  if (!gid) { sayGrpBind('请选择分组', 'err'); return; }
+  bindGroup(gid);
+});
+$('grp-unbind').addEventListener('click', () => bindGroup(''));
+
+// 采纳用的模板选择。默认值取：
+//   记住的上一次选择 → 在网已采纳设备用得最多的模板 → 第一个非 default 模板。
+// “解绑后重新采纳”绝大多数是回到原来的模板，跟随在网设备比重新手选更不容易错。
+const ADOPT_TPL_KEY = 'ac.adopt_template';
+
+function defaultAdoptTemplate(devices) {
+  const remembered = localStorage.getItem(ADOPT_TPL_KEY);
+  if (remembered && templates.some(t => t.id === remembered)) return remembered;
+
+  const counts = new Map();
+  for (const d of devices) {
+    if (d.state === 'adopted' && d.template_id) {
+      counts.set(d.template_id, (counts.get(d.template_id) || 0) + 1);
+    }
+  }
+  let best = '';
+  let bestN = 0;
+  for (const [id, n] of counts) {
+    if (n > bestN && templates.some(t => t.id === id)) { best = id; bestN = n; }
+  }
+  if (best) return best;
+
+  const real = templates.find(t => t.id !== 'default');
+  if (real) return real.id;
+  return templates.length ? templates[0].id : '';
+}
+
+function adoptTemplatePicker(devices) {
+  const sel = document.createElement('select');
+  sel.className = 'adopt-template';
+  sel.title = '采纳时使用的模板';
+  for (const t of templates) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.id;
+    sel.appendChild(o);
+  }
+  const chosen = defaultAdoptTemplate(devices);
+  if (chosen) sel.value = chosen;
+  sel.addEventListener('change', () => localStorage.setItem(ADOPT_TPL_KEY, sel.value));
+  return sel;
+}
+
+function renderDevices(list) {
+  $('total').textContent = list.length;
+  $('ap-online').textContent = list.filter(x => x.online).length;
+  $('pending').textContent = list.filter(x => x.state === 'pending').length;
+  $('adopted').textContent = list.filter(x => x.state === 'adopted').length;
+  fillRebootPicker(list);
+  fillLEDPicker(list);
+
+  if (!list.length) {
+    rows.innerHTML = '<tr><td colspan="10" class="empty">等待 AP 上线…</td></tr>';
+    return;
+  }
+  rows.innerHTML = '';
+  for (const dev of list) {
+    const tr = document.createElement('tr');
+    cell(tr, dev.hostname);
+    cell(tr, dev.model);
+    cell(tr, dev.mac, 'mono');
+    cell(tr, dev.ip, 'mono');
+    cell(tr, dev.firmware);
+
+    const st = document.createElement('td');
+    const b = document.createElement('span');
+    b.className = 'badge ' + (dev.state === 'adopted' ? 'adopted' : 'pending');
+    b.textContent = dev.state === 'adopted' ? '已采纳' : '待采纳';
+    st.appendChild(b);
+
+    // Presence is a separate axis from adoption: a reflashed AP keeps its
+    // adopted state forever, so without this badge the controller claimed to be
+    // managing a box that no longer runs an agent.
+    const online = document.createElement('span');
+    online.className = 'badge ' + (dev.online ? 'adopted' : 'offline');
+    online.textContent = dev.online ? '在线' : '离线';
+    online.style.marginLeft = '6px';
+    if (dev.last_seen_age != null)
+      online.title = '最后的网关心跳：' + ago(dev.last_seen)
+        + '（' + Math.round(dev.last_seen_age / 60) + ' 分钟前）';
+    st.appendChild(online);
+
+    if (dev.config_rev > 0) {
+      const rev = document.createElement('span');
+      rev.className = 'rev';
+      rev.textContent = 'rev ' + dev.config_rev + (dev.applied_rev ? '/' + dev.applied_rev : '');
+      st.appendChild(rev);
+    }
+    // 采纳状态不显示模板时，操作员无法看出这台机器跑的是哪套配置，
+    // 解绑重采纳时就容易选错（曾因此拿占位 default 模板去采纳真机）。
+    if (dev.template_id) {
+      const tpl = document.createElement('span');
+      tpl.className = 'rev';
+      tpl.textContent = '模板 ' + dev.template_id;
+      st.appendChild(tpl);
+    }
+    if (dev.reboot_period_days > 0) {
+      const rb = document.createElement('span');
+      rb.className = 'rev';
+      rb.textContent = '周期重启 ' + dev.reboot_period_days + '天 ' + dev.reboot_at;
+      st.appendChild(rb);
+    }
+    if (dev.led_on_at || dev.led_off_at) {
+      const led = document.createElement('span');
+      led.className = 'rev';
+      led.textContent = 'LED 定时 开' + (dev.led_on_at || '—') + ' / 关' + (dev.led_off_at || '—');
+      st.appendChild(led);
+    }
+    // 分组名来自本轮同时拉取的分组列表；匹配不到时显示原始 ID，
+    // 至少能让操作员看出这台机器还挂在已被删除的组上。
+    if (dev.group_id) {
+      const g = groupsCache.find(x => x.id === dev.group_id);
+      const grp = document.createElement('span');
+      grp.className = 'rev';
+      grp.textContent = '分组 ' + (g ? g.name : dev.group_id);
+      st.appendChild(grp);
+    }
+    tr.appendChild(st);
+
+    // 这是 AP 自己探测后上报的实际状态，不是控制器下发的期望值
+    cell(tr, dev.steering, 'mono');
+    cell(tr, ago(dev.last_seen));
+    // uptime 来自上一次心跳，在线时叠加心跳间隔才能显示"现在"的时长；
+    // 离线 AP 只保留最后一次上报值，别把陈旧数据伪装成实时。
+    const upSec = (dev.uptime || 0) + (dev.online ? (dev.last_seen_age || 0) : 0);
+    const upTd = cell(tr, dev.uptime ? duration(upSec) : '');
+    upTd.title = dev.uptime ? '上次心跳上报：' + duration(dev.uptime) : 'AP 未上报运行时长';
+
+    if (dev.fw_target) {
+      const fw = document.createElement('span');
+      fw.className = 'rev';
+      const label = FW_STATE_LABELS[dev.fw_state];
+      fw.textContent = '固件 ' + dev.fw_target + (label ? ' · ' + label[0] : '');
+      st.appendChild(fw);
+    }
+
+    const ops = document.createElement('td');
+    ops.className = 'actions';
+    if (dev.state === 'adopted') {
+      ops.appendChild(button('重新下发', 'repush', dev.mac));
+      ops.appendChild(button('下载配置包', 'download', dev.mac));
+      ops.appendChild(button('重启无线', 'wifi_reload', dev.mac));
+      ops.appendChild(button('重启 AP', 'reboot', dev.mac));
+      ops.appendChild(button('恢复出厂', 'factory_reset', dev.mac));
+      ops.appendChild(button('解绑', 'release', dev.mac));
+    } else {
+      ops.appendChild(adoptTemplatePicker(list));
+      ops.appendChild(button('采纳', 'adopt', dev.mac, 'primary'));
+    }
+    tr.appendChild(ops);
+
+    rows.appendChild(tr);
+  }
+}
+
+function renderClients(payload) {
+  const list = payload.clients || [];
+  clientCache = list;
+  lastClientPayload = payload;
+  $('c-online').textContent = payload.online || 0;
+  $('c-total').textContent = payload.total || 0;
+  $('clients-online').textContent = payload.online || 0;
+
+  // 遥测页的客户端选择器由同一份列表填充，避免再发一次请求。
+  fillClientPicker(list);
+
+  const bands = { '2g': 0, '5g': 0, '6g': 0 };
+  for (const c of list) {
+    if (c.online && bands[c.band] !== undefined) bands[c.band]++;
+  }
+  $('c-bands').textContent = bands['2g'] + ' / ' + bands['5g'] + ' / ' + bands['6g'];
+
+  if (clientSelected && !list.some(c => c.mac === clientSelected)) closeClientDetail();
+
+  const trackedOnly = $('client-tracked-only').checked;
+  const visible = trackedOnly ? list.filter(c => c.tracked) : list;
+  if (!visible.length) {
+    clientRows.innerHTML = '<tr><td colspan="10" class="empty">'
+      + (trackedOnly ? '没有追踪中的客户端' : '暂无客户端上报') + '</td></tr>';
+    return;
+  }
+  clientRows.innerHTML = '';
+  for (const c of visible) {
+    const tr = document.createElement('tr');
+    if (!c.online) tr.style.opacity = '.5';
+    // 名称列优先显示别名，并给追踪中的客户端一个标记。
+    const nameTD = cell(tr, c.alias || c.mac, 'mono');
+    if (c.tracked) {
+      const tag = document.createElement('span');
+      tag.className = 'badge adopted';
+      tag.textContent = '追踪';
+      tag.style.marginLeft = '6px';
+      nameTD.appendChild(tag);
+    }
+    cell(tr, c.mac, 'mono');
+    cell(tr, c.ip, 'mono');
+    cell(tr, c.ssid);
+    cell(tr, (c.band || '').toUpperCase());
+    signalCell(tr, c.signal_dbm);
+    const rate = (c.rx_rate_mbps || c.tx_rate_mbps)
+      ? '↓' + (c.rx_rate_mbps || '-') + ' / ↑' + (c.tx_rate_mbps || '-') + ' Mbps'
+      : '–';
+    cell(tr, rate, 'mono');
+    cell(tr, apNames[c.ap_mac] || c.ap_mac, 'mono');
+    cell(tr, c.online ? duration(c.connected_seconds) : '离线');
+
+    const ops = document.createElement('td');
+    ops.appendChild(button('详情', 'client-detail', c.mac));
+    if (c.online) ops.appendChild(button('踢下线', 'client-kick', c.mac));
+    tr.appendChild(ops);
+    clientRows.appendChild(tr);
+  }
+}
+
+let clientCache = [];
+let clientSelected = '';
+let lastClientPayload = null;
+
+// closeClientDetail hides the form without losing the list itself.
+function closeClientDetail() {
+  clientSelected = '';
+  clientDetail.classList.add('hidden');
+  clientDetail.innerHTML = '';
+  clientDetail.dataset.mac = '';
+}
+
+// knownSSIDs returns the SSIDs currently defined by any template. A binding to
+// an SSID no template declares would never be rendered, so it is not offered.
+function knownSSIDs() {
+  const out = new Set();
+  for (const t of templates) {
+    for (const s of (t.ssids || [])) {
+      if (!s.disabled && s.ssid) out.add(s.ssid);
+    }
+  }
+  return [...out].sort();
+}
+
+// openClientDetail builds the metadata/magnet form for one station. It is only
+// rebuilt when the selection changes, so the 5-second refresh cannot overwrite
+// a half-typed note.
+function openClientDetail(mac) {
+  const c = clientCache.find(x => x.mac === mac);
+  if (!c) return;
+  clientSelected = mac;
+  clientDetail.dataset.mac = mac;
+  clientDetail.classList.remove('hidden');
+  clientDetail.innerHTML = '';
+
+  const h = document.createElement('h3');
+  h.textContent = (c.alias || c.mac) + ' · ' + (c.online ? '在线' : '离线');
+  clientDetail.appendChild(h);
+
+  const fields = document.createElement('div');
+  fields.className = 'wl-fields';
+  clientDetail.appendChild(fields);
+  const addField = (text, wide) => {
+    const label = document.createElement('label');
+    if (wide) label.className = 'wl-span2';
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    fields.appendChild(label);
+    return label;
+  };
+
+  const aliasLabel = addField('名称 / 别名');
+  const aliasInput = document.createElement('input');
+  aliasInput.value = c.alias || '';
+  aliasInput.maxLength = 64;
+  aliasLabel.appendChild(aliasInput);
+
+  const trackLabel = addField('追踪');
+  const trackBox = document.createElement('label');
+  trackBox.style.flexDirection = 'row';
+  trackBox.style.alignItems = 'center';
+  trackBox.style.gap = '6px';
+  const trackInput = document.createElement('input');
+  trackInput.type = 'checkbox';
+  trackInput.checked = !!c.tracked;
+  trackBox.appendChild(trackInput);
+  const trackText = document.createElement('span');
+  trackText.textContent = '仅显示追踪时保留此客户端';
+  trackBox.appendChild(trackText);
+  trackLabel.appendChild(trackBox);
+
+  const ssidLabel = addField('磁吸 SSID');
+  const ssidInput = document.createElement('input');
+  ssidInput.value = c.bind_ssid || '';
+  ssidInput.placeholder = '留空表示不磁吸';
+  ssidInput.setAttribute('list', 'client-ssid-options');
+  const dl = document.createElement('datalist');
+  dl.id = 'client-ssid-options';
+  for (const name of knownSSIDs()) {
+    const o = document.createElement('option');
+    o.value = name;
+    dl.appendChild(o);
+  }
+  ssidInput.addEventListener('input', () => { ssidInput.value = ssidInput.value.trimStart(); });
+  ssidLabel.appendChild(ssidInput);
+  ssidLabel.appendChild(dl);
+
+  const apLabel = addField('磁吸到 AP');
+  const apSel = document.createElement('select');
+  const any = document.createElement('option');
+  any.value = '';
+  any.textContent = '任意 AP（按 SSID）';
+  apSel.appendChild(any);
+  for (const dev of deviceCache.filter(d => d.state === 'adopted')) {
+    const o = document.createElement('option');
+    o.value = dev.mac;
+    o.textContent = (dev.hostname || dev.mac) + ' · ' + dev.mac;
+    if (dev.mac === c.bind_ap_mac) o.selected = true;
+    apSel.appendChild(o);
+  }
+  apLabel.appendChild(apSel);
+
+  const noteLabel = addField('备注', true);
+  const noteInput = document.createElement('textarea');
+  noteInput.rows = 2;
+  noteInput.maxLength = 512;
+  noteInput.value = c.note || '';
+  noteLabel.appendChild(noteInput);
+
+  const actions = document.createElement('div');
+  actions.style.marginTop = '12px';
+  clientDetail.appendChild(actions);
+
+  const save = () => {
+    const body = {
+      alias: aliasInput.value.trim(),
+      note: noteInput.value.trim(),
+      tracked: trackInput.checked,
+      bind_ssid: ssidInput.value.trim(),
+      bind_ap_mac: apSel.value,
+    };
+    if (!body.bind_ssid) body.bind_ap_mac = '';
+    saveClientMeta(clientSelected, body);
+  };
+  const kick = () => kickClient(clientSelected);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary';
+  saveBtn.textContent = '保存';
+  saveBtn.addEventListener('click', save);
+  actions.appendChild(saveBtn);
+
+  if (c.online) {
+    const kickBtn = document.createElement('button');
+    kickBtn.textContent = '踢下线';
+    kickBtn.addEventListener('click', kick);
+    actions.appendChild(kickBtn);
+  }
+  const close = document.createElement('button');
+  close.textContent = '关闭';
+  close.addEventListener('click', closeClientDetail);
+  actions.appendChild(close);
+}
+
+async function saveClientMeta(mac, body) {
+  try {
+    await api('PUT', '/api/v1/clients/' + encodeURIComponent(mac), body);
+    say(mac + ' 已保存', 'ok');
+    await refresh();
+    openClientDetail(mac);
+  } catch (e) {
+    if (!noteUnauthorized(e)) say('保存失败：' + e.message, 'err');
+  }
+}
+
+async function kickClient(mac) {
+  if (!confirm('确定让 ' + mac + ' 立即下线？客户端可以立刻重新连接。')) return;
+  try {
+    const res = await api('POST', '/api/v1/clients/' + encodeURIComponent(mac) + '/kick');
+    say(mac + ' 已下发踢除（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    await refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) say('踢下线失败：' + e.message, 'err');
+  }
+}
+
+clientRows.addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-action]');
+  if (!b) return;
+  if (b.dataset.action === 'client-detail') openClientDetail(b.dataset.mac);
+  else if (b.dataset.action === 'client-kick') kickClient(b.dataset.mac);
+});
+
+$('client-tracked-only').addEventListener('change', () => {
+  if (lastClientPayload) renderClients(lastClientPayload);
+});
+
+async function refresh() {
+  try {
+    // Health first: it is reachable without a credential and it says whether
+    // one is needed at all, so the UI can prompt before anything 401s.
+    const h = await api('GET', '/api/v1/health');
+    $('acid').textContent = h.ac_id || '–';
+    $('pubkey').textContent = h.pubkey || '–';
+    if (h.admin_auth_required && !adminToken) showAuth();
+
+    const [d, c, g] = await Promise.all([
+      api('GET', '/api/v1/devices'),
+      api('GET', '/api/v1/clients'),
+      api('GET', '/api/v1/groups'),
+    ]);
+
+    const devices = d.devices || [];
+    apNames = {};
+    for (const dev of devices) apNames[dev.mac] = dev.hostname;
+
+    // 设备行的“采纳”要选模板，模板列表不是每轮都变，加载一次即可。
+    if (!templates.length) await loadTemplates().catch(() => {});
+
+    // 先更新分组缓存，设备行上的分组名才是本轮数据。
+    renderGroups(g.groups || [], devices);
+    renderDevices(devices);
+    renderClients(c);
+    deviceCache = devices;
+    // 固件页的状态（下载中/升级中/失败）在设备行上，复用这次轮询的结果重绘，
+    // 不必再单独请求；下拉选择在 renderFirmwareDevices 内部保留。
+    if (currentView === 'firmware') renderFirmwareDevices();
+    // 射频页的实时状态随同一轮轮询刷新；renderRadioTable 只重绘状态表，
+    // 模板工作频率编辑器留在 loadRF 里，避免轮询重置未保存的编辑。
+    if (currentView === 'rf') refreshRFStatus();
+    // 系统页复用这一轮已经取到的设备列表，再补一次运维查询。
+    if (currentView === 'system') {
+      fillDiagDevices(devices);
+      refreshSystemLive();
+    }
+    if (adminToken) hideAuth();
+    loadSecretPanel();
+  } catch (e) {
+    /* controller restarting, or the token was rejected; next tick will recover */
+    noteUnauthorized(e);
+  }
+}
+
+// --- AP 共享密钥 -------------------------------------------------------------
+// 运行时覆盖环境变量 AC_SHARED_SECRET：写入 settings 表并立即生效，
+// 重启不丢。放设备页是因为轮换密钥紧接着就要去改 AP 的 /etc/config/ac。
+
+function saySec(text, kind) { const m = $('sec-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+
+async function loadSecretPanel() {
+  try {
+    const cfg = await api('GET', '/api/v1/settings');
+    const ss = cfg.shared_secret || {};
+    $('sec-current').value = ss.effective || '（未设置——AP 上报不做认证）';
+    const badge = $('sec-source');
+    badge.hidden = false;
+    badge.textContent = ss.source === 'settings' ? '页面设置' : '来自环境变量';
+    badge.className = 'badge ' + (ss.effective ? 'adopted' : 'offline');
+  } catch (e) {
+    if (!noteUnauthorized(e)) saySec(e.message, 'err');
+  }
+}
+
+$('sec-save').addEventListener('click', async () => {
+  try {
+    const secret = $('sec-new').value;
+    if (!secret.trim()) {
+      if (!confirm('新密钥为空：保存将清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET。继续？')) return;
+    }
+    await api('PUT', '/api/v1/settings/shared-secret', { secret: secret.trim() });
+    $('sec-new').value = '';
+    if (secret.trim()) {
+      saySec('共享密钥已更新并立即生效；请尽快把新密钥写入每台 AP 的 /etc/config/ac，否则它们将无法上报', 'ok');
+    } else {
+      saySec('已清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET', 'ok');
+    }
+    loadSecretPanel();
+  } catch (e) {
+    if (!noteUnauthorized(e)) saySec(e.message, 'err');
+  }
+});
+
+// --- charts ----------------------------------------------------------------
+// Hand-rolled SVG rather than a chart library: the page has to work from an
+// embedded asset with no network access, and three line charts do not justify
+// 200 kB of dependency.
+
+const PALETTE = ['#60a5fa', '#f472b6', '#34d399', '#fbbf24', '#a78bfa', '#22d3ee', '#fb923c', '#94a3b8'];
+
+function niceRange(lo, hi, pad) {
+  if (hi === lo) { hi = lo + 1; lo = lo - 1; }
+  if (pad) {
+    const span = hi - lo;
+    hi += span * 0.08;
+    lo -= span * 0.08;
+  }
+  return [lo, hi];
+}
+
+function clockLabel(ts, spanSec) {
+  const d = new Date(ts * 1000);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (spanSec > 3 * 86400) return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
+  return hh + ':' + mm;
+}
+
+// drawChart renders series = [{name, color, points:[{x,y}]}].
+// opts.step draws a step line, which is what a state variable needs: the value
+// holds until it changes instead of ramping between two samples.
+function drawChart(host, series, opts) {
+  opts = opts || {};
+  const W = 860, H = opts.height || 190;
+  const padL = 46, padR = 14, padT = 12, padB = 24;
+  const w = W - padL - padR, h = H - padT - padB;
+
+  const live = (series || []).filter(s => s.points && s.points.length);
+  if (!live.length) {
+    host.innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const s of live) for (const p of s.points) {
+    if (p.x < x0) x0 = p.x;
+    if (p.x > x1) x1 = p.x;
+    if (p.y < y0) y0 = p.y;
+    if (p.y > y1) y1 = p.y;
+  }
+  if (opts.min !== undefined) y0 = opts.min;
+  if (opts.max !== undefined) y1 = opts.max;
+  else if (opts.min === undefined) [y0, y1] = niceRange(y0, y1, true);
+  if (x0 === x1) x1 = x0 + 60;
+  if (y0 === y1) y1 = y0 + 1;
+
+  const X = (v) => padL + ((v - x0) / (x1 - x0)) * w;
+  const Y = (v) => padT + h - ((v - y0) / (y1 - y0)) * h;
+
+  let out = '<svg class="chart" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img">';
+  const ticks = opts.yTicks || 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = y0 + ((y1 - y0) * i) / ticks;
+    const y = Y(v).toFixed(1);
+    out += '<line class="grid" x1="' + padL + '" y1="' + y + '" x2="' + (W - padR) + '" y2="' + y + '"/>';
+    const label = opts.integer ? Math.round(v) : (Math.abs(v) >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
+    out += '<text x="' + (padL - 6) + '" y="' + (Y(v) + 3).toFixed(1) + '" text-anchor="end">' + label + '</text>';
+  }
+  const span = x1 - x0;
+  for (let i = 0; i <= 4; i++) {
+    const v = x0 + (span * i) / 4;
+    out += '<text x="' + X(v).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle">' +
+      clockLabel(v, span) + '</text>';
+  }
+
+  for (const s of live) {
+    const pts = s.points;
+    let d = '';
+    if (opts.step) {
+      d = 'M' + X(pts[0].x).toFixed(1) + ' ' + Y(pts[0].y).toFixed(1);
+      for (let i = 1; i < pts.length; i++) {
+        d += ' H' + X(pts[i].x).toFixed(1) + ' V' + Y(pts[i].y).toFixed(1);
+      }
+      // A step line needs one last horizontal segment to reach "now".
+      d += ' H' + (W - padR);
+    } else {
+      d = pts.map((p, i) => (i ? 'L' : 'M') + X(p.x).toFixed(1) + ' ' + Y(p.y).toFixed(1)).join(' ');
+    }
+    out += '<path d="' + d + '" fill="none" stroke="' + s.color +
+      '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>';
+  }
+  out += '</svg>';
+  host.innerHTML = out;
+}
+
+function legend(host, names) {
+  host.innerHTML = names.map((n, i) =>
+    '<span><i style="background:' + PALETTE[i % PALETTE.length] + '"></i>' + n + '</span>').join('');
+}
+
+// --- telemetry view --------------------------------------------------------
+
+let currentRange = '6h';
+let telemBusy = false;
+
+function bandLabel(band) {
+  return ({ '2g': '2.4G', '5g': '5G', '6g': '6G' })[band] || band || '?';
+}
+
+function seriesName(point) {
+  const ap = apNames[point.ap_mac] || point.ap_mac;
+  return ap + ' · ' + bandLabel(point.band) + ' ' + (point.radio || '');
+}
+
+async function loadTelemetry() {
+  if (telemBusy) return;
+  telemBusy = true;
+  try {
+    const [counts, radios] = await Promise.all([
+      api('GET', '/api/v1/telemetry/counts?range=' + currentRange),
+      api('GET', '/api/v1/telemetry/radios?range=' + currentRange),
+    ]);
+
+    if (radios.oldest_ts) {
+      $('telem-hint').textContent = '已有历史自 ' + new Date(radios.oldest_ts * 1000).toLocaleString() + ' 起';
+    }
+
+    const byAP = new Map();
+    for (const p of counts.points || []) {
+      if (!byAP.has(p.ap_mac)) byAP.set(p.ap_mac, []);
+      byAP.get(p.ap_mac).push({ x: p.ts, y: p.clients });
+    }
+    drawChart($('chart-counts'), [...byAP.entries()].map(([mac, points], i) => ({
+      name: apNames[mac] || mac,
+      color: PALETTE[i % PALETTE.length],
+      points: points.sort((a, b) => a.x - b.x),
+    })), { min: 0, integer: true });
+    legend($('legend-counts') || document.createElement('div'),
+      [...byAP.keys()].map(m => apNames[m] || m));
+
+    const byRadio = new Map();
+    for (const p of radios.points || []) {
+      const key = p.ap_mac + '|' + p.radio;
+      if (!byRadio.has(key)) byRadio.set(key, { label: seriesName(p), points: [] });
+      byRadio.get(key).points.push(p);
+    }
+    const radioSeries = [...byRadio.values()].map((s, i) => ({
+      name: s.label,
+      color: PALETTE[i % PALETTE.length],
+      points: s.points.sort((a, b) => a.ts - b.ts),
+    }));
+    const names = radioSeries.map(s => s.name);
+    legend($('legend-util'), names);
+    legend($('legend-channel'), names);
+
+    drawChart($('chart-util'), radioSeries.map(s => ({
+      name: s.name, color: s.color,
+      points: s.points.filter(p => p.utilization >= 0).map(p => ({ x: p.ts, y: p.utilization })),
+    })), { min: 0, max: 100, integer: true });
+
+    drawChart($('chart-channel'), radioSeries.map(s => ({
+      name: s.name, color: s.color,
+      points: s.points.filter(p => p.channel > 0).map(p => ({ x: p.ts, y: p.channel })),
+    })), { step: true, integer: true });
+
+    if (pickedClient) loadClientSeries(pickedClient);
+  } catch (e) {
+    noteUnauthorized(e);
+  } finally {
+    telemBusy = false;
+  }
+}
+
+let pickedClient = '';
+
+async function loadClientSeries(mac) {
+  try {
+    const res = await api('GET', '/api/v1/telemetry/clients?mac=' + encodeURIComponent(mac) + '&range=' + currentRange);
+    const pts = (res.points || []).slice().sort((a, b) => a.ts - b.ts);
+    // 信号与速率各占一张图：dBm 是负数、跨度几十，Mbps 跨度上千，
+    // 共用一条纵轴会让两条曲线都压成一条直线。
+    drawChart($('chart-client-signal'), [
+      { name: 'signal', color: '#60a5fa', points: pts.filter(p => p.signal_dbm).map(p => ({ x: p.ts, y: p.signal_dbm })) },
+    ], { min: -95, max: 0, integer: true });
+    drawChart($('chart-client-rate'), [
+      { name: 'rx', color: '#f472b6', points: pts.filter(p => p.rx_rate_mbps).map(p => ({ x: p.ts, y: p.rx_rate_mbps })) },
+      { name: 'tx', color: '#34d399', points: pts.filter(p => p.tx_rate_mbps).map(p => ({ x: p.ts, y: p.tx_rate_mbps })) },
+    ], { min: 0, integer: true });
+  } catch (e) {
+    noteUnauthorized(e);
+  }
+}
+
+// --- 射频 / 端口视图 ----------------------------------------------------------
+// 两个页面都读写既有接口：实时射频来自 /api/v1/radios，模板射频与端口来自
+// /api/v1/templates（整模板替换），每台机器的端口差异来自 network 覆盖。
+// 不引入新的控制逻辑，因此控制器仍是唯一的事实来源。
+
+let templates = [];
+let rfTemplateId = '';
+let portTemplateId = '';
+let portDeviceMac = '';
+let wlTemplateId = '';
+let wlDeviceMac = '';
+let deviceCache = [];
+
+// 工作频率的候选值全部来自 XR1710G 真机实测（2026-11-02，ImmortalWrt 20261026 /
+// MT7996），不是照规范抄的：
+//   模式+宽度 = `iwinfo <if> htmodelist`（5G 确实有 VHT，6G 没有）；
+//   信道      = `iwinfo <if> freqlist`（US 域，2.4G 只有 1-11，6G 到 233）。
+// 换固件或国家后选项可能变化，但现有值不在候选里时会作为额外选项保留，不会被静默改写。
+const WIFIMODES = {
+  '2g': [['HT', 'HT · Wi-Fi 4 (n)'], ['HE', 'HE · Wi-Fi 6 (ax)'], ['EHT', 'EHT · Wi-Fi 7 (be)']],
+  '5g': [['HT', 'HT · Wi-Fi 4 (n)'], ['VHT', 'VHT · Wi-Fi 5 (ac)'], ['HE', 'HE · Wi-Fi 6 (ax)'], ['EHT', 'EHT · Wi-Fi 7 (be)']],
+  '6g': [['HE', 'HE · Wi-Fi 6 (ax)'], ['EHT', 'EHT · Wi-Fi 7 (be)']],
+};
+const WIDTHS = {
+  '2g': [20, 40],
+  '5g': [20, 40, 80, 160],
+  '6g': [20, 40, 80, 160, 320],
+};
+// 功率上限来自真机 `iwinfo <if> txpowerlist`（2026-11-02）：radio0 (2.4G) 最大
+// 28 dBm，radio1/2 (5G/6G) 最大 30 dBm。下拉按 dBm 标注等值毫瓦。
+const TXPOWER_MAX = { '2g': 28, '5g': 30, '6g': 30 };
+const CHANNELS = {
+  '2g': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  '5g': [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128,
+    132, 136, 140, 144, 149, 153, 157, 161, 165, 169, 173, 177],
+  '6g': [1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 49, 53, 57, 61, 65, 69, 73,
+    77, 81, 85, 89, 93, 97, 101, 105, 109, 113, 117, 121, 125, 129, 133, 137,
+    141, 145, 149, 153, 157, 161, 165, 169, 173, 177, 181, 185, 189, 193, 197,
+    201, 205, 209, 213, 217, 221, 225, 229, 233],
+};
+// 中心频率：2.4G ch1=2412 步进 5；5G 5000+5*ch；6G 5950+5*ch（与 freqlist 一致）。
+function channelFreq(band, ch) {
+  ch = Number(ch);
+  if (!ch) return 0;
+  if (band === '2g') return 2412 + 5 * (ch - 1);
+  if (band === '5g') return 5000 + 5 * ch;
+  if (band === '6g') return 5950 + 5 * ch;
+  return 0;
+}
+// 国家代码来自真机 `iwinfo <if> countrylist`（regulatory.db 的 ISO 3166 表）。
+const COUNTRIES = [
+  ['00', 'World'], ['AD', 'Andorra'], ['AE', 'United Arab Emirates'], ['AF', 'Afghanistan'],
+  ['AG', 'Antigua and Barbuda'], ['AI', 'Anguilla'], ['AL', 'Albania'], ['AM', 'Armenia'],
+  ['AO', 'Angola'], ['AQ', 'Antarctica'], ['AR', 'Argentina'], ['AS', 'American Samoa'],
+  ['AT', 'Austria'], ['AU', 'Australia'], ['AW', 'Aruba'], ['AZ', 'Azerbaijan'],
+  ['BA', 'Bosnia and Herzegovina'], ['BB', 'Barbados'], ['BD', 'Bangladesh'], ['BE', 'Belgium'],
+  ['BF', 'Burkina Faso'], ['BG', 'Bulgaria'], ['BH', 'Bahrain'], ['BI', 'Burundi'],
+  ['BJ', 'Benin'], ['BM', 'Bermuda'], ['BN', 'Brunei Darussalam'], ['BO', 'Bolivia'],
+  ['BR', 'Brazil'], ['BS', 'Bahamas'], ['BT', 'Bhutan'], ['BW', 'Botswana'],
+  ['BY', 'Belarus'], ['BZ', 'Belize'], ['CA', 'Canada'], ['CC', 'Cocos (Keeling) Islands'],
+  ['CD', 'Congo'], ['CF', 'Central African Republic'], ['CH', 'Switzerland'], ['CI', "Cote d'Ivoire"],
+  ['CK', 'Cook Islands'], ['CL', 'Chile'], ['CM', 'Cameroon'], ['CN', 'China'],
+  ['CO', 'Colombia'], ['CR', 'Costa Rica'], ['CU', 'Cuba'], ['CV', 'Cape Verde'],
+  ['CX', 'Christmas Island'], ['CY', 'Cyprus'], ['CZ', 'Czech Republic'], ['DE', 'Germany'],
+  ['DJ', 'Djibouti'], ['DK', 'Denmark'], ['DM', 'Dominica'], ['DO', 'Dominican Republic'],
+  ['DZ', 'Algeria'], ['EC', 'Ecuador'], ['EE', 'Estonia'], ['EG', 'Egypt'],
+  ['EH', 'Western Sahara'], ['ER', 'Eritrea'], ['ES', 'Spain'], ['ET', 'Ethiopia'],
+  ['FI', 'Finland'], ['FJ', 'Fiji'], ['FK', 'Falkland Islands'], ['FM', 'Micronesia'],
+  ['FO', 'Faroe Islands'], ['FR', 'France'], ['GA', 'Gabon'], ['GB', 'United Kingdom'],
+  ['GD', 'Grenada'], ['GE', 'Georgia'], ['GF', 'French Guiana'], ['GG', 'Guernsey'],
+  ['GH', 'Ghana'], ['GI', 'Gibraltar'], ['GL', 'Greenland'], ['GM', 'Gambia'],
+  ['GN', 'Guinea'], ['GP', 'Guadeloupe'], ['GQ', 'Equatorial Guinea'], ['GR', 'Greece'],
+  ['GT', 'Guatemala'], ['GU', 'Guam'], ['GW', 'Guinea-Bissau'], ['GY', 'Guyana'],
+  ['HK', 'Hong Kong, China'], ['HN', 'Honduras'], ['HR', 'Croatia'], ['HT', 'Haiti'],
+  ['HU', 'Hungary'], ['ID', 'Indonesia'], ['IE', 'Ireland'], ['IL', 'Israel'],
+  ['IM', 'Isle of Man'], ['IN', 'India'], ['IO', 'Chagos Islands'], ['IQ', 'Iraq'],
+  ['IR', 'Iran'], ['IS', 'Iceland'], ['IT', 'Italy'], ['JE', 'Jersey'],
+  ['JM', 'Jamaica'], ['JO', 'Jordan'], ['JP', 'Japan'], ['KE', 'Kenya'],
+  ['KG', 'Kyrgyzstan'], ['KH', 'Cambodia'], ['KI', 'Kiribati'], ['KM', 'Comoros'],
+  ['KN', 'Saint Kitts and Nevis'], ['KP', 'North Korea'], ['KR', 'South Korea'], ['KW', 'Kuwait'],
+  ['KY', 'Cayman Islands'], ['KZ', 'Kazakhstan'], ['LA', 'Laos'], ['LB', 'Lebanon'],
+  ['LC', 'Saint Lucia'], ['LI', 'Liechtenstein'], ['LK', 'Sri Lanka'], ['LR', 'Liberia'],
+  ['LS', 'Lesotho'], ['LT', 'Lithuania'], ['LU', 'Luxembourg'], ['LV', 'Latvia'],
+  ['LY', 'Libya'], ['MA', 'Morocco'], ['MC', 'Monaco'], ['MD', 'Moldova'],
+  ['ME', 'Montenegro'], ['MG', 'Madagascar'], ['MH', 'Marshall Islands'], ['MK', 'Macedonia'],
+  ['ML', 'Mali'], ['MM', 'Myanmar'], ['MN', 'Mongolia'], ['MO', 'Macao, China'],
+  ['MP', 'Northern Mariana Islands'], ['MQ', 'Martinique'], ['MR', 'Mauritania'], ['MS', 'Montserrat'],
+  ['MT', 'Malta'], ['MU', 'Mauritius'], ['MV', 'Maldives'], ['MW', 'Malawi'],
+  ['MX', 'Mexico'], ['MY', 'Malaysia'], ['MZ', 'Mozambique'], ['NA', 'Namibia'],
+  ['NC', 'New Caledonia'], ['NE', 'Niger'], ['NF', 'Norfolk Island'], ['NG', 'Nigeria'],
+  ['NI', 'Nicaragua'], ['NL', 'Netherlands'], ['NO', 'Norway'], ['NP', 'Nepal'],
+  ['NR', 'Nauru'], ['NU', 'Niue'], ['NZ', 'New Zealand'], ['OM', 'Oman'],
+  ['PA', 'Panama'], ['PE', 'Peru'], ['PF', 'French Polynesia'], ['PG', 'Papua New Guinea'],
+  ['PH', 'Philippines'], ['PK', 'Pakistan'], ['PL', 'Poland'], ['PM', 'Saint Pierre and Miquelon'],
+  ['PR', 'Puerto Rico'], ['PT', 'Portugal'], ['PW', 'Palau'], ['PY', 'Paraguay'],
+  ['QA', 'Qatar'], ['RE', 'Reunion'], ['RO', 'Romania'], ['RS', 'Serbia'],
+  ['RU', 'Russian Federation'], ['RW', 'Rwanda'], ['SA', 'Saudi Arabia'], ['SB', 'Solomon Islands'],
+  ['SC', 'Seychelles'], ['SD', 'Sudan'], ['SE', 'Sweden'], ['SG', 'Singapore'],
+  ['SI', 'Slovenia'], ['SK', 'Slovakia'], ['SL', 'Sierra Leone'], ['SM', 'San Marino'],
+  ['SN', 'Senegal'], ['SO', 'Somalia'], ['SR', 'Suriname'], ['ST', 'Sao Tome and Principe'],
+  ['SV', 'El Salvador'], ['SY', 'Syrian Arab Republic'], ['SZ', 'Eswatini'], ['TC', 'Turks and Caicos Islands'],
+  ['TD', 'Chad'], ['TF', 'French Southern Territories'], ['TG', 'Togo'], ['TH', 'Thailand'],
+  ['TJ', 'Tajikistan'], ['TK', 'Tokelau'], ['TL', 'Timor-Leste'], ['TM', 'Turkmenistan'],
+  ['TN', 'Tunisia'], ['TO', 'Tonga'], ['TR', 'Turkey'], ['TT', 'Trinidad and Tobago'],
+  ['TV', 'Tuvalu'], ['TW', 'Taiwan, China'], ['TZ', 'Tanzania'], ['UA', 'Ukraine'],
+  ['UG', 'Uganda'], ['UM', 'U.S. Minor Outlying Islands'], ['US', 'United States'], ['UY', 'Uruguay'],
+  ['UZ', 'Uzbekistan'], ['VA', 'Vatican City State'], ['VC', 'St. Vincent and Grenadines'], ['VE', 'Venezuela'],
+  ['VG', 'Virgin Islands, British'], ['VI', 'Virgin Islands, U.S.'], ['VN', 'Viet Nam'], ['VU', 'Vanuatu'],
+  ['WF', 'Wallis and Futuna'], ['WS', 'Samoa'], ['YE', 'Yemen'], ['YT', 'Mayotte'],
+  ['ZA', 'South Africa'], ['ZM', 'Zambia'], ['ZW', 'Zimbabwe'],
+];
+
+// parseHTMode splits a UCI htmode into mode and width: "EHT160" → EHT/160.
+// Unparseable values keep their raw string so an exotic htmode round-trips
+// instead of being silently rewritten.
+function parseHTMode(htmode) {
+  const m = /^(HT|VHT|HE|EHT)(20|40|80|160|320)$/.exec(String(htmode || ''));
+  if (!m) return { mode: '', width: 0 };
+  return { mode: m[1], width: Number(m[2]) };
+}
+
+// dBm → mW，与 iwinfo txpowerlist 一致（28 dBm = 630 mW）。
+function dbmToMW(dbm) {
+  return Math.floor(Math.pow(10, Number(dbm) / 10));
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function sayRF(text, kind) { const m = $('rf-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function sayPort(text, kind) { const m = $('port-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function sayWL(text, kind) { const m = $('wl-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+
+async function loadTemplates() {
+  const res = await api('GET', '/api/v1/templates');
+  templates = res.templates || [];
+  templateRefs = res.refs || {};
+  return templates;
+}
+
+// templateRefs maps template id -> {devices, groups}. It drives the picker
+// labels and the delete button: a referenced template cannot be removed.
+let templateRefs = {};
+
+function templateRefLabel(id) {
+  const r = templateRefs[id];
+  if (!r || (!r.devices && !r.groups)) return '';
+  return '（' + (r.devices || 0) + ' 台' + (r.groups ? ' / ' + r.groups + ' 组' : '') + '）';
+}
+
+// 引用计数既用于提示，也用于禁删：被设备或分组引用的模板一旦删掉，
+// 那些对象的配置来源就不存在了。
+function renderWLRefs() {
+  const el = $('wl-refs');
+  const btn = $('wl-delete');
+  if (!el) return;
+  const known = templates.some(t => t.id === wlTemplateId);
+  if (!wlTemplateId || !known) {
+    el.textContent = '';
+    if (btn) { btn.disabled = true; btn.title = '请选择模板'; }
+    return;
+  }
+  const r = templateRefs[wlTemplateId] || {};
+  const parts = [];
+  if (r.devices) parts.push(r.devices + ' 台设备');
+  if (r.groups) parts.push(r.groups + ' 个分组');
+  el.textContent = parts.length ? '被引用：' + parts.join(' · ') : '';
+  if (btn) {
+    const only = templates.length <= 1;
+    btn.disabled = parts.length > 0 || only;
+    btn.title = parts.length
+      ? '仍有设备或分组引用此模板，需先解除绑定'
+      : (only ? '至少保留一个模板' : '');
+  }
+}
+
+function fillTemplatePicker(sel, selected) {
+  sel.innerHTML = '<option value="">选择模板…</option>';
+  for (const t of templates) {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = (t.name ? t.id + ' · ' + t.name : t.id) + templateRefLabel(t.id);
+    sel.appendChild(o);
+  }
+  if (selected && templates.some(t => t.id === selected)) sel.value = selected;
+}
+
+function renderRadioTable(list) {
+  const body = $('rf-rows');
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="13" class="empty">暂无射频上报</td></tr>';
+    return;
+  }
+  body.innerHTML = '';
+  for (const p of list) {
+    const tr = document.createElement('tr');
+    // 离线 AP 的采样会一直留在库里；不降透明度的话，读起来就像它在工作。
+    const dev = deviceCache.find(x => x.mac === p.ap_mac);
+    if (dev && !dev.online) {
+      tr.style.opacity = '.5';
+      tr.title = 'AP 离线，以下为其最后一次采样（' + ago(p.ts) + '）';
+    }
+    cell(tr, (dev && dev.hostname) || p.ap_mac, 'mono');
+    cell(tr, p.radio, 'mono');
+    cell(tr, bandLabel(p.band));
+
+    const st = document.createElement('td');
+    const b = document.createElement('span');
+    b.className = 'badge ' + (p.up ? 'adopted' : 'pending');
+    b.textContent = p.up ? 'up' : 'down';
+    st.appendChild(b);
+    tr.appendChild(st);
+
+    cell(tr, p.htmode || '–');
+    cell(tr, p.channel || '–');
+    cell(tr, p.freq_mhz ? p.freq_mhz + ' MHz' : '–');
+    cell(tr, p.width_mhz ? p.width_mhz + ' MHz' : '–');
+    cell(tr, p.txpower ? p.txpower + ' dBm' : '–');
+    cell(tr, p.country || '–');
+    // 占用率本身就是干扰的代理指标：>60% 说明空口时间明显被抢，>80% 接近饱和。
+    // 用徽章分档，比一个裸数字更容易在大表里扫到异常行。
+    const ut = document.createElement('td');
+    if (p.utilization >= 0) {
+      const ub = document.createElement('span');
+      ub.className = 'badge ' + (p.utilization >= 60 ? 'failed' : p.utilization >= 30 ? 'pending' : 'adopted');
+      ub.textContent = p.utilization + '%';
+      ut.appendChild(ub);
+      if (p.utilization >= 60) ut.appendChild(document.createTextNode(' 干扰'));
+    } else {
+      ut.textContent = '未知';
+    }
+    tr.appendChild(ut);
+    cell(tr, p.clients || 0);
+    cell(tr, ago(p.ts));
+    body.appendChild(tr);
+  }
+}
+
+function renderRFEditor() {
+  const body = $('rf-edit-rows');
+  const tpl = templates.find(t => t.id === rfTemplateId);
+  if (!tpl) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">选择模板…</td></tr>';
+    return;
+  }
+  body.innerHTML = '';
+  (tpl.radios || []).forEach((r, idx) => {
+    const tr = document.createElement('tr');
+    tr.dataset.idx = idx;
+    cell(tr, bandLabel(r.band) + ' · radio' + r.index);
+
+    // 模式（HT/VHT/HE/EHT）+ 通道宽度共同组成 htmode。
+    const parsed = parseHTMode(r.htmode);
+    const mode = document.createElement('td');
+    const modeSel = document.createElement('select');
+    modeSel.dataset.field = 'wifimode';
+    for (const [m, label] of (WIFIMODES[r.band] || [])) {
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = label;
+      modeSel.appendChild(o);
+    }
+    if (r.htmode && !parsed.mode) {
+      // 模板里的 htmode 不在真机候选内（异构设备等）：保留原文而不是改写。
+      const o = document.createElement('option');
+      o.value = r.htmode;
+      o.textContent = '保持 ' + r.htmode;
+      modeSel.appendChild(o);
+      modeSel.value = r.htmode;
+      modeSel.dataset.raw = '1';
+    } else if (parsed.mode) {
+      modeSel.value = parsed.mode;
+    } else {
+      const last = (WIFIMODES[r.band] || []).slice(-1)[0];
+      if (last) modeSel.value = last[0];
+    }
+    mode.appendChild(modeSel);
+    tr.appendChild(mode);
+
+    // 信道：下拉而不是自由输入，候选来自真机 freqlist；auto 交给 ACS。
+    const chan = document.createElement('td');
+    const chanSel = document.createElement('select');
+    chanSel.dataset.field = 'channel';
+    const autoOpt = document.createElement('option');
+    autoOpt.value = 'auto';
+    autoOpt.textContent = 'auto（ACS）';
+    chanSel.appendChild(autoOpt);
+    for (const ch of (CHANNELS[r.band] || [])) {
+      const o = document.createElement('option');
+      o.value = String(ch);
+      const f = channelFreq(r.band, ch);
+      o.textContent = ch + (f ? ' (' + f + ' MHz)' : '');
+      chanSel.appendChild(o);
+    }
+    const cur = String(r.channel || 'auto');
+    if (cur === 'auto') {
+      chanSel.value = 'auto';
+    } else if (/^\d+$/.test(cur) && (CHANNELS[r.band] || []).includes(Number(cur))) {
+      chanSel.value = cur;
+    } else {
+      // 现值不在候选里（换过国家、旧模板）：显式保留，不被静默改写。
+      const o = document.createElement('option');
+      o.value = cur;
+      o.textContent = '保持 ' + cur;
+      chanSel.appendChild(o);
+      chanSel.value = cur;
+    }
+    chan.appendChild(chanSel);
+    tr.appendChild(chan);
+
+    // 通道宽度
+    const width = document.createElement('td');
+    const widthSel = document.createElement('select');
+    widthSel.dataset.field = 'width';
+    for (const w of (WIDTHS[r.band] || [])) {
+      const o = document.createElement('option');
+      o.value = String(w);
+      o.textContent = w + ' MHz';
+      if (w === parsed.width) o.selected = true;
+      widthSel.appendChild(o);
+    }
+    width.appendChild(widthSel);
+    tr.appendChild(width);
+
+    // 最大传输功率：下拉，候选来自真机 txpowerlist（每档标注等值毫瓦，
+    // 与 iwinfo 相同的换算）；现值超出上限时显式保留而不是静默改写。
+    const power = document.createElement('td');
+    const pin = document.createElement('select');
+    pin.dataset.field = 'txpower';
+    const pmax = TXPOWER_MAX[r.band] || 30;
+    for (let d = 0; d <= pmax; d++) {
+      const o = document.createElement('option');
+      o.value = String(d);
+      o.textContent = d + ' dBm (' + dbmToMW(d) + ' mW)';
+      if (d === r.txpower) o.selected = true;
+      pin.appendChild(o);
+    }
+    if (r.txpower > pmax) {
+      const o = document.createElement('option');
+      o.value = String(r.txpower);
+      o.textContent = '保持 ' + r.txpower + ' dBm';
+      o.selected = true;
+      pin.appendChild(o);
+    }
+    power.appendChild(pin);
+    tr.appendChild(power);
+
+    // 国家代码：决定法规信道集与上限，渲染为 wifi-device 的 option country。
+    const country = document.createElement('td');
+    const cSel = document.createElement('select');
+    cSel.dataset.field = 'country';
+    const cBlank = document.createElement('option');
+    cBlank.value = '';
+    cBlank.textContent = '不设置';
+    cSel.appendChild(cBlank);
+    for (const [code, name] of COUNTRIES) {
+      const o = document.createElement('option');
+      o.value = code;
+      o.textContent = code + ' - ' + name;
+      if (code === r.country) o.selected = true;
+      cSel.appendChild(o);
+    }
+    if (r.country && !COUNTRIES.some(c => c[0] === r.country)) {
+      const o = document.createElement('option');
+      o.value = r.country;
+      o.textContent = '保持 ' + r.country;
+      o.selected = true;
+      cSel.appendChild(o);
+    }
+    if (!r.country) cSel.value = '';
+    country.appendChild(cSel);
+    tr.appendChild(country);
+
+    const en = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !r.disabled;
+    cb.dataset.field = 'disabled';
+    en.appendChild(cb);
+    tr.appendChild(en);
+
+    body.appendChild(tr);
+  });
+}
+
+async function loadRF() {
+  try {
+    await loadTemplates();
+    fillTemplatePicker($('rf-template'), rfTemplateId);
+    if (!$('rf-template').value && templates.length) $('rf-template').value = templates[0].id;
+    rfTemplateId = $('rf-template').value;
+    renderRFEditor();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayRF(e.message, 'err');
+  }
+}
+
+// 只刷新实时状态表，不重绘模板编辑器——编辑器里可能有未保存的选择，
+// 轮询把它重置掉就是在跟操作员抢输入。
+async function refreshRFStatus() {
+  try {
+    const r = await api('GET', '/api/v1/radios');
+    renderRadioTable(r.radios || []);
+  } catch (e) {
+    /* 下一个轮询周期再试 */
+  }
+}
+
+$('rf-template').addEventListener('change', () => {
+  rfTemplateId = $('rf-template').value;
+  sayRF('');
+  renderRFEditor();
+});
+
+$('rf-save').addEventListener('click', async () => {
+  try {
+    const tpl = templates.find(t => t.id === rfTemplateId);
+    if (!tpl) throw new Error('请选择模板');
+    const copy = JSON.parse(JSON.stringify(tpl));
+    for (const tr of $('rf-edit-rows').querySelectorAll('tr[data-idx]')) {
+      const r = copy.radios[Number(tr.dataset.idx)];
+      const modeSel = tr.querySelector('[data-field=wifimode]');
+      const widthSel = tr.querySelector('[data-field=width]');
+      const chanSel = tr.querySelector('[data-field=channel]');
+      const countrySel = tr.querySelector('[data-field=country]');
+
+      const channel = chanSel.value.trim() || 'auto';
+      if (channel !== 'auto' && !/^\d{1,3}$/.test(channel)) throw new Error('信道必须是 auto 或数字');
+      r.channel = channel;
+
+      // 模式下拉里是“保持 xxx”时（异构 htmode），原样带回，不重新拼装。
+      if (modeSel.dataset.raw) {
+        r.htmode = modeSel.value;
+      } else {
+        const m = /^(HT|VHT|HE|EHT)$/.test(modeSel.value) ? modeSel.value : '';
+        const w = parseInt(widthSel.value, 10) || 0;
+        if (!m || !w) throw new Error('请选择模式和通道宽度');
+        r.htmode = m + w;
+      }
+
+      r.txpower = Number(tr.querySelector('[data-field=txpower]').value);
+      r.country = countrySel.value;
+      r.disabled = !tr.querySelector('[data-field=disabled]').checked;
+    }
+    await api('POST', '/api/v1/templates', copy);
+    sayRF('模板 ' + copy.id + ' 已保存；已采纳设备需重新下发后生效', 'ok');
+    await loadRF();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayRF(e.message, 'err');
+  }
+});
+
+function renderPortTemplate() {
+  const host = $('port-template-body');
+  const tpl = templates.find(t => t.id === portTemplateId);
+  if (!tpl) {
+    host.innerHTML = '<div class="empty">选择模板…</div>';
+    return;
+  }
+  const br = tpl.bridge || {};
+  const ports = (br.ports || []).map(p => '<span class="mono">' + esc(p) + '</span>').join(' ') || '—';
+  const igmp = br.igmp_snooping === true ? '开启' : br.igmp_snooping === false ? '关闭' : '未设置';
+  let html = '<div class="hint" style="margin-top:0">bridge 端口：' + ports +
+    ' ｜ IGMP snooping：' + igmp + '</div>';
+
+  const vlans = br.vlans || [];
+  if (vlans.length) {
+    html += '<table><thead><tr><th>VLAN</th><th>端口</th></tr></thead><tbody>' +
+      vlans.map(v => '<tr><td class="mono">' + esc(v.vlan) + '</td><td class="mono">' +
+        (esc((v.ports || []).join(', ')) || '—') + '</td></tr>').join('') + '</tbody></table>';
+  }
+  if ((br.interfaces || []).length) {
+    html += '<div class="hint">接口：' + br.interfaces
+      .map(i => '<code>' + esc(i.name) + '</code> → ' + esc(i.device)).join('，') + '</div>';
+  }
+  host.innerHTML = html;
+}
+
+function addVLANRow(vlan, ports) {
+  const tr = document.createElement('tr');
+
+  const v = document.createElement('td');
+  const vi = document.createElement('input');
+  vi.type = 'number';
+  vi.min = '1';
+  vi.max = '4094';
+  vi.value = vlan;
+  vi.dataset.field = 'vlan';
+  v.appendChild(vi);
+  tr.appendChild(v);
+
+  const p = document.createElement('td');
+  const pi = document.createElement('input');
+  pi.value = (ports || []).join(' ');
+  pi.placeholder = 'wan:t / lan2:u*';
+  pi.dataset.field = 'ports';
+  pi.style.width = '100%';
+  p.appendChild(pi);
+  tr.appendChild(p);
+
+  const del = document.createElement('td');
+  const db = document.createElement('button');
+  db.textContent = '删除';
+  db.addEventListener('click', () => tr.remove());
+  del.appendChild(db);
+  tr.appendChild(del);
+
+  $('port-vlan-rows').appendChild(tr);
+}
+
+function renderPortDevice() {
+  $('port-vlan-rows').innerHTML = '';
+  const dev = deviceCache.find(x => x.mac === portDeviceMac);
+  if (!dev) {
+    $('port-bridge').value = '';
+    $('port-igmp').value = '';
+    return;
+  }
+  let ov = {};
+  if (dev.network_params) {
+    try { ov = JSON.parse(dev.network_params) || {}; } catch (_) { ov = {}; }
+  }
+  $('port-bridge').value = (ov.bridge_ports || []).join(' ');
+  $('port-igmp').value = ov.igmp_snooping === true ? '1' : ov.igmp_snooping === false ? '0' : '';
+  const vlans = ov.vlans || [];
+  for (const v of vlans) addVLANRow(v.vlan, v.ports || []);
+  if (!vlans.length) addVLANRow('', []);
+}
+
+async function loadPorts() {
+  try {
+    await loadTemplates();
+    fillTemplatePicker($('port-template'), portTemplateId);
+    if (!$('port-template').value && templates.length) $('port-template').value = templates[0].id;
+    portTemplateId = $('port-template').value;
+    renderPortTemplate();
+
+    const d = await api('GET', '/api/v1/devices');
+    deviceCache = d.devices || [];
+    const sel = $('port-device');
+    sel.innerHTML = '<option value="">选择设备…</option>';
+    for (const dev of deviceCache) {
+      const o = document.createElement('option');
+      o.value = dev.mac;
+      o.textContent = (dev.hostname || dev.mac) + (dev.state === 'adopted' ? '' : '（未采纳）');
+      sel.appendChild(o);
+    }
+    if (portDeviceMac && deviceCache.some(x => x.mac === portDeviceMac)) sel.value = portDeviceMac;
+    else if (deviceCache.length) { sel.value = deviceCache[0].mac; portDeviceMac = sel.value; }
+    else portDeviceMac = '';
+    renderPortDevice();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayPort(e.message, 'err');
+  }
+}
+
+$('port-template').addEventListener('change', () => {
+  portTemplateId = $('port-template').value;
+  renderPortTemplate();
+});
+
+$('port-device').addEventListener('change', () => {
+  portDeviceMac = $('port-device').value;
+  sayPort('');
+  renderPortDevice();
+});
+
+$('port-add-vlan').addEventListener('click', () => addVLANRow('', []));
+
+async function savePortOverride(clear) {
+  if (!portDeviceMac) throw new Error('请选择设备');
+  let ov = {};
+  if (!clear) {
+    // Start from the stored override so fields this page does not edit
+    // (notably ipaddr, the management addresses) survive a save.
+    const dev = deviceCache.find(x => x.mac === portDeviceMac);
+    if (dev && dev.network_params) {
+      try { ov = JSON.parse(dev.network_params) || {}; } catch (_) { ov = {}; }
+    }
+    delete ov.bridge_ports;
+    delete ov.igmp_snooping;
+    delete ov.vlans;
+
+    const bridge = $('port-bridge').value.trim();
+    if (bridge) ov.bridge_ports = bridge.split(/[\s,]+/).filter(Boolean);
+
+    const igmp = $('port-igmp').value;
+    if (igmp !== '') ov.igmp_snooping = igmp === '1';
+
+    const vlans = [];
+    for (const tr of $('port-vlan-rows').querySelectorAll('tr')) {
+      const raw = tr.querySelector('[data-field=vlan]').value.trim();
+      if (!raw) continue;
+      const num = Number(raw);
+      if (num < 1 || num > 4094) throw new Error('VLAN 必须在 1-4094');
+      vlans.push({
+        vlan: num,
+        ports: tr.querySelector('[data-field=ports]').value.split(/[\s,]+/).filter(Boolean),
+      });
+    }
+    if (vlans.length) ov.vlans = vlans;
+  }
+
+  const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(portDeviceMac) + '/network', ov);
+  const idx = deviceCache.findIndex(x => x.mac === portDeviceMac);
+  if (idx >= 0) deviceCache[idx] = res;
+  sayPort(clear
+    ? portDeviceMac + ' 已清除覆盖，恢复模板原样'
+    : portDeviceMac + ' 端口覆盖已保存（重新下发后生效）', 'ok');
+}
+
+$('port-save').addEventListener('click', async () => {
+  try { await savePortOverride(false); }
+  catch (e) { if (!noteUnauthorized(e)) sayPort(e.message, 'err'); }
+});
+
+$('port-clear').addEventListener('click', async () => {
+  try { await savePortOverride(true); }
+  catch (e) { if (!noteUnauthorized(e)) sayPort(e.message, 'err'); }
+});
+
+// --- 无线网络视图 ------------------------------------------------------------
+// SSID 是共享模板的一部分，这里整模板读、整模板写（POST /api/v1/templates），
+// 未编辑的字段（rrm、ft_over_ds、wnm 等）靠深拷贝原样保留。
+
+// 安全项收敛成预设组合：每个预设只暴露它真正需要的字段（是否需要密码）。
+const SECURITY_PRESETS = [
+  { value: 'wpa2/wpa3', short: 'WPA2/3', label: 'WPA2 + WPA3 混合（推荐）', psk: true,
+    hint: '同一 BSS 同时接受 WPA2-PSK 与 WPA3-SAE，新老设备都能连接。' },
+  { value: 'wpa3', short: 'WPA3', label: 'WPA3-SAE（仅 WPA3）', psk: true,
+    hint: '只允许 WPA3-SAE；不支持 WPA3 的客户端无法连接。' },
+  { value: 'wpa2', short: 'WPA2', label: 'WPA2-PSK（兼容性最好）', psk: true,
+    hint: '只允许 WPA2-PSK；兼容旧设备，安全性低于 WPA3。' },
+  { value: 'owe', short: 'OWE', label: 'OWE（增强开放，无密码）', psk: false,
+    hint: '无密码，但链路仍然加密；客户端需要支持 OWE。' },
+  { value: 'open', short: '开放', label: '开放（无加密）', psk: false,
+    hint: '完全不加密，仅用于访客网络或认证前的中转网络。' },
+];
+
+let wlDraft = [];     // 编辑中的 SSID 数组，模板 ssids 的深拷贝
+let wlSelected = -1;  // 列表选中项
+let wlDirty = false;
+
+function wlPreset(v) { return SECURITY_PRESETS.find(p => p.value === v) || null; }
+
+function wlByteLen(s) {
+  const text = String(s == null ? '' : s);
+  try { return new TextEncoder().encode(text).length; } catch (_) { return text.length; }
+}
+
+function tplNetworks(tpl) {
+  return ((tpl && tpl.bridge && tpl.bridge.interfaces) || []).map(i => i.name).filter(Boolean);
+}
+
+function setWLDirty(v) {
+  wlDirty = !!v;
+  const b = $('wl-dirty');
+  if (b) b.hidden = !wlDirty;
+}
+
+function renderWLList() {
+  const body = $('wl-list');
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  if (!tpl) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">选择模板…</td></tr>';
+    return;
+  }
+  if (!wlDraft.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">模板没有 SSID，点“添加 SSID”</td></tr>';
+    return;
+  }
+  body.innerHTML = '';
+  wlDraft.forEach((s, idx) => {
+    const tr = document.createElement('tr');
+    if (idx === wlSelected) tr.className = 'sel';
+    tr.addEventListener('click', () => {
+      wlSelected = idx;
+      renderWLList();
+      renderWLEditor();
+    });
+
+    const en = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !s.disabled;
+    cb.addEventListener('click', ev => ev.stopPropagation());
+    cb.addEventListener('change', () => {
+      s.disabled = !cb.checked;
+      setWLDirty(true);
+      renderWLList();
+    });
+    en.appendChild(cb);
+    tr.appendChild(en);
+
+    const nameCell = cell(tr, s.ssid || '（未命名）');
+    if (s.maxsta > 0) {
+      const cap = document.createElement('span');
+      cap.className = 'rev';
+      cap.textContent = '≤' + s.maxsta;
+      nameCell.appendChild(cap);
+    }
+    if (s.schedule) {
+      const sch = document.createElement('span');
+      sch.className = 'rev';
+      sch.textContent = '定时';
+      nameCell.appendChild(sch);
+    }
+    cell(tr, (s.bands || []).map(bandLabel).join(' · '));
+    const preset = wlPreset(s.security);
+    cell(tr, preset ? preset.short : (s.security || '–'));
+    cell(tr, s.network, 'mono');
+
+    const op = document.createElement('td');
+    op.className = 'actions';
+    const copy = document.createElement('button');
+    copy.textContent = '复制';
+    copy.addEventListener('click', ev => { ev.stopPropagation(); wlCopySSID(idx); });
+    const del = document.createElement('button');
+    del.textContent = '删除';
+    del.addEventListener('click', ev => { ev.stopPropagation(); wlDeleteSSID(idx); });
+    op.appendChild(copy);
+    op.appendChild(del);
+    tr.appendChild(op);
+
+    body.appendChild(tr);
+  });
+}
+
+function renderWLEditor() {
+  const host = $('wl-editor');
+  host.innerHTML = '';
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  if (!tpl || wlSelected < 0 || !wlDraft[wlSelected]) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.style.padding = '20px';
+    empty.textContent = tpl ? '选择或添加一条 SSID…' : '选择模板…';
+    host.appendChild(empty);
+    return;
+  }
+  const s = wlDraft[wlSelected];
+
+  const title = document.createElement('h3');
+  title.textContent = '编辑第 ' + (wlSelected + 1) + ' 条 SSID';
+  host.appendChild(title);
+
+  const fields = document.createElement('div');
+  fields.className = 'wl-fields';
+  host.appendChild(fields);
+
+  const addField = (text, wide) => {
+    const label = document.createElement('label');
+    if (wide) label.className = 'wl-span2';
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    fields.appendChild(label);
+    return label;
+  };
+
+  const nameLabel = addField('SSID 名称');
+  const nameInput = document.createElement('input');
+  nameInput.value = s.ssid || '';
+  nameInput.maxLength = 32;
+  nameInput.placeholder = '1-32 字节';
+  nameInput.id = 'wl-ssid-input';
+  nameInput.addEventListener('input', () => {
+    s.ssid = nameInput.value;
+    setWLDirty(true);
+    renderWLList();
+  });
+  nameLabel.appendChild(nameInput);
+
+  // 频段必须至少选一个，且对应射频在模板中启用（保存时会校验）。
+  const bandField = addField('频段', true);
+  const bandBox = document.createElement('div');
+  bandBox.className = 'wl-checks';
+  [['2g', '2.4G'], ['5g', '5G'], ['6g', '6G']].forEach(([band, text]) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = (s.bands || []).includes(band);
+    cb.addEventListener('change', () => {
+      s.bands = (s.bands || []).filter(b => b !== band);
+      if (cb.checked) s.bands.push(band);
+      setWLDirty(true);
+      renderWLList();
+    });
+    label.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    bandBox.appendChild(label);
+  });
+  bandField.appendChild(bandBox);
+
+  // 网络引用与 bridge 配置解耦：network 只是 BSS 桥接进的 netifd 接口名。
+  // 模板声明了 bridge 接口就用下拉（防止引用渲染不出的接口）；
+  // 无线基线模板刻意不管理网络（接口留在 AP 本地），此时允许自由填写。
+  const netLabel = addField('网络（netifd 接口）');
+  const declaredNetworks = tplNetworks(tpl);
+  let netCtl;
+  if (declaredNetworks.length) {
+    const netSel = document.createElement('select');
+    const blank = document.createElement('option');
+    blank.value = '';
+    blank.textContent = '—';
+    netSel.appendChild(blank);
+    const names = declaredNetworks.slice();
+    if (s.network && !names.includes(s.network)) names.push(s.network);
+    for (const n of names) {
+      const o = document.createElement('option');
+      o.value = n;
+      o.textContent = n;
+      if (n === s.network) o.selected = true;
+      netSel.appendChild(o);
+    }
+    netSel.addEventListener('change', () => {
+      s.network = netSel.value;
+      setWLDirty(true);
+      renderWLList();
+    });
+    netCtl = netSel;
+    netLabel.appendChild(netSel);
+  } else {
+    const netInput = document.createElement('input');
+    netInput.value = s.network || '';
+    netInput.placeholder = '如 lan / lan2';
+    // 候选来自模板里其他 SSID 已在用的网络，输入时可以直接选。
+    const dl = document.createElement('datalist');
+    dl.id = 'wl-network-options';
+    const used = new Set((tpl.ssids || []).map(x => x.network).filter(Boolean));
+    for (const n of used) {
+      const o = document.createElement('option');
+      o.value = n;
+      dl.appendChild(o);
+    }
+    netInput.setAttribute('list', dl.id);
+    netInput.addEventListener('input', () => {
+      s.network = netInput.value.trim();
+      setWLDirty(true);
+      renderWLList();
+    });
+    netCtl = netInput;
+    netLabel.appendChild(netInput);
+    netLabel.appendChild(dl);
+  }
+
+  const secLabel = addField('安全预设');
+  const secSel = document.createElement('select');
+  for (const p of SECURITY_PRESETS) {
+    const o = document.createElement('option');
+    o.value = p.value;
+    o.textContent = p.label;
+    if (p.value === s.security) o.selected = true;
+    secSel.appendChild(o);
+  }
+  secLabel.appendChild(secSel);
+
+  const pskLabel = addField('密码 / PSK');
+  const pskInput = document.createElement('input');
+  pskInput.value = s.psk || '';
+  pskInput.addEventListener('input', () => {
+    s.psk = pskInput.value;
+    setWLDirty(true);
+  });
+  pskLabel.appendChild(pskInput);
+
+  // maxassoc：0 表示不限制；非 0 时渲染为 UCI `option maxassoc`。
+  const capLabel = addField('最大接入数');
+  const capInput = document.createElement('input');
+  capInput.type = 'number';
+  capInput.min = '0';
+  capInput.max = '512';
+  capInput.value = s.maxsta || 0;
+  capInput.addEventListener('input', () => {
+    s.maxsta = Math.max(0, Math.min(512, parseInt(capInput.value || '0', 10) || 0));
+    setWLDirty(true);
+    renderWLList();
+  });
+  capLabel.appendChild(capInput);
+
+  // hostapd macfilter：关闭 / 白名单 / 黑名单。空列表没有意义——空白名单
+  // 会把所有客户端挡在门外，所以保存时会强制要求至少一个 MAC。
+  const macModeLabel = addField('MAC 过滤');
+  const macModeSel = document.createElement('select');
+  [['', '关闭'], ['allow', '白名单'], ['deny', '黑名单']].forEach(([value, text]) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = text;
+    if ((s.macfilter || '') === value) o.selected = true;
+    macModeSel.appendChild(o);
+  });
+  macModeLabel.appendChild(macModeSel);
+
+  const macListLabel = addField('MAC 列表（每行一个）', true);
+  const macListInput = document.createElement('textarea');
+  macListInput.rows = 3;
+  macListInput.placeholder = 'aa:bb:cc:dd:ee:ff';
+  macListInput.value = (s.maclist || []).join('\n');
+  macListInput.disabled = !s.macfilter;
+  const syncMACList = () => {
+    s.maclist = macListInput.value.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
+    setWLDirty(true);
+  };
+  macListInput.addEventListener('input', syncMACList);
+  macListLabel.appendChild(macListInput);
+  macModeSel.addEventListener('change', () => {
+    const v = macModeSel.value;
+    if (v) s.macfilter = v;
+    else {
+      delete s.macfilter;
+      delete s.maclist;
+      macListInput.value = '';
+    }
+    macListInput.disabled = !v;
+    setWLDirty(true);
+    renderWLList();
+  });
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  host.appendChild(hint);
+
+  const syncPreset = () => {
+    const p = wlPreset(s.security);
+    const needs = !!(p && p.psk);
+    pskInput.disabled = !needs;
+    pskInput.placeholder = needs ? '8-63 字节' : '此预设不需要密码';
+    if (!needs) {
+      s.psk = '';
+      pskInput.value = '';
+    }
+    hint.textContent = p ? p.hint : '未知的安全预设';
+  };
+  if (!wlPreset(s.security)) {
+    s.security = SECURITY_PRESETS[0].value;
+    secSel.value = s.security;
+  }
+  secSel.addEventListener('change', () => {
+    s.security = secSel.value;
+    const p = wlPreset(s.security);
+    if (p && !p.psk) s.psk = '';
+    setWLDirty(true);
+    syncPreset();
+    renderWLList();
+  });
+  syncPreset();
+
+  const toggles = document.createElement('div');
+  toggles.className = 'wl-checks';
+  toggles.style.marginTop = '12px';
+  host.appendChild(toggles);
+
+  const addToggle = (box, text, checked, onChange) => {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!checked;
+    cb.addEventListener('change', () => onChange(cb.checked));
+    label.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    box.appendChild(label);
+  };
+
+  addToggle(toggles, '启用此 SSID', !s.disabled, v => {
+    s.disabled = !v;
+    setWLDirty(true);
+    renderWLList();
+  });
+  addToggle(toggles, '隐藏 SSID', s.hidden, v => { s.hidden = v; setWLDirty(true); });
+  addToggle(toggles, '客户端隔离', s.isolate, v => { s.isolate = v; setWLDirty(true); });
+  // 业务隔离没有 hostapd 开关：同 network 的 SSID 天然共享二层，所以这里
+  // 只在保存时强制“独立 network”，避免做出一个假开关。
+  addToggle(toggles, '业务隔离（需独立 network）', s.business_isolate,
+    v => { s.business_isolate = v; setWLDirty(true); });
+
+  const roam = document.createElement('div');
+  roam.className = 'wl-checks';
+  roam.style.marginTop = '10px';
+  const roamTitle = document.createElement('span');
+  roamTitle.className = 'wl-roam-title';
+  roamTitle.textContent = '漫游';
+  roam.appendChild(roamTitle);
+  host.appendChild(roam);
+
+  if (!s.roaming) s.roaming = {};
+  const ro = s.roaming;
+
+  const mdLabel = document.createElement('label');
+  const mdText = document.createElement('span');
+  mdText.textContent = 'mobility domain';
+  const mdInput = document.createElement('input');
+  mdInput.value = ro.mobility_domain || '';
+  mdInput.placeholder = '4 位十六进制';
+  mdInput.maxLength = 4;
+  mdInput.style.width = '110px';
+  mdInput.addEventListener('input', () => {
+    ro.mobility_domain = mdInput.value.trim();
+    setWLDirty(true);
+  });
+  mdLabel.appendChild(mdText);
+  mdLabel.appendChild(mdInput);
+  roam.appendChild(mdLabel);
+
+  addToggle(roam, '802.11k 邻居报告', ro.k, v => { ro.k = v; setWLDirty(true); });
+  addToggle(roam, '802.11v BSS 过渡', ro.v, v => { ro.v = v; setWLDirty(true); });
+  addToggle(roam, '802.11r 快速漫游', ro.r, v => {
+    ro.r = v;
+    mdInput.disabled = !v;
+    setWLDirty(true);
+  });
+  mdInput.disabled = !ro.r;
+
+  // 定时开关只是计划：AP 侧 wifi_schedule 已被禁用（docs/ac-boot-wireless.md），
+  // 所以这里保存意图并在列表里标记，不做任何执行承诺。
+  const schBox = document.createElement('div');
+  schBox.className = 'wl-checks';
+  schBox.style.marginTop = '10px';
+  host.appendChild(schBox);
+
+  const schTitle = document.createElement('span');
+  schTitle.className = 'wl-roam-title';
+  schTitle.textContent = '定时开关（规划）';
+  schBox.appendChild(schTitle);
+
+  const schOnLabel = document.createElement('label');
+  const schOn = document.createElement('input');
+  schOn.type = 'checkbox';
+  schOn.checked = !!s.schedule;
+  schOnLabel.appendChild(schOn);
+  const schOnText = document.createElement('span');
+  schOnText.textContent = '启用计划';
+  schOnLabel.appendChild(schOnText);
+  schBox.appendChild(schOnLabel);
+
+  const dayBox = document.createElement('div');
+  dayBox.className = 'wl-checks';
+  dayBox.style.marginTop = '8px';
+  host.appendChild(dayBox);
+  const DAY_LABELS = [['1', '一'], ['2', '二'], ['3', '三'], ['4', '四'], ['5', '五'], ['6', '六'], ['7', '日']];
+  const dayInputs = [];
+  for (const [value, text] of DAY_LABELS) {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = value;
+    cb.addEventListener('change', () => {
+      if (!s.schedule) return;
+      const d = parseInt(value, 10);
+      s.schedule.days = s.schedule.days.filter(x => x !== d);
+      if (cb.checked) s.schedule.days.push(d);
+      s.schedule.days.sort((a, b) => a - b);
+      setWLDirty(true);
+      renderWLList();
+    });
+    label.appendChild(cb);
+    const span = document.createElement('span');
+    span.textContent = '周' + text;
+    label.appendChild(span);
+    dayBox.appendChild(label);
+    dayInputs.push(cb);
+  }
+
+  const timeBox = document.createElement('div');
+  timeBox.className = 'wl-checks';
+  timeBox.style.marginTop = '8px';
+  host.appendChild(timeBox);
+  const startIn = document.createElement('input');
+  startIn.type = 'time';
+  startIn.addEventListener('change', () => {
+    if (!s.schedule) return;
+    s.schedule.start = startIn.value;
+    setWLDirty(true);
+  });
+  const endIn = document.createElement('input');
+  endIn.type = 'time';
+  endIn.addEventListener('change', () => {
+    if (!s.schedule) return;
+    s.schedule.end = endIn.value;
+    setWLDirty(true);
+  });
+  const startText = document.createElement('span');
+  startText.className = 'wl-roam-title';
+  startText.textContent = '从';
+  const endText = document.createElement('span');
+  endText.className = 'wl-roam-title';
+  endText.textContent = '到';
+  timeBox.appendChild(startText);
+  timeBox.appendChild(startIn);
+  timeBox.appendChild(endText);
+  timeBox.appendChild(endIn);
+
+  const schHint = document.createElement('p');
+  schHint.className = 'hint';
+  host.appendChild(schHint);
+
+  const syncSchedule = () => {
+    const on = !!s.schedule;
+    const days = on ? (s.schedule.days || []) : [];
+    for (const cb of dayInputs) {
+      cb.disabled = !on;
+      cb.checked = days.includes(parseInt(cb.value, 10));
+    }
+    startIn.disabled = !on;
+    endIn.disabled = !on;
+    startIn.value = on ? s.schedule.start : '';
+    endIn.value = on ? s.schedule.end : '';
+    schHint.textContent = on
+      ? '计划已保存到模板，但 AP 侧 wifi_schedule 已禁用，目前不会自动执行。'
+      : '未设置计划，SSID 保持始终启用。';
+  };
+  schOn.addEventListener('change', () => {
+    if (schOn.checked) {
+      s.schedule = { days: [1, 2, 3, 4, 5], start: '08:00', end: '22:00' };
+    } else {
+      delete s.schedule;
+    }
+    setWLDirty(true);
+    syncSchedule();
+    renderWLList();
+  });
+  syncSchedule();
+}
+
+function wlCopySSID(idx) {
+  const clone = JSON.parse(JSON.stringify(wlDraft[idx]));
+  clone.ssid = (clone.ssid || '') + ' 副本';
+  wlDraft.splice(idx + 1, 0, clone);
+  wlSelected = idx + 1;
+  setWLDirty(true);
+  renderWLList();
+  renderWLEditor();
+  sayWL('已复制，未保存；请修改名称后保存', '');
+}
+
+function wlDeleteSSID(idx) {
+  if (wlDraft.length <= 1) {
+    sayWL('模板至少要有一个 SSID', 'err');
+    return;
+  }
+  wlDraft.splice(idx, 1);
+  if (wlSelected > idx) wlSelected--;
+  else if (wlSelected === idx) wlSelected = Math.min(idx, wlDraft.length - 1);
+  setWLDirty(true);
+  renderWLList();
+  renderWLEditor();
+}
+
+function wlValidateSSID(s, i, tpl) {
+  const where = '第 ' + (i + 1) + ' 条 SSID';
+  const name = (s.ssid || '').trim();
+  if (!name) throw new Error(where + '：名称不能为空');
+  if (wlByteLen(name) > 32) throw new Error(where + '：名称不能超过 32 字节');
+
+  const preset = wlPreset(s.security);
+  if (!preset) throw new Error(where + '：请选择安全预设');
+  if (!(s.bands || []).length) throw new Error(where + '：至少选择一个频段');
+
+  const enabledBands = new Set((tpl.radios || []).filter(r => !r.disabled).map(r => r.band));
+  for (const b of s.bands) {
+    if (!enabledBands.has(b)) throw new Error(where + '：' + bandLabel(b) + ' 在模板中没有启用的射频');
+  }
+
+  if (preset.psk) {
+    const psk = s.psk || '';
+    if (wlByteLen(psk) < 8 || wlByteLen(psk) > 63) throw new Error(where + '：密码必须是 8-63 字节');
+  } else if (s.psk) {
+    throw new Error(where + '：' + preset.label + ' 不需要密码');
+  }
+
+  if (!s.disabled) {
+    const networks = tplNetworks(tpl);
+    if (!s.network) throw new Error(where + '：请选择网络');
+    if (networks.length && !networks.includes(s.network)) {
+      throw new Error(where + '：网络 ' + s.network + ' 不在模板 bridge 接口中');
+    }
+  }
+
+  if (s.roaming && s.roaming.r && !/^[0-9a-fA-F]{4}$/.test((s.roaming.mobility_domain || '').trim())) {
+    throw new Error(where + '：启用 802.11r 时 mobility domain 必须是 4 位十六进制');
+  }
+
+  if (s.maxsta == null || s.maxsta === '') {
+    delete s.maxsta;
+  } else {
+    const n = Number(s.maxsta);
+    if (!Number.isInteger(n) || n < 0 || n > 512) throw new Error(where + '：最大接入数必须是 0-512 的整数');
+    s.maxsta = n;
+  }
+
+  // hostapd 的 macfilter 只有 allow/deny 两种；空的 allow 列表会拒绝全部
+  // 客户端，因此两种模式都要求至少一个合法且不重复的 MAC。
+  const macMode = s.macfilter || '';
+  if (macMode) {
+    if (macMode !== 'allow' && macMode !== 'deny') throw new Error(where + '：MAC 过滤只能是 allow 或 deny');
+    const macs = (s.maclist || []).map(v => String(v).trim()).filter(Boolean);
+    if (!macs.length) throw new Error(where + '：' + (macMode === 'allow' ? '白名单' : '黑名单') + '至少需要一个 MAC');
+    const macRe = /^[0-9a-fA-F]{2}(:[0-9a-fA-F]{2}){5}$/;
+    const seen = new Set();
+    for (const m of macs) {
+      const norm = m.toLowerCase();
+      if (!macRe.test(norm)) throw new Error(where + '：MAC 地址格式不正确（' + m + '）');
+      if (seen.has(norm)) throw new Error(where + '：MAC 地址重复（' + m + '）');
+      seen.add(norm);
+    }
+    s.macfilter = macMode;
+    s.maclist = macs.map(m => m.toLowerCase());
+  } else {
+    delete s.macfilter;
+    delete s.maclist;
+  }
+
+  if (s.schedule) {
+    const sch = s.schedule;
+    const days = (sch.days || []).map(Number);
+    if (!days.length) throw new Error(where + '：定时计划至少选择一天');
+    if (days.some(d => !Number.isInteger(d) || d < 1 || d > 7)) throw new Error(where + '：定时计划的星期必须是 1-7');
+    if (new Set(days).size !== days.length) throw new Error(where + '：定时计划的星期有重复');
+    const clock = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!clock.test(sch.start || '') || !clock.test(sch.end || '')) throw new Error(where + '：定时计划的时间格式必须是 HH:MM');
+    if (sch.start >= sch.end) throw new Error(where + '：定时计划开始时间必须早于结束时间');
+    sch.days = days.sort((a, b) => a - b);
+  }
+
+  s.ssid = name;
+  if (s.roaming && s.roaming.mobility_domain) s.roaming.mobility_domain = s.roaming.mobility_domain.trim();
+}
+
+function renderWirelessEditor() {
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  wlDraft = tpl ? JSON.parse(JSON.stringify(tpl.ssids || [])) : [];
+  if (!wlDraft.length) wlSelected = -1;
+  else if (wlSelected < 0 || wlSelected >= wlDraft.length) wlSelected = 0;
+  setWLDirty(false);
+  renderWLList();
+  renderWLEditor();
+  renderWLRefs();
+}
+
+async function loadWireless() {
+  try {
+    await loadTemplates();
+    fillTemplatePicker($('wl-template'), wlTemplateId);
+    if (!$('wl-template').value && templates.length) $('wl-template').value = templates[0].id;
+    wlTemplateId = $('wl-template').value;
+    renderWirelessEditor();
+
+    const d = await api('GET', '/api/v1/devices');
+    deviceCache = d.devices || [];
+    const sel = $('wl-device');
+    sel.innerHTML = '<option value="">选择设备…</option>';
+    const ordered = deviceCache.filter(x => x.state === 'adopted')
+      .concat(deviceCache.filter(x => x.state !== 'adopted'));
+    for (const dev of ordered) {
+      const o = document.createElement('option');
+      o.value = dev.mac;
+      o.textContent = (dev.hostname || dev.mac) + (dev.state === 'adopted' ? '' : '（未采纳）');
+      sel.appendChild(o);
+    }
+    if (wlDeviceMac && deviceCache.some(x => x.mac === wlDeviceMac)) sel.value = wlDeviceMac;
+    else if (ordered.length) sel.value = ordered[0].mac;
+    wlDeviceMac = sel.value || '';
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+}
+
+$('wl-template').addEventListener('change', () => {
+  if (wlDirty && !confirm('当前模板有未保存的 SSID 修改，切换后将丢弃。继续？')) {
+    $('wl-template').value = wlTemplateId;
+    return;
+  }
+  wlTemplateId = $('wl-template').value;
+  wlSelected = -1;
+  sayWL('');
+  renderWirelessEditor();
+});
+
+$('wl-device').addEventListener('change', () => {
+  wlDeviceMac = $('wl-device').value;
+  sayWL('');
+});
+
+$('wl-add').addEventListener('click', () => {
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  if (!tpl) return sayWL('请选择模板', 'err');
+  wlDraft.push({
+    ssid: '',
+    bands: ['2g', '5g'],
+    network: tplNetworks(tpl)[0] || '',
+    security: SECURITY_PRESETS[0].value,
+    psk: '',
+  });
+  wlSelected = wlDraft.length - 1;
+  setWLDirty(true);
+  sayWL('');
+  renderWLList();
+  renderWLEditor();
+  const input = $('wl-ssid-input');
+  if (input) input.focus();
+});
+
+$('wl-save').addEventListener('click', async () => {
+  try {
+    const tpl = templates.find(t => t.id === wlTemplateId);
+    if (!tpl) throw new Error('请选择模板');
+    if (!wlDraft.length) throw new Error('模板至少要有一个 SSID');
+    wlDraft.forEach((s, i) => wlValidateSSID(s, i, tpl));
+
+    // 业务隔离没有 hostapd 开关，只能靠独立 network 实现：启用的 SSID 中
+    // 任何一条声明了业务隔离，它所在的 network 就不能再被别的 SSID 共用。
+    const byNet = new Map();
+    wlDraft.forEach((s, i) => {
+      if (s.disabled || !s.network) return;
+      if (!byNet.has(s.network)) byNet.set(s.network, []);
+      byNet.get(s.network).push(i);
+    });
+    for (const [net, list] of byNet) {
+      if (list.length < 2) continue;
+      const iso = list.filter(i => wlDraft[i].business_isolate);
+      if (!iso.length) continue;
+      const others = list.filter(i => !iso.includes(i)).map(i => '第 ' + (i + 1) + ' 条');
+      throw new Error('第 ' + (iso[0] + 1) + ' 条 SSID 启用了业务隔离，但 network「' + net + '」'
+        + (others.length ? '还被 ' + others.join('、') + ' 共用' : '被多条 SSID 共用')
+        + '；请为它分配独立 network');
+    }
+
+    // 部分更新：只写 ssids，网络（bridge/VLAN）与射频保持存储里的现状。
+    // SSID 里有一批本页不编辑的字段（rrm、ft_over_ds、wnm…），靠深拷贝原样带回；
+    // 先拷再发，保存失败也不会弄脏草稿。
+    await api('PUT', '/api/v1/templates/' + encodeURIComponent(tpl.id) + '/ssids',
+      { ssids: JSON.parse(JSON.stringify(wlDraft)) });
+    sayWL('模板 ' + tpl.id + ' 的 SSID 已保存（网络与射频配置未改动）；已采纳设备需重新下发后生效', 'ok');
+    setWLDirty(false);
+    await loadWireless();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+});
+
+// 克隆：复制一个模板做试验，不必改动生产设备正在用的那一份。
+// 后端自动生成 <id>-copy-xxxx 作为新 ID。
+$('wl-clone').addEventListener('click', async () => {
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  if (!tpl) return sayWL('请选择模板', 'err');
+  if (wlDirty && !confirm('当前模板有未保存的 SSID 修改，克隆后将切换到新模板并丢弃这些修改。继续？')) return;
+  try {
+    const res = await api('POST', '/api/v1/templates/' + encodeURIComponent(tpl.id) + '/clone', {});
+    const newID = (res && res.id) || '';
+    await loadTemplates();
+    fillTemplatePicker($('wl-template'), newID);
+    wlTemplateId = $('wl-template').value;
+    wlSelected = -1;
+    setRenameMode(false);
+    renderWirelessEditor();
+    sayWL('已克隆模板 ' + tpl.id + '，新模板 ' + wlTemplateId + ' 未绑定任何设备', 'ok');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+});
+
+// 删除：后端会再检查一次引用与“最后一个模板”，这里先按 UI 已知信息拦住。
+$('wl-delete').addEventListener('click', async () => {
+  const tpl = templates.find(t => t.id === wlTemplateId);
+  if (!tpl) return sayWL('请选择模板', 'err');
+  const r = templateRefs[tpl.id] || {};
+  if ((r.devices || 0) + (r.groups || 0) > 0) {
+    return sayWL('模板仍被 ' + (r.devices || 0) + ' 台设备 / ' + (r.groups || 0) + ' 个分组引用，请先改绑后再删除', 'err');
+  }
+  if (templates.length <= 1) return sayWL('至少保留一个模板', 'err');
+  const extra = wlDirty ? '当前未保存的 SSID 修改也会丢弃。' : '';
+  if (!confirm('删除模板 ' + tpl.id + '？此操作不可撤销。' + extra)) return;
+  try {
+    await api('DELETE', '/api/v1/templates/' + encodeURIComponent(tpl.id));
+    await loadTemplates();
+    wlTemplateId = templates.length ? templates[0].id : '';
+    fillTemplatePicker($('wl-template'), wlTemplateId);
+    wlSelected = -1;
+    setRenameMode(false);
+    renderWirelessEditor();
+    sayWL('已删除模板 ' + tpl.id, 'ok');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+});
+
+// 模板改名：id 是设备信任的稳定键，改名只换显示名。
+// 内联编辑而非 prompt()：嵌入式 WebView 与部分受控浏览器不支持弹窗 API。
+function setRenameMode(on) {
+  $('wl-template').hidden = on;
+  $('wl-rename').hidden = on;
+  $('wl-rename-input').hidden = !on;
+  $('wl-rename-ok').hidden = !on;
+  $('wl-rename-cancel').hidden = !on;
+  if (on) {
+    const tpl = templates.find(t => t.id === wlTemplateId);
+    const inp = $('wl-rename-input');
+    inp.value = tpl ? (tpl.name || '') : '';
+    inp.focus();
+    inp.select();
+  }
+}
+
+$('wl-rename').addEventListener('click', () => {
+  if (!templates.find(t => t.id === wlTemplateId)) return sayWL('请选择模板', 'err');
+  setRenameMode(true);
+});
+
+$('wl-rename-cancel').addEventListener('click', () => setRenameMode(false));
+
+$('wl-rename-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); $('wl-rename-ok').click(); }
+  if (e.key === 'Escape') setRenameMode(false);
+});
+
+$('wl-rename-ok').addEventListener('click', async () => {
+  try {
+    const tpl = templates.find(t => t.id === wlTemplateId);
+    if (!tpl) throw new Error('请选择模板');
+    const name = $('wl-rename-input').value.trim();
+    if (!name) throw new Error('名称不能为空');
+    if (name !== tpl.name) {
+      await api('PUT', '/api/v1/templates/' + encodeURIComponent(tpl.id) + '/name', { name });
+      sayWL('模板 ' + tpl.id + ' 已改名为「' + name + '」', 'ok');
+      await loadTemplates();
+      fillTemplatePicker($('wl-template'), wlTemplateId);
+    }
+    setRenameMode(false);
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+});
+
+$('wl-repush').addEventListener('click', async () => {
+  try {
+    if (!wlDeviceMac) throw new Error('请选择设备');
+    const res = await api('POST', '/api/v1/devices/' + encodeURIComponent(wlDeviceMac) + '/repush');
+    sayWL((apNames[wlDeviceMac] || wlDeviceMac) + ' 已重新下发，rev ' + res.rev, 'ok');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayWL(e.message, 'err');
+  }
+});
+
+// --- 固件视图 ----------------------------------------------------------------
+// 仓库写入走原始字节上传（不是 JSON），因此不能复用 api()；目标版本只写库，
+// 真正刷写在 AP 侧，页面只展示 AP 回报的状态与失败原因。
+
+let fwImages = [];
+
+function sayFW(text, kind) { const m = $('fw-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function sayFWDev(text, kind) { const m = $('fw-dev-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+
+function fmtSize(n) {
+  if (n >= 1 << 20) return (n / (1 << 20)).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+function fwStateCell(dev) {
+  const st = document.createElement('td');
+  const hit = FW_STATE_LABELS[dev.fw_state];
+  if (hit) {
+    const b = document.createElement('span');
+    b.className = 'badge ' + hit[1];
+    b.textContent = hit[0];
+    st.appendChild(b);
+  } else {
+    const none = document.createElement('span');
+    none.className = 'rev';
+    none.style.margin = '0';
+    none.textContent = dev.fw_target ? '未上报' : '未设定';
+    st.appendChild(none);
+  }
+  if (dev.fw_at) {
+    const at = document.createElement('span');
+    at.className = 'rev';
+    at.textContent = '（' + ago(dev.fw_at) + '）';
+    st.appendChild(at);
+  }
+  return st;
+}
+
+function renderFirmwareList() {
+  const body = $('fw-rows');
+  if (!fwImages.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">仓库为空</td></tr>';
+    return;
+  }
+  body.innerHTML = '';
+  for (const f of fwImages) {
+    const tr = document.createElement('tr');
+    cell(tr, f.model, 'mono');
+    cell(tr, f.version, 'mono');
+    cell(tr, fmtSize(f.size));
+
+    const sha = document.createElement('td');
+    sha.className = 'mono';
+    sha.innerHTML = '<span title="' + esc(f.sha256) + '">' + esc((f.sha256 || '').slice(0, 12)) + '…</span>';
+    tr.appendChild(sha);
+
+    cell(tr, ago(f.uploaded_at));
+
+    const ops = document.createElement('td');
+    ops.className = 'actions';
+    const dl = document.createElement('button');
+    dl.textContent = '下载';
+    dl.addEventListener('click', () => downloadFirmwareImage(f));
+    ops.appendChild(dl);
+    const del = document.createElement('button');
+    del.textContent = '删除';
+    del.addEventListener('click', () => deleteFirmware(f));
+    ops.appendChild(del);
+    tr.appendChild(ops);
+
+    body.appendChild(tr);
+  }
+}
+
+function renderFirmwareDevices() {
+  const body = $('fw-dev-rows');
+  if (!deviceCache.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">暂无设备</td></tr>';
+    return;
+  }
+  // 页面每 5 秒刷新一次；先把操作员尚未提交的下拉选择记下来，否则刷新会把
+  // 正在挑选的版本重置回设备当前目标。
+  const picks = {};
+  body.querySelectorAll('select[data-mac]').forEach(s => { picks[s.dataset.mac] = s.value; });
+
+  body.innerHTML = '';
+  for (const dev of deviceCache) {
+    const tr = document.createElement('tr');
+
+    const ap = document.createElement('td');
+    ap.textContent = dev.hostname || dev.mac;
+    const macTag = document.createElement('span');
+    macTag.className = 'rev';
+    macTag.textContent = dev.mac + (dev.state === 'adopted' ? '' : '（未采纳）');
+    ap.appendChild(macTag);
+    tr.appendChild(ap);
+
+    cell(tr, dev.model || '–', 'mono');
+    cell(tr, dev.firmware || '–', 'mono');
+    cell(tr, dev.fw_target || '–', 'mono');
+    tr.appendChild(fwStateCell(dev));
+
+    const msg = document.createElement('td');
+    msg.textContent = dev.fw_message || '–';
+    msg.style.maxWidth = '260px';
+    if (dev.fw_message) msg.title = dev.fw_message;
+    tr.appendChild(msg);
+
+    const ops = document.createElement('td');
+    ops.className = 'actions';
+    const sel = document.createElement('select');
+    sel.dataset.mac = dev.mac;
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = '不升级';
+    sel.appendChild(none);
+
+    const want = picks[dev.mac] !== undefined ? picks[dev.mac] : dev.fw_target;
+    let matched = false;
+    for (const f of fwImages.filter(x => x.model === dev.model)) {
+      const o = document.createElement('option');
+      o.value = f.version;
+      o.textContent = f.version;
+      if (f.version === want) { o.selected = true; matched = true; }
+      sel.appendChild(o);
+    }
+    // 镜像被删后目标仍留在设备行上；显示出来，免得操作员以为它消失了。
+    if (want && !matched) {
+      const o = document.createElement('option');
+      o.value = want;
+      o.textContent = want + (want === dev.fw_target ? '（仓库中已删除）' : '（仓库中无此镜像）');
+      o.selected = true;
+      sel.appendChild(o);
+    }
+    ops.appendChild(sel);
+
+    const apply = document.createElement('button');
+    // 失败后控制器不再重发；重新应用同一个目标才会重新下发，所以按钮改叫“重试”。
+    apply.textContent = (dev.fw_state === 'failed' && sel.value === dev.fw_target) ? '重试' : '应用';
+    apply.className = 'primary';
+    apply.addEventListener('click', () => applyFirmwareTarget(dev.mac, sel.value));
+    ops.appendChild(apply);
+    tr.appendChild(ops);
+
+    body.appendChild(tr);
+  }
+}
+
+async function loadFirmware() {
+  try {
+    const [f, d] = await Promise.all([
+      api('GET', '/api/v1/firmwares'),
+      api('GET', '/api/v1/devices'),
+    ]);
+    fwImages = f.firmwares || [];
+    deviceCache = d.devices || [];
+    if (!$('fw-model').value) {
+      const known = deviceCache.find(x => x.model && x.model !== 'unknown');
+      if (known) $('fw-model').value = known.model;
+    }
+    renderFirmwareList();
+    renderFirmwareDevices();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayFW(e.message, 'err');
+  }
+}
+
+async function deleteFirmware(f) {
+  if (!confirm('删除固件 ' + f.model + ' ' + f.version + '？')) return;
+  try {
+    await api('DELETE', '/api/v1/firmwares?model=' + encodeURIComponent(f.model) +
+      '&version=' + encodeURIComponent(f.version));
+    sayFW('已删除 ' + f.model + ' ' + f.version + '；目标仍指向它的设备不会再收到升级指令', 'ok');
+    await loadFirmware();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayFW(e.message, 'err');
+  }
+}
+
+// 仓库里的镜像可以直接下载下来核对摘要；浏览器不会把 Bearer 头带上，
+// 所以和配置包一样走 fetch 再转 blob。
+async function downloadFirmwareImage(f) {
+  try {
+    const headers = {};
+    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+    const path = '/api/v1/firmwares/image?model=' + encodeURIComponent(f.model) +
+      '&version=' + encodeURIComponent(f.version);
+    const resp = await fetch(path, { headers });
+    if (!resp.ok) throw Object.assign(new Error('HTTP ' + resp.status), { status: resp.status });
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = f.filename || (f.version + '.img');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    sayFW('已下载 ' + f.model + ' ' + f.version + '，可用 sha256sum 核对摘要', 'ok');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayFW('下载失败：' + e.message, 'err');
+  }
+}
+
+async function applyFirmwareTarget(mac, version) {
+  try {
+    const res = await api('POST', '/api/v1/devices/' + encodeURIComponent(mac) + '/firmware', { version });
+    const idx = deviceCache.findIndex(x => x.mac === mac);
+    if (idx >= 0) deviceCache[idx] = res;
+    sayFWDev((apNames[mac] || mac) + (version
+      ? ' 目标已设为 ' + version + '，等待 AP 下次 Hello'
+      : ' 已清除升级目标'), 'ok');
+    renderFirmwareDevices();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayFWDev(e.message, 'err');
+  }
+}
+
+$('fw-upload').addEventListener('click', async () => {
+  const btn = $('fw-upload');
+  try {
+    const model = $('fw-model').value.trim();
+    const version = $('fw-version').value.trim();
+    const file = $('fw-file').files[0];
+    if (!model || !version) throw new Error('型号和版本必填');
+    if (!file) throw new Error('请选择镜像文件');
+    if (file.size > 300 * 1024 * 1024) throw new Error('镜像不能超过 300 MB');
+
+    btn.disabled = true;
+    sayFW('正在上传 ' + file.name + '（' + fmtSize(file.size) + '）…');
+    const headers = {};
+    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+    const query = '?model=' + encodeURIComponent(model) +
+      '&version=' + encodeURIComponent(version) +
+      '&filename=' + encodeURIComponent(file.name);
+    const resp = await fetch('/api/v1/firmwares' + query, { method: 'POST', headers, body: file });
+
+    const text = await resp.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = { error: text }; }
+    if (!resp.ok) throw new Error((data && data.error) || ('HTTP ' + resp.status));
+
+    $('fw-file').value = '';
+    sayFW('已上传 ' + data.model + ' ' + data.version + '（' + fmtSize(data.size) +
+      '，sha256 ' + (data.sha256 || '').slice(0, 12) + '…）', 'ok');
+    await loadFirmware();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayFW(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// --- 系统：诊断、日志、配置快照 ---------------------------------------------
+const DIAG_KINDS = { network: '网络诊断', system: '系统日志', kernel: '内核日志' };
+const EVENT_LABELS = {
+  adopt: '采纳', repush: '重新下发', release: '释放', settings: '设置',
+  template: '模板', group: '分组', firmware: '固件',
+  reboot_schedule: '重启定时', reboot_scheduled: '重启定时执行',
+  led_schedule: 'LED 定时', led_scheduled: 'LED 定时执行',
+  action_requested: '动作下发', action_result: '动作结果', config_import: '配置导入',
+};
+
+let diagMAC = '';
+
+function sayCfg(text, kind) { const m = $('cfg-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function sayDiag(text, kind) { const m = $('diag-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+
+function fmtTS(ts) {
+  if (!ts) return '–';
+  const d = new Date(ts * 1000);
+  const p = n => String(n).padStart(2, '0');
+  return p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+    p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+}
+
+function renderDiagnostics(d) {
+  const dv = d.devices || {}, cl = d.clients || {}, tel = d.telemetry || {};
+  const rows = [
+    ['控制器版本', (d.version || 'dev') + (d.commit ? ' · ' + d.commit : '')],
+    ['控制器 ID', d.ac_id || '–'],
+    ['运行环境', (d.os || '–') + '/' + (d.arch || '–') + ' · ' + (d.go_version || '–')],
+    ['设备', '在线 ' + (dv.online || 0) + ' / 共 ' + (dv.total || 0) +
+      '（已采纳 ' + (dv.adopted || 0) + '，待采纳 ' + (dv.pending || 0) + '）'],
+    ['客户端', '在线 ' + (cl.online || 0) + ' / 共 ' + (cl.total || 0)],
+    ['遥测样本', '客户端 ' + (tel.client_samples || 0) + ' 行 · 射频 ' + (tel.radio_samples || 0) + ' 行'],
+    ['事件', (d.events && d.events.total) || 0],
+    ['心跳采样间隔', d.sample_interval_seconds > 0 ? d.sample_interval_seconds + ' 秒' : '每轮心跳都入库'],
+    ['离线判定', (d.offline_after_seconds || 0) + ' 秒'],
+    ['管理鉴权', d.admin_auth_required ? '已启用（AC_ADMIN_TOKEN）' : '未启用'],
+    ['AP 鉴权', d.ap_auth_required ? '已启用（AC_SHARED_SECRET）' : '未启用'],
+  ];
+  const body = $('sys-rows');
+  body.innerHTML = '';
+  for (const [k, v] of rows) {
+    const tr = document.createElement('tr');
+    const kc = document.createElement('td');
+    kc.style.color = 'var(--muted)';
+    kc.textContent = k;
+    const vc = document.createElement('td');
+    vc.textContent = v;
+    tr.append(kc, vc);
+    body.appendChild(tr);
+  }
+  $('sys-version').textContent = d.version || '–';
+  $('sys-devices').textContent = (dv.online || 0) + ' / ' + (dv.total || 0);
+  $('sys-clients').textContent = (cl.online || 0) + ' / ' + (cl.total || 0);
+  $('sys-events').textContent = (d.events && d.events.total) || 0;
+}
+
+function renderEvents(list) {
+  const body = $('event-rows');
+  body.innerHTML = '';
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">暂无事件</td></tr>';
+    return;
+  }
+  for (const e of list) {
+    const tr = document.createElement('tr');
+    const cells = [fmtTS(e.ts), EVENT_LABELS[e.kind] || e.kind, e.mac || '–', e.message || ''];
+    for (const text of cells) {
+      const td = document.createElement('td');
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  }
+}
+
+function fillDiagDevices(devices) {
+  const sel = $('diag-device');
+  const keep = sel.value || diagMAC;
+  const opts = (devices || []).map(d => ({
+    value: d.mac,
+    text: (d.hostname || d.mac) + (d.online ? '' : '（离线）'),
+  }));
+  if (!opts.length) opts.push({ value: '', text: '暂无设备' });
+  // 每 5 秒重建 option 会让展开的下拉跳动；只有设备集合真的变了才重绘。
+  const sig = opts.map(o => o.value + '|' + o.text).join(',');
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = '';
+    for (const o of opts) {
+      const el = document.createElement('option');
+      el.value = o.value;
+      el.textContent = o.text;
+      sel.appendChild(el);
+    }
+    if (keep && Array.from(sel.options).some(x => x.value === keep)) sel.value = keep;
+  }
+  diagMAC = sel.value;
+  $('diag-run').disabled = !diagMAC;
+}
+
+async function loadDiagResult() {
+  if (!diagMAC) return;
+  try {
+    const r = await api('GET', '/api/v1/devices/' + encodeURIComponent(diagMAC) + '/actions?limit=5');
+    const list = (r.actions || []).filter(a => a.type === 'diagnose');
+    if (!list.length) {
+      $('diag-out').textContent = '尚未执行诊断';
+      return;
+    }
+    const a = list[0];
+    const state = { pending: '待执行', done: '完成', failed: '失败', expired: '已过期' }[a.state] || a.state;
+    const kind = DIAG_KINDS[(a.args || {}).kind] || (a.args || {}).kind || '诊断';
+    $('diag-out').textContent = kind + ' · ' + state + ' · ' + ago(a.created_at) +
+      '\n\n' + (a.message || '（AP 尚未返回输出）');
+  } catch (e) {
+    // 结果只是辅助信息，失败不覆盖上一次输出
+  }
+}
+
+async function refreshSystemLive() {
+  try {
+    const [diag, ev] = await Promise.all([
+      api('GET', '/api/v1/diagnostics'),
+      api('GET', '/api/v1/events?limit=60'),
+    ]);
+    renderDiagnostics(diag);
+    renderEvents(ev.events || []);
+    if (diagMAC) loadDiagResult();
+  } catch (e) {
+    noteUnauthorized(e);
+  }
+}
+
+async function loadSystem() {
+  fillDiagDevices(deviceCache);
+  await refreshSystemLive();
+}
+
+$('diag-device').addEventListener('change', () => {
+  diagMAC = $('diag-device').value;
+  loadDiagResult();
+});
+
+$('diag-run').addEventListener('click', async () => {
+  const mac = $('diag-device').value;
+  if (!mac) return;
+  diagMAC = mac;
+  const kind = $('diag-kind').value;
+  try {
+    const res = await api('POST', '/api/v1/devices/' + encodeURIComponent(mac) + '/actions',
+      { type: 'diagnose', args: { kind } });
+    sayDiag('已下发' + (DIAG_KINDS[kind] || kind) + '（' + res.id + '），等待 AP 下次心跳执行', 'ok');
+    $('diag-out').textContent = '等待 AP 上报…';
+    setTimeout(loadDiagResult, 3000);
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayDiag('下发失败：' + e.message, 'err');
+  }
+});
+
+$('cfg-export').addEventListener('click', async () => {
+  try {
+    const headers = {};
+    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
+    const resp = await fetch('/api/v1/config/export', { headers });
+    if (!resp.ok) {
+      let text = '';
+      try { const data = await resp.json(); text = data.error || ''; } catch (_) { /* 非 JSON */ }
+      throw Object.assign(new Error(text || ('HTTP ' + resp.status)), { status: resp.status });
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = /filename="([^"]+)"/.exec(cd);
+    const name = m ? m[1] : 'ac-config.json';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    sayCfg('配置已导出：' + name, 'ok');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayCfg('导出失败：' + e.message, 'err');
+  }
+});
+
+$('cfg-import').addEventListener('click', async () => {
+  const file = $('cfg-file').files[0];
+  if (!file) { sayCfg('请先选择配置文件', 'err'); return; }
+  const btn = $('cfg-import');
+  btn.disabled = true;
+  try {
+    let snap;
+    try {
+      snap = JSON.parse(await file.text());
+    } catch (_) {
+      throw new Error('文件不是合法 JSON');
+    }
+    const res = await api('POST', '/api/v1/config/import', snap);
+    let text = '已导入 ' + res.templates + ' 个模板、' + res.groups + ' 个分组、' + res.devices + ' 个设备覆盖';
+    if ((res.skipped_devices || []).length) {
+      text += '；未发现的设备：' + res.skipped_devices.join('、') + '（上线后可重新导入）';
+    }
+    sayCfg(text, 'ok');
+    $('cfg-file').value = '';
+    refresh();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayCfg('导入失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.querySelectorAll('.nav a[data-view]').forEach(a => {
+  a.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    document.querySelectorAll('.nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+    const view = a.dataset.view;
+    currentView = view;
+    const panels = {
+      devices: 'view-devices',
+      clients: 'view-clients',
+      telemetry: 'view-telemetry',
+      wireless: 'view-wireless',
+      rf: 'view-rf',
+      ports: 'view-ports',
+      firmware: 'view-firmware',
+      system: 'view-system',
+    };
+    for (const [key, id] of Object.entries(panels)) {
+      $(id).classList.toggle('hidden', view !== key);
+    }
+    if (view === 'telemetry') loadTelemetry();
+    if (view === 'wireless') loadWireless();
+    if (view === 'rf') loadRF();
+    if (view === 'ports') loadPorts();
+    if (view === 'firmware') loadFirmware();
+    if (view === 'system') loadSystem();
+  });
+});
+
+$('range-seg').addEventListener('click', (ev) => {
+  const b = ev.target.closest('button[data-range]');
+  if (!b) return;
+  currentRange = b.dataset.range;
+  $('range-seg').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  loadTelemetry();
+});
+
+$('client-pick').addEventListener('change', (ev) => {
+  pickedClient = ev.target.value;
+  if (pickedClient) loadClientSeries(pickedClient);
+});
+
+function fillClientPicker(list) {
+  const sel = $('client-pick');
+  const keep = pickedClient;
+  sel.innerHTML = '<option value="">选择客户端…</option>';
+  for (const c of list) {
+    const label = (c.mac || '') + (c.ssid ? ' · ' + c.ssid : '') + (c.ip ? ' · ' + c.ip : '');
+    const o = document.createElement('option');
+    o.value = c.mac;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  if (keep && list.some(c => c.mac === keep)) sel.value = keep;
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

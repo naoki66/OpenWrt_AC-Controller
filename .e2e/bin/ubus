@@ -1,0 +1,55 @@
+#!/bin/sh
+# 假的 ubus：按真机（ImmortalWrt 20261026 / XR1710G）的实际结构回答。
+# 关键点：up 在 radio 层，接口上没有该字段。
+# 第一个接口固定叫 phy0.1-ap0，好让假 iw 能返回站点列表。
+if [ "$1" = "call" ] && [ "$2" = "network.wireless" ] && [ "$3" = "status" ]; then
+	file=/root/etc/config/wireless
+	if [ ! -f "$file" ]; then
+		echo '{}'
+		exit 0
+	fi
+	grep "^config wifi-iface 'ac_" "$file" \
+		| sed "s/^config wifi-iface '//; s/'$//" \
+		| awk '
+			BEGIN { printf "{\"radio0\":{\"up\":true,\"disabled\":false,\"interfaces\":[" }
+			{
+				if (NR > 1) printf ","
+				ifname = (NR == 1) ? "phy0.1-ap0" : "dummy" NR
+				printf "{\"section\":\"%s\",\"ifname\":\"%s\",\"stations\":[]}", $0, ifname
+			}
+			END { printf "]}}"}'
+	exit 0
+fi
+# 11k：agent 会遍历所有 hostapd.<if> 读自己的 Neighbor Report。
+# 单 BSS 足够验证上报链路；多 AP 聚合由 Go 单测覆盖，不在这里模拟。
+if [ "$1" = "list" ]; then
+	if [ -n "$2" ]; then
+		case "$2" in
+		hostapd.*) echo "$2" ;;
+		*) echo "Command failed: Not found" >&2; exit 4 ;;
+		esac
+		exit 0
+	fi
+	echo "hostapd.phy0.1-ap0"
+	exit 0
+fi
+if [ "$1" = "call" ] && [ "$2" = "hostapd.phy0.1-ap0" ]; then
+	# 用调用方的 --mac 当 BSSID：真实设备上二者不同，但这里只要能区分两台 AP
+	# 就够了，否则两台模拟 AP 的 BSSID 相同会被互为「自己」而互相排除。
+	mac=${AC_E2E_MAC:-00:11:22:33:44:55}
+	hex=$(echo "$mac" | tr -d ':')
+	case "$3" in
+	rrm_nr_get_own)
+		echo "{\"value\":[\"$mac\",\"E2E_5G\",\"${hex}ef58200081240e0603033200\"]}"
+		;;
+	rrm_nr_list)
+		echo '{"list":[]}'
+		;;
+	rrm_nr_set)
+		echo '{}'
+		;;
+	esac
+	exit 0
+fi
+# 其他调用（例如 ubus call network reload）视为成功。
+exit 0

@@ -1,0 +1,248 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-ac-agent 1.0.0\n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "AC Agent"
+msgstr "AC 纳管"
+
+msgid "Control"
+msgstr "控制"
+
+msgid "Shows whether this access point is under controller management, and how it reaches the controller."
+msgstr "显示本接入点是否处于控制器管理之下，以及它通过何种方式连到控制器。"
+
+msgid "Control status"
+msgstr "纳管状态"
+
+msgid "Managed"
+msgstr "已纳管"
+
+msgid "Connected, awaiting adoption"
+msgstr "已连接，等待采纳"
+
+msgid "Controller unreachable"
+msgstr "控制器不可达"
+
+msgid "No controller found"
+msgstr "未发现控制器"
+
+msgid "Starting"
+msgstr "启动中"
+
+msgid "Agent not responding"
+msgstr "agent 无响应"
+
+msgid "Agent stopped"
+msgstr "agent 未运行"
+
+msgid "This access point is running a revision issued by controller %s."
+msgstr "本接入点正在运行控制器 %s 下发的配置版本。"
+
+msgid "This access point is running a revision issued by the controller."
+msgstr "本接入点正在运行控制器下发的配置版本。"
+
+msgid "The controller answers but has not adopted this access point yet. Adopt it in the controller interface; until then no configuration is pushed."
+msgstr "控制器有应答，但尚未采纳本接入点。请在控制器界面完成采纳，在此之前不会下发任何配置。"
+
+msgid "Last error: %s"
+msgstr "最近错误：%s"
+
+msgid "The configured address does not answer."
+msgstr "已配置的地址没有应答。"
+
+msgid "No controller address is configured and no UDP answer arrived on the local segment. A controller behind a router never sees the broadcast, so enter its address above."
+msgstr "既没有配置控制器地址，也没有收到本地网段的 UDP 应答。路由器另一侧的控制器收不到广播，请在上方直接填写它的地址。"
+
+msgid "The agent has not updated its status for more than three heartbeats. Check the process; a restart usually recovers it."
+msgstr "agent 已超过三个心跳周期没有更新状态。请检查进程，通常重启即可恢复。"
+
+msgid "The agent process is not running, so this access point is not under any controller."
+msgstr "agent 进程未运行，本接入点当前不受任何控制器管理。"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Controller"
+msgstr "控制器"
+
+msgid "configured address"
+msgstr "手动配置的地址"
+
+msgid "discovered by broadcast"
+msgstr "广播发现"
+
+msgid "Controller ID"
+msgstr "控制器 ID"
+
+msgid "Configuration"
+msgstr "配置版本"
+
+msgid "nothing applied yet"
+msgstr "尚未下发"
+
+msgid "rev %d applied, rev %d pending"
+msgstr "已生效 rev %d，待应用 rev %d"
+
+msgid "rev %d"
+msgstr "rev %d"
+
+msgid "Last heartbeat"
+msgstr "最近心跳"
+
+msgid "(accepted)"
+msgstr "（已被接受）"
+
+msgid "(failed)"
+msgstr "（失败）"
+
+msgid "Access point"
+msgstr "接入点"
+
+msgid "BSS reported"
+msgstr "上报 BSS 数"
+
+msgid "Agent"
+msgstr "agent"
+
+msgid "since"
+msgstr "启动于"
+
+msgid "Dry run is on: the controller is polled and packages are staged, but this access point is not modified."
+msgstr "演练模式已开启：仍会轮询控制器并暂存配置包，但不会修改本接入点。"
+
+msgid "Last apply error: %s"
+msgstr "最近一次应用失败：%s"
+
+msgid "Restart agent"
+msgstr "重启 agent"
+
+msgid "Agent restarted."
+msgstr "agent 已重启。"
+
+msgid "Could not restart the agent: %s"
+msgstr "无法重启 agent：%s"
+
+msgid "One cycle finished (exit code %d)."
+msgstr "已完成一次同步（退出码 %d）。"
+
+msgid "Could not run the agent: %s"
+msgstr "无法运行 agent：%s"
+
+msgid "Controller connection"
+msgstr "控制器连接"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Starts the agent, enables it at boot, and opens TCP 8090 plus UDP 29820/29821 on the WAN zone, so an AC on the upstream or LAN side can discover and manage this access point during initial setup. On by default."
+msgstr "启动 agent 并设为开机自启，同时在 WAN 防火墙上放行 TCP 8090 与 UDP 29820/29821，便于初始化时被上游或 LAN 侧的 AC 发现并纳管。默认开启。"
+
+msgid "Controller address"
+msgstr "控制器地址"
+
+msgid "host:port of the controller, for example 10.0.30.5:8090. Leave empty to find the controller by UDP broadcast on the local segment; a controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgstr "控制器的 host:port，例如 10.0.30.5:8090。留空则通过本地网段的 UDP 广播自动发现；路由器另一侧的控制器收不到广播，必须在此明确填写。"
+
+msgid "Shared secret"
+msgstr "共享密钥"
+
+msgid "Must match AC_SHARED_SECRET on the controller. Leave empty when the controller does not check one."
+msgstr "必须与控制器上的 AC_SHARED_SECRET 一致。控制器不校验时留空。"
+
+msgid "Heartbeat interval"
+msgstr "心跳间隔"
+
+msgid "Seconds between two polls. The default is 20."
+msgstr "两次轮询之间的秒数，缺省 20。"
+
+msgid "Dry run"
+msgstr "演练模式"
+
+msgid "Render and stage the configuration but never write /etc/config and never reload radios. Use this to check that the controller can be reached before letting it take over."
+msgstr "只渲染并暂存配置，不写 /etc/config、不重载射频。可在允许控制器接管之前先验证连通性。"
+
+msgid "Peer coordination port"
+msgstr "AP 间协同端口"
+
+msgid "UDP port used to exchange 802.11k data between access points directly. 0 disables it."
+msgstr "AP 之间直接交换 802.11k 数据所用的 UDP 端口。填 0 表示关闭。"
+
+msgid "Peer announcement interval"
+msgstr "AP 间播报间隔"
+
+msgid "How often this access point announces its BSS and client state to its peers, for example 30s."
+msgstr "本接入点向邻居播报自身 BSS 与客户端状态的间隔，例如 30s。"
+
+msgid "Local roam suggestion"
+msgstr "本地漫游建议"
+
+msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent and needs no steering daemon. It stays silent whenever a steering daemon (usteer or dawn) is enabled, so two decision-makers never fight over the same client; nrsyncd only distributes 11k neighbour lists and does not compete."
+msgstr "当客户端信号极弱且邻居提供同名 SSID 时，由 agent 自己向客户端发送一条 802.11v 切换建议（BTM）。这是 agent 自带能力，不依赖任何引导守护进程；仅在 usteer/dawn 等真正执行引导的守护进程启用时保持沉默，避免两个决策者争抢同一个客户端。nrsyncd 只分发 11k 邻居表，不会与本地建议冲突。"
+
+msgid "Settings saved. The agent and the WAN rules now follow the switch."
+msgstr "设置已保存。agent 与 WAN 放行规则已按开关生效。"
+
+msgid "Settings saved. The agent restarts to pick them up."
+msgstr "设置已保存。agent 将重启以应用新配置。"
+
+msgid "Could not save the settings: %s"
+msgstr "无法保存设置：%s"
+
+msgid "Save & apply"
+msgstr "保存并应用"
+
+msgid "Reset"
+msgstr "复位"
+
+msgid "The controller no longer knows this access point, but rev %d is still running here. Adopt it again to resume management."
+msgstr "控制器已不再记录本接入点，但本机仍在运行 rev %d。重新采纳即可恢复管理。"
+
+msgid "Roaming steering policy"
+msgstr "漫游引导策略"
+
+msgid "Decides who runs client steering. While the controller answers, its directive always wins: the daemon it names is enabled and dawn/usteer are stopped, so the two never fight over a client. \"Controller first\" additionally hands steering to a local daemon when the controller is lost."
+msgstr "决定由谁执行客户端引导。控制器在线时其指令始终优先：启用它指定的引导守护，并自动停用 dawn/usteer，二者绝不会争抢同一个客户端。「控制器优先」策略还会在控制器失联时把引导交给本地守护进程。"
+
+msgid "Controller first (recommended)"
+msgstr "控制器优先（推荐）"
+
+msgid "Controller only, keep last state on loss"
+msgstr "仅听控制器，失联时保持最后状态"
+
+msgid "Autonomous: local daemons only"
+msgstr "自主引导：仅本地守护进程"
+
+msgid "Steering fallback on controller loss"
+msgstr "失联后的回退引导守护"
+
+msgid "Which local daemon takes over after the controller has been unreachable for about a minute. Steering returns to the controller automatically once it answers again. Only used with the \"Controller first\" policy; \"none\" keeps the last controller state instead."
+msgstr "控制器失联约一分钟后，由哪个本地守护进程接管引导；控制器恢复应答后引导自动交回。仅在「控制器优先」策略下生效；选「不回退」则失联时保持控制器最后一次的状态。"
+
+msgid "No fallback"
+msgstr "不回退"
+
+msgid "nrsyncd (11k only)"
+msgstr "nrsyncd（仅 11k）"
+
+msgid "Controller first"
+msgstr "控制器优先"
+
+msgid "Controller only"
+msgstr "仅控制器"
+
+msgid "Autonomous"
+msgstr "自主引导"
+
+msgid "Roaming steering"
+msgstr "漫游引导"
+
+msgid "running %s"
+msgstr "正在运行 %s"
+
+msgid "The controller was lost, so local steering daemon %s took over. Steering returns to the controller automatically once it answers again."
+msgstr "控制器失联，本地引导守护 %s 已接管。控制器恢复应答后将自动交回。"

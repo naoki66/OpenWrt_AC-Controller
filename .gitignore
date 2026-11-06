@@ -1,0 +1,38 @@
+# build output (anchored: a nested bin/ such as .e2e/bin holds sources)
+/bin/
+/dist/
+
+# runtime state
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# local overrides
+.env
+.env.local
+
+# GHCR 凭据与部署备份（绝不入库）
+/deploy/fnos/.ghcr_pat
+/deploy/fnos/data-backup-*.tgz
+
+# scratch space for manual verification (not part of the build)
+.tmp/
+
+# E2E harness: the image build copies the agent binary in, it is not source
+.e2e/ac-agent
+# ...and everything the harness writes at run time (seeded from .e2e/seed)
+.e2e/root/
+.e2e/tpl.json
+.e2e/repush.json
+.e2e/pkg*.tar.gz
+
+# 本地工作记忆：含本机路径与调试记录，不入库
+.workbuddy/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.deploy/

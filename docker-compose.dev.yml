@@ -1,0 +1,24 @@
+# 本地开发覆盖文件（Docker Desktop / Windows、macOS）。
+#
+# docker-compose.yml 使用 network_mode: host，因为 AP 发现依赖接收子网广播，
+# 桥接网络收不到广播。但 Docker Desktop 的 host 网络只把端口绑在它自己的
+# Linux VM 内，宿主机的 127.0.0.1:8080 并不会被监听，本地联调因此不可达。
+#
+# 本文件把网络改为端口映射形态，仅用于本机验证 API 与 Web UI：
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# 注意：
+#   * 端口映射下收不到其他主机的子网广播，真机 AP 不可能被自动发现；
+#     验证发现链路请用 scripts/fake-ap.py 单播到 127.0.0.1。
+#   * AC_ADVERTISE_IP 固定为 127.0.0.1，否则 AC 会把容器 IP 通告出去。
+#   * 生产部署（NAS）不要使用本文件。
+
+services:
+  ac:
+    network_mode: bridge
+    ports:
+      - "8080:8080/tcp"
+      - "29820:29820/udp"
+    environment:
+      AC_ADVERTISE_IP: "127.0.0.1"

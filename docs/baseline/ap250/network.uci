@@ -1,0 +1,92 @@
+package network
+
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	list ipaddr '127.0.0.1/8'
+
+config globals 'globals'
+	option dhcp_default_duid '00048fa6def2646559bda7b036b59e77c86b'
+
+config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan2'
+	list ports 'lan3'
+	list ports 'lan4'
+	list ports 'wan'
+
+config interface 'lan'
+	option device 'br-lan.1'
+	option proto 'static'
+	option ip6assign '64'
+	option ip6ifaceid 'eui64'
+	option broadcast '10.0.10.255'
+	list ipaddr '10.0.10.250/24'
+	option dns '10.0.10.1'
+	option gateway '10.0.10.1'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '1'
+	list ports 'lan4:u*'
+	list ports 'wan:u*'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '2'
+	list ports 'lan3:u*'
+	list ports 'wan:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '3'
+	list ports 'lan2:u*'
+	list ports 'wan:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '4'
+	list ports 'wan:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '5'
+	list ports 'wan:t'
+
+config bridge-vlan
+	option device 'br-lan'
+	option vlan '6'
+	list ports 'wan:t'
+
+config interface 'lan2'
+	option proto 'static'
+	option device 'br-lan.2'
+	option ipaddr '10.0.20.250'
+	option netmask '255.255.255.0'
+	option dns '10.0.10.1'
+
+config interface 'lan3'
+	option proto 'static'
+	option device 'br-lan.3'
+	option ipaddr '10.0.30.250'
+	option netmask '255.255.255.0'
+
+config interface 'lan4'
+	option proto 'static'
+	option device 'br-lan.4'
+	option ipaddr '10.0.40.250'
+	option netmask '255.255.255.0'
+
+config interface 'lan5'
+	option proto 'static'
+	option device 'br-lan.5'
+	option ipaddr '10.0.50.250'
+	option netmask '255.255.255.0'
+
+config interface 'lan6'
+	option proto 'static'
+	option device 'br-lan.6'
+	option ipaddr '10.0.60.250'
+	option netmask '255.255.255.0'
+

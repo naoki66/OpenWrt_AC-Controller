@@ -1,0 +1,29 @@
+#!/bin/sh
+# 假的 iw：只回答 agent 用到的 `dev <ifname> station dump`。
+# 数据按真机格式编排（含 signal 的两段式方括号写法），用于验证解析。
+if [ "$1" = "dev" ] && [ "$3" = "station" ] && [ "$4" = "dump" ]; then
+	case "$2" in
+	phy0.1-ap0)
+		cat <<'EOF'
+Station aa:bb:cc:dd:ee:01 (on phy0.1-ap0)
+	inactive time:	1200 ms
+	rx bytes:	104857600
+	tx bytes:	20971520
+	signal:  	-47 [-52, -49] dBm
+	signal avg:	-48 dBm
+	tx bitrate:	1200.9 MBit/s AX HE-MCS 11
+	rx bitrate:	1441.0 MBit/s AX HE-MCS 11
+	connected time:	86400 seconds
+
+Station aa:bb:cc:dd:ee:02 (on phy0.1-ap0)
+	inactive time:	50 ms
+	signal:  	-71 dBm
+	tx bitrate:	286.7 MBit/s
+	rx bitrate:	344.1 MBit/s
+	connected time:	120 seconds
+EOF
+		;;
+	esac
+	exit 0
+fi
+exit 0

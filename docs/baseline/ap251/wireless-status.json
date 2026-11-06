@@ -1,0 +1,443 @@
+{
+	"radio0": {
+		"up": true,
+		"pending": false,
+		"autostart": true,
+		"disabled": false,
+		"retry_setup_failed": false,
+		"config": {
+			"disabled": false,
+			"type": "mac80211",
+			"band": "2g",
+			"cell_density": 0,
+			"channel": "auto",
+			"country": "US",
+			"he_mu_beamformer": false,
+			"he_su_beamformer": true,
+			"htmode": "HE20",
+			"path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+			"radio": 0,
+			"txpower": 28
+		},
+		"interfaces": [
+			{
+				"section": "wifinet0",
+				"config": {
+					"network": [
+						"lan"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio0"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "psk2+ccmp",
+					"ieee80211k": true,
+					"key": "REDACTED-PSK",
+					"ssid": "SSID-A",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						0
+					]
+				},
+				"ifname": "phy0.0-ap0",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			}
+		]
+	},
+	"radio1": {
+		"up": true,
+		"pending": false,
+		"autostart": true,
+		"disabled": false,
+		"retry_setup_failed": false,
+		"config": {
+			"disabled": false,
+			"type": "mac80211",
+			"band": "5g",
+			"cell_density": 0,
+			"channel": "36",
+			"country": "US",
+			"eht_mu_beamformer": true,
+			"eht_su_beamformer": true,
+			"he_bss_color": 2,
+			"he_mu_beamformer": true,
+			"he_su_beamformer": true,
+			"htmode": "EHT160",
+			"path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+			"radio": 1,
+			"txpower": 30
+		},
+		"interfaces": [
+			{
+				"section": "wifinet10",
+				"config": {
+					"network": [
+						"lan"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio1"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"disassoc_low_ack": false,
+					"encryption": "psk2+ccmp",
+					"ft_over_ds": false,
+					"ft_psk_generate_local": true,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "1111",
+					"ssid": "SSID-A_5G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						1
+					]
+				},
+				"ifname": "phy0.1-ap0",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet11",
+				"config": {
+					"network": [
+						"lan2"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio1"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"disassoc_low_ack": false,
+					"encryption": "sae-mixed",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "2222",
+					"ssid": "SSID-B_5G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						1
+					]
+				},
+				"ifname": "phy0.1-ap1",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet12",
+				"config": {
+					"network": [
+						"lan3"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio1"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"disassoc_low_ack": false,
+					"encryption": "sae-mixed",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "3333",
+					"ssid": "SSID-C_5G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						1
+					]
+				},
+				"ifname": "phy0.1-ap2",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet13",
+				"config": {
+					"network": [
+						"lan4"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio1"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"disassoc_low_ack": false,
+					"encryption": "sae-mixed",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "4444",
+					"ssid": "SSID-D_5G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						1
+					]
+				},
+				"ifname": "phy0.1-ap3",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			}
+		]
+	},
+	"radio2": {
+		"up": true,
+		"pending": false,
+		"autostart": true,
+		"disabled": false,
+		"retry_setup_failed": false,
+		"config": {
+			"disabled": false,
+			"type": "mac80211",
+			"band": "6g",
+			"cell_density": 0,
+			"channel": "37",
+			"country": "US",
+			"eht_mu_beamformer": true,
+			"eht_su_beamformer": true,
+			"he_bss_color": 1,
+			"he_mu_beamformer": true,
+			"he_su_beamformer": true,
+			"he_twt_responder": true,
+			"htmode": "EHT320",
+			"path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+			"radio": 2,
+			"txpower": 30
+		},
+		"interfaces": [
+			{
+				"section": "wifinet20",
+				"config": {
+					"network": [
+						"lan"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "1111",
+					"ssid": "SSID-A_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap0",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet21",
+				"config": {
+					"network": [
+						"lan2"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "2222",
+					"ssid": "SSID-B_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap1",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet22",
+				"config": {
+					"network": [
+						"lan3"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "3333",
+					"ssid": "SSID-C_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap2",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet23",
+				"config": {
+					"network": [
+						"lan4"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "4444",
+					"ssid": "SSID-D_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap3",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet24",
+				"config": {
+					"network": [
+						"lan5"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "5555",
+					"ssid": "SSID-E_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap4",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			},
+			{
+				"section": "wifinet25",
+				"config": {
+					"network": [
+						"lan6"
+					],
+					"proxy_arp": true,
+					"device": [
+						"radio2"
+					],
+					"mode": "ap",
+					"bss_transition": true,
+					"encryption": "sae+ccmp",
+					"ft_over_ds": false,
+					"ieee80211k": true,
+					"ieee80211r": true,
+					"key": "REDACTED-PSK",
+					"mobility_domain": "6666",
+					"ssid": "SSID-F_6G",
+					"wnm_sleep_mode": true,
+					"wnm_sleep_mode_no_keys": true,
+					"radios": [
+						2
+					]
+				},
+				"ifname": "phy0.2-ap5",
+				"vlans": [
+					
+				],
+				"stations": [
+					
+				]
+			}
+		]
+	}
+}

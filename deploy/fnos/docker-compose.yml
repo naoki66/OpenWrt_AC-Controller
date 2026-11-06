@@ -1,0 +1,42 @@
+# fnOS（飞牛 NAS）私有镜像部署。
+#
+# 镜像来自 GHCR，由仓库根的 Dockerfile 构建：
+#   ghcr.io/naoki66/openwrt_ac-controller:latest
+#
+# 与 deploy/nas 的区别：这里只拉镜像，宿主不需要 Go 工具链。
+# 前提是 NAS 能访问 ghcr.io；无外网的宿主请改用 deploy/nas 的离线构建。
+#
+# network_mode: host 是硬要求：AP 发现报文是 UDP 广播，桥接网络收不到。
+# host 模式监听 0.0.0.0，不绑定某一台 NAS 的 IP，只占用 8090/29820 端口；
+# 端口不能映射，只能在宿主上使用 8090/29820（8080 已被宿主 apache2 占用）。
+services:
+  ac:
+    image: ${AC_IMAGE:-ghcr.io/naoki66/openwrt_ac-controller:latest}
+    # 只在本地缺失时拉取；日常启动不碰网络。更新走 update-docker.sh 的显式 pull。
+    pull_policy: missing
+    container_name: ac-controller
+    restart: unless-stopped
+    # 让容器内的 Go 进程成为真正的子进程，透传 SIGTERM。
+    init: true
+    network_mode: host
+
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      AC_DATA_DIR: /var/lib/ac
+      AC_HTTP_ADDR: ":8090"
+      AC_DISCOVER_ADDR: ":29820"
+      # 不设固定值：NAS 可能有多个 IP，留空时按 AP 来源路由逐请求推导应答地址。
+      AC_ADVERTISE_IP: "${AC_ADVERTISE_IP:-}"
+      AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
+      # 保护管理 API 与 Web UI；留空则开放（启动时会打日志警告）。
+      AC_ADMIN_TOKEN: "${AC_ADMIN_TOKEN:-}"
+
+    volumes:
+      # 宿主目录必须存在且属主 1000:1000（镜像内以 uid 1000 运行）。
+      - ${AC_DATA_DIR_HOST:-/srv/ac-controller/data}:/var/lib/ac
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

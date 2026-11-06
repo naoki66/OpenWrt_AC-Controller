@@ -1,0 +1,30 @@
+services:
+  ac:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+    image: ac-controller:dev
+    container_name: ac-controller
+    restart: unless-stopped
+    # AP discovery relies on receiving subnet broadcasts, which bridge
+    # networking does not forward. Host networking is required.
+    network_mode: host
+    environment:
+      # 定时重启/LED 的 HH:MM 按这个时区解释；不设时容器默认 UTC。
+      TZ: ${TZ:-Asia/Shanghai}
+      AC_DATA_DIR: /var/lib/ac
+      AC_HTTP_ADDR: ":8080"
+      AC_DISCOVER_ADDR: ":29820"
+      AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
+      # Guards the management API and Web UI. Unset leaves them open (logged at startup).
+      AC_ADMIN_TOKEN: "${AC_ADMIN_TOKEN:-}"
+      # AC_ADVERTISE_IP: "192.168.1.10"
+    volumes:
+      - ./data:/var/lib/ac
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3

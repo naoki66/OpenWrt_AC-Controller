@@ -1,0 +1,11 @@
+#!/bin/sh
+# 假的 ip：只回答 `neigh show`。真实环境里 bridged AP 的邻接表通常为空，
+# 这里给一条，验证 MAC→IP 的匹配路径确实能工作。
+if [ "$1" = "neigh" ] && [ "$2" = "show" ]; then
+	cat <<'EOF'
+10.0.10.5 dev br-lan.1 lladdr AA:BB:CC:DD:EE:01 REACHABLE
+10.0.20.9 dev br-lan.2 lladdr aa:bb:cc:dd:ee:99 STALE
+EOF
+	exit 0
+fi
+exit 0

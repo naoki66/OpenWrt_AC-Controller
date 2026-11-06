@@ -1,0 +1,38 @@
+config interface 'loopback'
+	option device 'lo'
+	option proto 'static'
+	option ipaddr '127.0.0.1'
+	option netmask '255.0.0.0'
+
+config device 'br_lan'
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'lan1'
+	list ports 'lan2'
+	list ports 'wan'
+
+config interface 'lan'
+	option device 'br-lan'
+	option proto 'static'
+	option ipaddr '10.0.10.250'
+	option netmask '255.255.255.0'
+	option gateway '10.0.10.1'
+	option dns '10.0.10.1'
+
+config bridge-vlan 'ac_bvlan20'
+	option device 'br-lan'
+	option vlan '20'
+	list ports 'wan:t'
+
+config bridge-vlan 'ac_bvlan30'
+	option device 'br-lan'
+	option vlan '30'
+	list ports 'wan:t'
+
+config interface 'ac_vlan20'
+	option device 'br-lan.20'
+	option proto 'none'
+
+config interface 'ac_vlan30'
+	option device 'br-lan.30'
+	option proto 'none'

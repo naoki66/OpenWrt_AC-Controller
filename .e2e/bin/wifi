@@ -1,0 +1,4 @@
+#!/bin/sh
+# 假的 wifi：记录调用与参数，供 E2E 断言"只 reload 一次"。
+echo "wifi $*" >> /root/calls.log
+exit 0

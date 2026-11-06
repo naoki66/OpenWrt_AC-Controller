@@ -1,0 +1,71 @@
+#!/bin/sh /etc/rc.common
+# ac-agent: AP side of the AC provisioning loop.
+#
+# Installed at /etc/init.d/ac-agent. Configuration lives in /etc/config/ac so it
+# can be edited through LuCI or uci like every other OpenWrt service.
+
+START=95
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/sbin/ac-agent
+
+start_service() {
+	# uci -q get rather than config_load + config_get: the latter returned empty
+	# values here and the failure was silent (agent started with no AC_SECRET and
+	# every hello 401'd). uci get is the same lookup, without the indirection.
+	# The LuCI switch writes this option. It is checked here as well as in the
+	# page's rpcd backend, so a config edited by hand cannot leave the agent
+	# running while the switch says off.
+	enabled=$(uci -q get ac.agent.enabled)
+	[ -n "$enabled" ] || enabled=1
+	if [ "$enabled" != "1" ]; then
+		logger -t ac-agent "disabled by /etc/config/ac"
+		return 0
+	fi
+
+	ac_addr=$(uci -q get ac.agent.ac_addr)
+	secret=$(uci -q get ac.agent.secret)
+	interval=$(uci -q get ac.agent.interval)
+	dry_run=$(uci -q get ac.agent.dry_run)
+	[ -n "$dry_run" ] || dry_run=0
+	peer_port=$(uci -q get ac.agent.peer_port)
+	peer_interval=$(uci -q get ac.agent.peer_interval)
+	peer_steer=$(uci -q get ac.agent.peer_steer)
+	[ -n "$peer_steer" ] || peer_steer=0
+	steering_mode=$(uci -q get ac.agent.steering_mode)
+	steering_fallback=$(uci -q get ac.agent.steering_fallback)
+
+	[ -x "$PROG" ] || {
+		logger -t ac-agent "binary missing at $PROG"
+		return 1
+	}
+
+	procd_open_instance
+	procd_set_param command "$PROG" run
+	[ -n "$ac_addr" ] && procd_append_param command --ac "$ac_addr"
+	[ "$dry_run" = "1" ] && procd_append_param command --dry-run
+
+	# env takes the whole set in one call: a second procd_set_param env would
+	# replace the first, not add to it. Calling it twice silently dropped
+	# AC_SECRET and every hello came back 401 — found only on real hardware.
+	env_set="AC_SECRET=$secret"
+	[ -n "$interval" ] && env_set="$env_set AC_INTERVAL=${interval}s"
+	[ -n "$peer_port" ] && env_set="$env_set AC_PEER_PORT=$peer_port"
+	[ -n "$peer_interval" ] && env_set="$env_set AC_PEER_INTERVAL=$peer_interval"
+	[ "$peer_steer" = "1" ] && env_set="$env_set AC_PEER_STEER=1"
+	[ -n "$steering_mode" ] && env_set="$env_set AC_STEERING_MODE=$steering_mode"
+	[ -n "$steering_fallback" ] && env_set="$env_set AC_STEERING_FALLBACK=$steering_fallback"
+	procd_set_param env $env_set
+
+	# Respawn forever: a provisioning agent that gives up is worse than one that
+	# keeps retrying, and the controller may legitimately be down for hours.
+	procd_set_param respawn 3600 5 10
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger ac
+}

@@ -1,0 +1,515 @@
+{
+  "id": "ap-a",
+  "name": "AP-A 现网基线",
+  "bridge": {
+    "name": "br-lan",
+    "vlans": [
+      {
+        "vlan": 1,
+        "ports": [
+          "wan:u*"
+        ]
+      },
+      {
+        "vlan": 2,
+        "ports": [
+          "lan2:u*",
+          "wan:t"
+        ]
+      },
+      {
+        "vlan": 3,
+        "ports": [
+          "lan3:u*",
+          "wan:t"
+        ]
+      },
+      {
+        "vlan": 4,
+        "ports": [
+          "wan:t"
+        ]
+      },
+      {
+        "vlan": 5,
+        "ports": [
+          "wan:t"
+        ]
+      },
+      {
+        "vlan": 6,
+        "ports": [
+          "wan:t"
+        ]
+      },
+      {
+        "vlan": 3169,
+        "ports": [
+          "lan4:u*",
+          "wan:t"
+        ]
+      }
+    ],
+    "interfaces": [
+      {
+        "name": "lan",
+        "device": "br-lan.1",
+        "proto": "static",
+        "gateway": "10.0.10.1",
+        "dns": "10.0.10.1",
+        "broadcast": "10.0.10.255",
+        "ip6assign": "64",
+        "ip6ifaceid": "eui64",
+        "ipaddr": [
+          "10.0.10.251/24"
+        ]
+      },
+      {
+        "name": "lan2",
+        "device": "br-lan.2",
+        "proto": "static",
+        "netmask": "255.255.255.0",
+        "dns": "10.0.10.1",
+        "ipaddr": [
+          "10.0.20.251"
+        ]
+      },
+      {
+        "name": "lan3",
+        "device": "br-lan.3",
+        "proto": "static",
+        "netmask": "255.255.255.0",
+        "ipaddr": [
+          "10.0.30.251"
+        ]
+      },
+      {
+        "name": "lan4",
+        "device": "br-lan.4",
+        "proto": "static",
+        "netmask": "255.255.255.0",
+        "ipaddr": [
+          "10.0.40.251"
+        ]
+      },
+      {
+        "name": "lan5",
+        "device": "br-lan.5",
+        "proto": "static",
+        "netmask": "255.255.255.0",
+        "ipaddr": [
+          "10.0.50.251"
+        ]
+      },
+      {
+        "name": "lan6",
+        "device": "br-lan.6",
+        "proto": "static",
+        "netmask": "255.255.255.0",
+        "ipaddr": [
+          "10.0.60.251"
+        ]
+      }
+    ],
+    "ports": [
+      "lan2",
+      "lan3",
+      "lan4",
+      "wan"
+    ],
+    "igmp_snooping": true
+  },
+  "radios": [
+    {
+      "index": 0,
+      "path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+      "band": "2g",
+      "channel": "auto",
+      "htmode": "HE20",
+      "txpower": 28,
+      "country": "US",
+      "cell_density": 0,
+      "he_su_beamformer": true,
+      "he_mu_beamformer": false
+    },
+    {
+      "index": 1,
+      "path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+      "band": "5g",
+      "channel": "36",
+      "htmode": "EHT160",
+      "txpower": 30,
+      "country": "US",
+      "cell_density": 0,
+      "he_bss_color": 2,
+      "he_su_beamformer": true,
+      "he_mu_beamformer": true,
+      "eht_su_beamformer": true,
+      "eht_mu_beamformer": true,
+      "radar_background": true
+    },
+    {
+      "index": 2,
+      "path": "soc/1fc00000.pcie/pci0000:00/0000:00:00.0/0000:01:00.0",
+      "band": "6g",
+      "channel": "37",
+      "htmode": "EHT320",
+      "txpower": 30,
+      "country": "US",
+      "cell_density": 0,
+      "he_bss_color": 1,
+      "he_su_beamformer": true,
+      "he_mu_beamformer": true,
+      "eht_su_beamformer": true,
+      "eht_mu_beamformer": true,
+      "he_twt_responder": true
+    }
+  ],
+  "ssids": [
+    {
+      "ssid": "SSID-A",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "ieee80211v": true
+    },
+    {
+      "ssid": "SSID-A2",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan2",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-A3",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan3",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-A4",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan4",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-A5",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan5",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-A6",
+      "bands": [
+        "2g"
+      ],
+      "network": "lan6",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-A_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan",
+      "security": "wpa2",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "1111",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "ft_psk_generate_local": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-B_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan2",
+      "security": "wpa2/wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "2222",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-C_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan3",
+      "security": "wpa2/wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "3333",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-D_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan4",
+      "security": "wpa2/wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "4444",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-E_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan5",
+      "security": "wpa2/wpa3",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "5555",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-F_5G",
+      "bands": [
+        "5g"
+      ],
+      "network": "lan6",
+      "security": "wpa2/wpa3",
+      "psk": "REDACTED-PSK",
+      "disabled": true,
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "6666",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true,
+      "disassoc_low_ack": false
+    },
+    {
+      "ssid": "SSID-A_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "1111",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-B_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan2",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "2222",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-C_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan3",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "3333",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-D_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan4",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "4444",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-E_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan5",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "5555",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    },
+    {
+      "ssid": "SSID-F_6G",
+      "bands": [
+        "6g"
+      ],
+      "network": "lan6",
+      "security": "wpa3",
+      "psk": "REDACTED-PSK",
+      "roaming": {
+        "k": true,
+        "v": true,
+        "r": true,
+        "mobility_domain": "6666",
+        "ft_over_ds": false
+      },
+      "wnm_sleep_mode": true,
+      "wnm_sleep_mode_no_keys": true,
+      "proxy_arp": true
+    }
+  ]
+}

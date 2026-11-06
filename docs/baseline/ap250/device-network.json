@@ -1,0 +1,21 @@
+{
+  "bridge_ports": ["lan2", "lan3", "lan4", "wan"],
+  "vlans": [
+    {"vlan": 1, "ports": ["wan:u*"]},
+    {"vlan": 2, "ports": ["lan2:u*", "wan:t"]},
+    {"vlan": 3, "ports": ["lan3:u*", "wan:t"]},
+    {"vlan": 4, "ports": ["wan:t"]},
+    {"vlan": 5, "ports": ["wan:t"]},
+    {"vlan": 6, "ports": ["wan:t"]},
+    {"vlan": 3169, "ports": ["lan4:u*", "wan:t"]}
+  ],
+  "ipaddr": {
+    "lan": ["10.0.10.250/24"],
+    "lan2": ["10.0.20.250"],
+    "lan3": ["10.0.30.250"],
+    "lan4": ["10.0.40.250"],
+    "lan5": ["10.0.50.250"],
+    "lan6": ["10.0.60.250"]
+  },
+  "igmp_snooping": true
+}

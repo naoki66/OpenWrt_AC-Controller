@@ -1,0 +1,249 @@
+# Translation template for luci-app-ac-agent.
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-ac-agent 1.0.0\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "AC Agent"
+msgstr ""
+
+msgid "Control"
+msgstr ""
+
+msgid "Shows whether this access point is under controller management, and how it reaches the controller."
+msgstr ""
+
+msgid "Control status"
+msgstr ""
+
+msgid "Managed"
+msgstr ""
+
+msgid "Connected, awaiting adoption"
+msgstr ""
+
+msgid "Controller unreachable"
+msgstr ""
+
+msgid "No controller found"
+msgstr ""
+
+msgid "Starting"
+msgstr ""
+
+msgid "Agent not responding"
+msgstr ""
+
+msgid "Agent stopped"
+msgstr ""
+
+msgid "This access point is running a revision issued by controller %s."
+msgstr ""
+
+msgid "This access point is running a revision issued by the controller."
+msgstr ""
+
+msgid "The controller answers but has not adopted this access point yet. Adopt it in the controller interface; until then no configuration is pushed."
+msgstr ""
+
+msgid "Last error: %s"
+msgstr ""
+
+msgid "The configured address does not answer."
+msgstr ""
+
+msgid "No controller address is configured and no UDP answer arrived on the local segment. A controller behind a router never sees the broadcast, so enter its address above."
+msgstr ""
+
+msgid "The agent has not updated its status for more than three heartbeats. Check the process; a restart usually recovers it."
+msgstr ""
+
+msgid "The agent process is not running, so this access point is not under any controller."
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Controller"
+msgstr ""
+
+msgid "configured address"
+msgstr ""
+
+msgid "discovered by broadcast"
+msgstr ""
+
+msgid "Controller ID"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "nothing applied yet"
+msgstr ""
+
+msgid "rev %d applied, rev %d pending"
+msgstr ""
+
+msgid "rev %d"
+msgstr ""
+
+msgid "Last heartbeat"
+msgstr ""
+
+msgid "(accepted)"
+msgstr ""
+
+msgid "(failed)"
+msgstr ""
+
+msgid "Access point"
+msgstr ""
+
+msgid "BSS reported"
+msgstr ""
+
+msgid "Agent"
+msgstr ""
+
+msgid "since"
+msgstr ""
+
+msgid "Dry run is on: the controller is polled and packages are staged, but this access point is not modified."
+msgstr ""
+
+msgid "Last apply error: %s"
+msgstr ""
+
+msgid "Restart agent"
+msgstr ""
+
+msgid "Agent restarted."
+msgstr ""
+
+msgid "Could not restart the agent: %s"
+msgstr ""
+
+msgid "One cycle finished (exit code %d)."
+msgstr ""
+
+msgid "Could not run the agent: %s"
+msgstr ""
+
+msgid "Controller connection"
+msgstr ""
+
+msgid "Enable"
+msgstr ""
+
+msgid "Starts the agent, enables it at boot, and opens TCP 8090 plus UDP 29820/29821 on the WAN zone, so an AC on the upstream or LAN side can discover and manage this access point during initial setup. On by default."
+msgstr ""
+
+msgid "Controller address"
+msgstr ""
+
+msgid "host:port of the controller, for example 10.0.30.5:8090. Leave empty to find the controller by UDP broadcast on the local segment; a controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgstr ""
+
+msgid "Shared secret"
+msgstr ""
+
+msgid "Must match AC_SHARED_SECRET on the controller. Leave empty when the controller does not check one."
+msgstr ""
+
+msgid "Heartbeat interval"
+msgstr ""
+
+msgid "Seconds between two polls. The default is 20."
+msgstr ""
+
+msgid "Dry run"
+msgstr ""
+
+msgid "Render and stage the configuration but never write /etc/config and never reload radios. Use this to check that the controller can be reached before letting it take over."
+msgstr ""
+
+msgid "Peer coordination port"
+msgstr ""
+
+msgid "UDP port used to exchange 802.11k data between access points directly. 0 disables it."
+msgstr ""
+
+msgid "Peer announcement interval"
+msgstr ""
+
+msgid "How often this access point announces its BSS and client state to its peers, for example 30s."
+msgstr ""
+
+msgid "Local roam suggestion"
+msgstr ""
+
+msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent and needs no steering daemon. It stays silent whenever a steering daemon (usteer or dawn) is enabled, so two decision-makers never fight over the same client; nrsyncd only distributes 11k neighbour lists and does not compete."
+msgstr ""
+
+msgid "Settings saved. The agent and the WAN rules now follow the switch."
+msgstr ""
+
+msgid "Settings saved. The agent restarts to pick them up."
+msgstr ""
+
+msgid "Could not save the settings: %s"
+msgstr ""
+
+msgid "Save & apply"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "The controller no longer knows this access point, but rev %d is still running here. Adopt it again to resume management."
+msgstr ""
+
+msgid "Roaming steering policy"
+msgstr ""
+
+msgid "Decides who runs client steering. While the controller answers, its directive always wins: the daemon it names is enabled and dawn/usteer are stopped, so the two never fight over a client. \"Controller first\" additionally hands steering to a local daemon when the controller is lost."
+msgstr ""
+
+msgid "Controller first (recommended)"
+msgstr ""
+
+msgid "Controller only, keep last state on loss"
+msgstr ""
+
+msgid "Autonomous: local daemons only"
+msgstr ""
+
+msgid "Steering fallback on controller loss"
+msgstr ""
+
+msgid "Which local daemon takes over after the controller has been unreachable for about a minute. Steering returns to the controller automatically once it answers again. Only used with the \"Controller first\" policy; \"none\" keeps the last controller state instead."
+msgstr ""
+
+msgid "No fallback"
+msgstr ""
+
+msgid "nrsyncd (11k only)"
+msgstr ""
+
+msgid "Controller first"
+msgstr ""
+
+msgid "Controller only"
+msgstr ""
+
+msgid "Autonomous"
+msgstr ""
+
+msgid "Roaming steering"
+msgstr ""
+
+msgid "running %s"
+msgstr ""
+
+msgid "The controller was lost, so local steering daemon %s took over. Steering returns to the controller automatically once it answers again."
+msgstr ""

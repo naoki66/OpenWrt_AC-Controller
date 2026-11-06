@@ -1,0 +1,31 @@
+# NAS（10.0.30.5）上的生产编排。
+#
+# 与仓库根的 docker-compose.yml 区别：
+#   - 基础镜像用 scratch + 预编译二进制，构建不需要外网（宿主没有）；
+#   - HTTP 端口 8090：8080 已被宿主 apache2 占用；
+#   - 数据目录挂到 NAS 的 docker 分区，便于备份；
+#   - 不指定 AC_ADVERTISE_IP：NAS 可能有多个 IP，留空时控制器按 AP 来源路由
+#     逐请求推导应答地址，哪张网卡上来的 AP 就拿到哪个地址。
+#
+# network_mode: host 是硬要求：AP 的发现报文是 UDP 广播，桥接网络收不到。
+# host 模式监听 0.0.0.0，不绑定某一台 NAS 的 IP，只占用 8090/29820 端口。
+services:
+  ac:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ac-controller:nas
+    container_name: ac-controller
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # 定时重启/LED 的 HH:MM 按这个时区解释；不设时容器默认 UTC。
+      TZ: ${TZ:-Asia/Shanghai}
+      AC_DATA_DIR: /var/lib/ac
+      AC_HTTP_ADDR: ":8090"
+      AC_DISCOVER_ADDR: ":29820"
+      # 不设固定值；需要强制通告地址时再通过环境变量覆盖。
+      AC_ADVERTISE_IP: "${AC_ADVERTISE_IP:-}"
+      AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
+    volumes:
+      - /srv/ac-controller/data:/var/lib/ac
