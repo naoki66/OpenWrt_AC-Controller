@@ -28,8 +28,11 @@ services:
       # 不设固定值：NAS 可能有多个 IP，留空时按 AP 来源路由逐请求推导应答地址。
       AC_ADVERTISE_IP: "${AC_ADVERTISE_IP:-}"
       AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
-      # 保护管理 API 与 Web UI；留空则开放（启动时会打日志警告）。
+      # 管理面始终要求登录（首次启动自动建 admin/123456，可在系统页改密）；
+      # 该令牌仅供自动化以 Bearer 方式访问管理 REST。
       AC_ADMIN_TOKEN: "${AC_ADMIN_TOKEN:-}"
+      # 下发给所有 AP 的站点 NTP 源；AP 本地持久化，AC 离线后继续生效。
+      AC_NTP_SERVERS: "${AC_NTP_SERVERS:-}"
 
     volumes:
       # 宿主目录必须存在且属主 1000:1000（镜像内以 uid 1000 运行）。

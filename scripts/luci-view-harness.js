@@ -75,10 +75,11 @@ const uciState = {
 		ac_addr: { value: '10.0.30.5:8090', type: 'option' },
 		secret: { value: 'sekrit', type: 'option' },
 		interval: { value: '20', type: 'option' },
-		dry_run: { value: '0', type: 'option' },
 		peer_port: { value: '29821', type: 'option' },
 		peer_interval: { value: '30s', type: 'option' },
-		peer_steer: { value: '0', type: 'option' }
+		peer_network: { value: 'lan', type: 'option' },
+		peer_secret: { value: 'peer-key', type: 'option' },
+		peer_steer: { value: '1', type: 'option' }
 	}
 };
 
@@ -119,7 +120,8 @@ const STATUS = {
 	applied_at: '2026-11-01T09:59:00Z',
 	last_hello_at: '2026-11-01T14:00:00Z',
 	last_hello_ok: true,
-	bss: 11
+	bss: 11,
+	steering: 'none'
 };
 
 let statusOverride = null;
@@ -297,25 +299,25 @@ function textOf(node) {
 
 		const opts = sections[0] ? sections[0].options : [];
 		const names = opts.map((o) => o.name).sort();
-		const want = [ 'ac_addr', 'dry_run', 'enabled', 'interval', 'peer_interval', 'peer_port', 'peer_steer', 'secret', 'steering_fallback', 'steering_mode' ];
-		check(JSON.stringify(names) === JSON.stringify(want), 'all ten options present: ' + names.join(','));
+		const want = [ 'ac_addr', 'enabled', 'interval', 'peer_interval', 'peer_network', 'peer_port', 'peer_secret', 'peer_steer', 'secret' ];
+		check(JSON.stringify(names) === JSON.stringify(want), 'all nine options present: ' + names.join(','));
 
 		const byName = {};
 		opts.forEach((o) => { byName[o.name] = o; });
 		check(byName.enabled && byName.enabled.default === '1', 'the enable switch defaults to on');
-		check(byName.steering_mode && Array.isArray(byName.steering_mode.choices) &&
-			byName.steering_mode.choices[0].v === 'ac_priority', 'steering_mode lists ac_priority first');
-		check(byName.steering_fallback && Array.isArray(byName.steering_fallback.choices) &&
-			byName.steering_fallback.choices[0].v === 'none', 'steering_fallback lists none first');
-		check(byName.peer_steer && byName.interval.datatype === 'uinteger', 'interval is uinteger');
+		check(byName.peer_steer && byName.peer_steer.default === '1', 'local roam suggestion defaults on');
+		check(byName.interval && byName.interval.datatype === 'uinteger', 'interval is uinteger');
 		check(byName.secret && byName.secret.password === true, 'secret is a password field');
-		check(byName.ac_addr && byName.ac_addr.placeholder === '10.0.30.5:8090', 'ac_addr placeholder');
+		check(byName.peer_secret && byName.peer_secret.password === true, 'peer secret is a password field');
+		check(byName.peer_network && byName.peer_network.placeholder === 'lan', 'peer network placeholder');
+		check(byName.ac_addr && byName.ac_addr.placeholder === 'controller:8090', 'ac_addr placeholder');
 
 		const texts = textOf(node);
 		check(texts.indexOf('Managed') >= 0, 'managed badge rendered');
 		check(texts.indexOf('rev 3') >= 0, 'applied revision rendered');
 		check(texts.indexOf('10.0.30.5:8090') >= 0, 'controller address rendered');
 		check(texts.indexOf('configured address') >= 0, 'address source rendered');
+		check(texts.indexOf('running agent') >= 0, 'no steering daemon shown as agent');
 
 		const buttons = walk(node).filter((n) => n.tagName === 'BUTTON');
 		const labels = buttons.map((b) => textOf(b));

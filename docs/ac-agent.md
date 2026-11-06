@@ -125,7 +125,8 @@ buildroot 编出的二进制跟随目标 libc；需要一份跨固件（musl/gli
 仍用上面的 `make agent`。两种方式装出来的路径都是 `/usr/sbin/ac-agent`，
 服务与配置分别是 `/etc/init.d/ac-agent`、`/etc/config/ac`。
 
-`/etc/config/ac` 支持：`enabled`（缺省 1，启用 agent 并在 WAN 放行 8090/29820/29821）、`ac_addr`（留空则广播自动发现）、`secret`、`interval`、`dry_run`。
+`/etc/config/ac` 支持：`enabled`（缺省 1，启用 agent 并在 WAN 放行 8090/29820/29821）、`ac_addr`（留空则广播自动发现）、`secret`、`interval`、`peer_port` / `peer_interval` / `peer_network` / `peer_secret` / `peer_steer`。
+`--dry-run` 只保留为命令行调试开关，不再写入 `/etc/config/ac`。
 
 查看状态：
 
@@ -258,17 +259,41 @@ Beacon Report 作为 11k 的两个独立开关），但**在现网固件上是�
 所以 agent 之间还有一条不经过控制器的通道：
 
 ```sh
-# 每台 AP 每 30 s 广播一次（管理网二层广播）
-AP_PEER {type, v, mac, model, hostname, bss[], clients[], radios[]}
+# 邻居报告帧：AP_PEER_NR {type, v, mac, boot, ts, ctr, gen, part, parts, bss[]}
+# 负载状态帧：AP_PEER_STATE {type, v, mac, boot, ts, ctr, clients[], radios[]}
 ```
 
-- 端口 `29821`（比发现端口 29820 大 1，避免同一 socket 冲突），本地 UDP socket，**不额外起进程、不写盘**；
-- 收到的 peer 状态按 AP MAC 归一化去重，超过 `max(3×interval, 90s)` 不再播报即过期；
-- `restoreNeighborsIfDue`（首轮 + 每 15 轮）写入 hostapd 的列表 =
-  **控制器缓存 ∪ 本机自报的兄弟 BSS ∪ 在线 peer 的同 SSID BSS**，按 BSSID 去重排序，
-  始终排除本 BSS 自身（hostapd 的 `rrm_nr_set` 会自己补上）；
-- 跨 SSID 的条目一律丢弃：把客户端引到它连不上的 BSS 只会污染整张列表；
-- 单条消息上限 48 KB，客户端列表过大时先丢弃 `clients` 再发——BSS 自报是 peer 必需的部分。
+transport 与分帧：
+
+- **优先 IPv6 link-local 组播**：组播组 `ff12::ac11:6b`，端口 `29821`，绑定到
+  `peer_network` 解析出的 `l3_device`，`hop=1`、关闭多播回环、`SO_BINDTODEVICE`，
+  报文不会被路由出管理网段；
+- 解析不到管理口或 IPv6 组播不可用时**自动回退 IPv4 广播**（原 `broadcastTargets`
+  行为，`0.0.0.0:29821`）；
+- 邻居报告和客户端/射频状态**分成两帧**：NR 帧控制在 1232 字节内，超过时按
+  `gen/part/parts` 分片，接收端完整重组后才替换；客户端列表过大时先丢弃 `clients`，
+  不会影响 11k 邻居表；
+- 端口 `29821`（比发现端口 29820 大 1，避免同一 socket 冲突），不额外起进程、不写盘。
+
+认证与校验：
+
+- `peer_secret` 非空时，每条报文带 `HMAC-SHA256(secret, 去掉 sig 的 JSON)`；
+  `boot` 是进程启动随机 id，`ts` 是 Unix 秒，`ctr` 是自增计数器；
+- 接收端拒绝 `ts` 偏离本地时钟超过 **1 小时**、计数器重复、超出 64 窗口的旧计数器，
+  以及 boot id 变化后仍带旧计数的报文；boot id 变化时重置该 peer 的重放窗口。
+  1 小时窗口覆盖 OpenWrt 开机时 sysfixtime/NTP 造成的 12–22 分钟跳变，让新 AP
+  仍能收到 peer 的 NTP 列表；长期仍应保持 NTP 同步，时间源由 §10.4 统一管理，
+  AC 离线后仍由本地 NTP/peer 列表继续生效；
+- 邻居报告按 uneighbord 的规则校验：BSSID 必须是 6 字节 MAC，SSID 1–32 字节，
+  NR 十六进制 26–1024 字符且偶数长度，**NR 前 6 字节必须等于 BSSID**；按 BSSID
+  去重，最多 64 条；最多保留 64 个 peer；
+- `peer_secret` 为空时保持旧的“可信管理网段”假设，启动时打 warning；
+  v1 的 `AP_PEER` 只在没有配置密钥时兼容接收。新 agent 能看见旧 agent，但旧 agent
+  不认识 v2，滚动升级期间建议同一站点一起升级。
+
+合并规则（与之前相同）：`restoreNeighborsIfDue`（首轮 + 每 15 轮）写入 hostapd 的列表 =
+**控制器缓存 ∪ 本机自报的兄弟 BSS ∪ 在线 peer 的同 SSID BSS**，按 BSSID 去重排序，
+始终排除本 BSS 自身；跨 SSID 的条目一律丢弃。
 
 配置（`/etc/config/ac`，均为可选）：
 
@@ -276,14 +301,31 @@ AP_PEER {type, v, mac, model, hostname, bss[], clients[], radios[]}
 |---|---|---|
 | `peer_port` | `29821` | `0`/负值关闭 AP 间协同 |
 | `peer_interval` | `30s` | 播报间隔（`AC_PEER_INTERVAL`） |
-| `peer_steer` | `0` | 是否允许本地 11v 建议 |
+| `peer_network` | `lan` | 承载 AP 间流量的逻辑网络名，用于解析 IPv6 组播接口 |
+| `peer_secret` | 空 | HMAC 共享密钥；所有 AP 一致，留空仅限可信管理网段 |
+| `peer_steer` | `1` | 是否允许本地 11v 建议 |
+
+**超过 2 台 AP 时怎么互联**：这条通道是**全互联组播/广播**，不是两两配对。每台 AP 都以
+自己的 MAC 为键发布 `AP_PEER_NR` / `AP_PEER_STATE`，同时接收所有其它 AP 的播报；N 台
+AP 的站点里，每台都能看到其余 N-1 台，并把这些 AP 的同 SSID BSS 合并进本机每个 BSS 的
+11k 邻居表。没有主节点、没有中转、也不需要额外的守护进程：
+
+```
+AP-A ──┐
+AP-B ──┼── IPv6 ff12::ac11:6b:29821（同一管理二层）── 每台 AP 都收到其余所有 AP
+AP-C ──┘
+```
+
+3 台、5 台 AP 的邻居表条目会按 BSSID 去重后自然增长，BTM 候选也来自全部在线 peer。
+组播/广播都不跨三层，所有 AP 的管理口必须在**同一个二层网段**；AC 在线与否都不影响这条
+通道，控制器恢复后仍以控制器下发的列表为准（两边条目按 BSSID 去重，不会互相覆盖）。
 
 **离线自治的边界**：AC 不可达时 agent 只做"保持现状 + 重建运行态"，绝不改写 `/etc/config`。
 配置变更仍然只能来自验签通过的包，这是安全模型的一部分。
 
-### 10.2 可选的本地 11v 建议（默认关闭）
+### 10.2 本地 11v 建议（默认开启）
 
-`peer_steer=1` 时才启用，且故意保守——AP **测不到关联在其他 AP 的客户端**，任何"对方信号更好"的
+`peer_steer=1`（缺省）时启用，且故意保守——AP **测不到关联在其他 AP 的客户端**，任何"对方信号更好"的
 判断都是猜的。因此只在**本机链路已经弱到快断**（≤ -78 dBm、已连接 ≥ 30 s）时，向客户端发一条
 BTM 建议（`ubus call hostapd.<if> bss_transition_request`）：
 
@@ -295,31 +337,61 @@ BTM 建议（`ubus call hostapd.<if> bss_transition_request`）：
 - 每轮最多 1 次、每客户端冷却 2 分钟、候选最多 4 个；
 - 只建议，不 `del_client`、不强制断连；
 - `probeSteering` 发现 usteer/dawn 已启用时自动让位——两个决策者会互相打架；`nrsyncd` 只分发 11k 邻居表，不参与切换决策，可与本地 BTM 并行；
+- `applied_rev = 0` 的未纳管设备不发送任何建议；
 - dry-run 下完全不发。
 
-默认关闭是刻意的：已有站点的漫游行为不应因为 agent 升级而改变。
+默认开启是刻意的：控制器失联后，这台内置建议就是 AP 之间继续引导客户端的最直接手段，
+不依赖 nrsyncd、usteer、dawn 中任何一个额外安装的包，也不限 AP 数量（候选来自 29821 上
+所有在线 peer）。
 
-### 10.3 漫游引导优先级策略（steering_mode）
+### 10.3 固定策略：控制器优先，失联后 AP 自组织
 
-UCI `ac.agent.steering_mode`（环境变量 `AC_STEERING_MODE`），决定"谁来决定本机跑哪个引导守护"：
+**不再提供“演练模式 / 失联回退守护 / 漫游引导策略”三个 UCI 选项**。行为固定为：
 
-| 模式 | 行为 |
-|---|---|
-| `ac_priority`（缺省） | **AC 优先**。控制器在线时严格按其 steering 指令执行（`applySteering` 启用指定守护并停掉其余全部，dawn/usteer 天然没有机会与 AC 争抢）；连续失联约 1 分钟后启动 `steering_fallback` 指定的自主引导；控制器恢复应答后自动交回。 |
-| `ac_only` | 只听控制器的。失联时保持最后一次指令的状态，不回退（升级前行为）。 |
-| `autonomous` | agent 完全不碰引导守护（apply 跳过 steering 文件），usteer/dawn 由本地自行管理；hello 仍如实上报实测到的守护。 |
+1. **控制器在线时控制器优先**。配置包里的 `steering` 文件仍决定本机跑哪个守护进程；
+   `applySteering` 只启用它指定的那一个，并停掉其余全部（usteer/dawn 不会与 AC 争抢）。
+   配置包没有 `steering` 文件时，agent 不碰任何守护进程。
+2. **控制器失联后不做守护进程切换**。设备保持最后一次生效的 steering 状态（升级前行为），
+   同时 29821 的 peer 协同与本地 11v 建议继续工作：
+   - 邻居表 = 控制器缓存 ∪ 本机兄弟 BSS ∪ **全部在线 peer** 的同 SSID BSS；
+   - 客户端信号 ≤ -78 dBm 且存在同 SSID 候选时，agent 自己发 BTM；
+   - 若 AC 曾指定 `nrsyncd`，它只分发 11k 邻居表，本地 BTM 仍可并行；
+   - 若 AC 曾指定 `usteer/dawn`，它们继续按最后一次指令运行，本地 BTM 自动让位。
+3. **从未纳管的设备**（`applied_rev = 0`）不会自作主张发送 BTM，也不会启动守护进程。
 
-`ac_priority` 的失联回退细节（`internal/agent/steering.go`）：
+这套策略对 2 台以上 AP 同样成立：每台 AP 都通过 29821 的 IPv6 link-local 组播（不可用时
+回退 IPv4 广播）收到其余所有 AP 的 BSS，邻居表与 BTM 候选会自然包含全部在线 peer（详见
+§10.1）。唯一的拓扑前提是 AP 管理口在同一二层网段，组播/广播都无法跨三层。
 
-- 判据 = 连续 3 个心跳失败（与重新发现控制器同一阈值），**或**（无控制器地址 + `applied_rev > 0` + 已过 3 轮）——即"曾被纳管的设备重启后控制器一直不在"。
-- **从未被纳管的设备不会自作主张启动守护**（`applied_rev = 0` 不触发）。
-- 回退只做**一次**：`state.steering_fallback_active` 落盘，重启不会把决定翻回去；恢复分支同样只做一次。
-- 交回时按 `state.steering`（最近一次包里 steering 文件的内容）重新 `applySteering`；若为空（升级前采纳、从未记录）则只停掉回退守护，不猜"AC 想要什么"。
-- `steering_fallback`（`AC_STEERING_FALLBACK`）取值 `none / usteer / dawn / nrsyncd`，缺省 `none`（失联后不启用自主引导，等价 ac_only）。
+状态出口：`/var/run/ac-agent/status.json` 仍保留 `steering_mode`（缺省 `ac_priority`
+供旧页面/脚本读取）与 `steering`（实测当前启用的守护）；回退字段在缺省配置下为空、
+不会写入。LuCI 页面（控制 → AC 纳管）的引导相关选项只保留 `peer_steer` 一个开关，缺省开启。
 
-状态出口：`/var/run/ac-agent/status.json` 新增 `steering_mode` / `steering_fallback` /
-`steering`（实测当前启用的守护）/ `steering_fallback_active`；LuCI 页面（控制 → AC 纳管）
-有对应的两个选项（引导模式、失联回退守护）与状态行/告警。
+### 10.4 站点时间源（NTP）
+
+HMAC 的 `ts` 依赖各 AP 的墙上时钟大致一致。时间源由控制器统一下发，避免每台 AP
+各配一套：
+
+- 控制器系统页的“站点时间源（NTP）”写入 `settings` 表；环境变量
+  `AC_NTP_SERVERS` 是首次启动的默认值，页面设置优先。缺省值为
+  `ntp.ntsc.ac.cn,ntp1.aliyun.com,ntp.tencent.com,cn.pool.ntp.org`：全部是公共
+  NTP 源，不绑定某个网段的网关地址；如果站点有内网 NTP（如网关/NAS），在页面
+  第一项填入即可。**控制器本身不列入**，避免 AC 离线时失去唯一时间源；
+- 每次 HelloReply 带 `ntp` 列表（pending 设备也带，初始化阶段就需要时间）；
+- agent 收到后写入 `/etc/config/system` 的 `config timeserver 'ntp'`：
+  先删除旧的 `list server`，逐条 `uci add_list system.ntp.server`，提交后
+  `/etc/init.d/sysntpd restart`；列表同时持久化到 `/etc/ac/state.json`，
+  同一列表不会每轮重复写盘；
+- **AC 离线后**：AP 本地的 NTP 配置和 sysntpd 继续运行，时间源不依赖控制器；
+  29821 的 IPv6 组播/peer 协同也照常工作。因此“时间同步”和“多 AP 自治”是两条
+  独立链路：前者靠站点 NTP 源，后者靠 AP 间组播；
+- 新 AP 在 AC 离线时加入、从未收到过 HelloReply 的 `ntp`：它会从在线 peer 的
+  `AP_PEER_STATE.ntp` 学到同一份列表并写入本地；该通道受 `peer_secret` 的 HMAC
+  保护，不会被未认证主机注入；
+- 如果站点有内网 NTP（如网关/NAS），把它放在第一项，再保留公共 NTP 作为兜底；
+  没有内网 NTP 时默认的四个公共源可直接使用。不要把控制器本身当作唯一 NTP 源，
+  否则 AC 离线就失去时间参考；
+- 控制器只改 NTP 服务器列表，不改时区；AP 的 `TZ` 仍由固件/站点配置决定。
 
 ## 11. 射频遥测与固件升级
 
@@ -498,10 +570,10 @@ Hello 额外带 `uptime`（`/proc/uptime` 的秒数，读取失败为 0）。控
 - 模板支持克隆（新 ID 为 `<id>-copy-<8hex>`）；删除前检查设备与 AP 分组引用，
   被引用或仅剩最后一个模板时返回 409。
 
-### 11.6 客户端管理（踢下线 / 追踪 / MAC ACL / 智能磁吸）
+### 11.6 客户端管理（踢下线 / 关注 / MAC ACL / 智能磁吸）
 
-**追踪与备注**：`client_meta` 表按 MAC 保存 `alias`、`note`、`tracked` 以及磁吸
-目标 `bind_ssid`/`bind_ap_mac`。它与 `clients` 快照分表存放，因为 AP 每轮 Hello
+**关注与备注**：`client_meta` 表按 MAC 保存 `alias`、`note`、`tracked`（关注标记，
+仅用于客户端列表筛选，不影响数据保留）以及磁吸目标 `bind_ssid`/`bind_ap_mac`。它与 `clients` 快照分表存放，因为 AP 每轮 Hello
 都会覆盖快照字段，控制器侧的意图不能写进快照列。管理接口：
 
 ```

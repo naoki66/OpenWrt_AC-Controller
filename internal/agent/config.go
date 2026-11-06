@@ -12,16 +12,17 @@ import (
 	"github.com/naoki66/ac-controller/internal/proto"
 )
 
-// Steering policy modes (UCI ac.agent.steering_mode / AC_STEERING_MODE).
+// Steering policy modes (internal default only; the LuCI/UCI option was
+// removed).
 //
 // The controller is the decision maker whenever it is reachable: applySteering
 // stops every other daemon, so the AC's directive always outranks a locally
-// installed dawn/usteer. What varies is what happens when that directive can no
-// longer be renewed — an outage must not silently leave the site unsteered.
+// installed dawn/usteer. The default is ac_priority; when the controller is
+// lost, the AP-to-AP channel and the built-in 11v suggestion keep working
+// instead of switching to a different daemon.
 const (
-	// SteeringModeACPriority keeps the controller in charge while it answers
-	// and falls back to a locally chosen daemon after a sustained outage.
-	// This is the default.
+	// SteeringModeACPriority keeps the controller in charge while it answers.
+	// This is the default and the only mode the shipped configuration uses.
 	SteeringModeACPriority = "ac_priority"
 	// SteeringModeACOnly never deviates from the controller's last directive.
 	// When the controller goes away the last state simply keeps running.
@@ -32,8 +33,9 @@ const (
 	SteeringModeAutonomous = "autonomous"
 )
 
-// Fallback daemons for SteeringModeACPriority. "none" means "lose steering on
-// an outage", which is also what an empty value means.
+// Legacy fallback daemons for SteeringModeACPriority. "none" (and an empty
+// value) means no daemon switch on an outage, which is the shipped default;
+// local AP-to-AP coordination and the built-in BTM fill the gap instead.
 const (
 	SteeringFallbackNone    = "none"
 	SteeringFallbackUsteer  = "usteer"
@@ -77,10 +79,18 @@ type Config struct {
 	// is known to be unreachable. Zero means the default (20 s).
 	PeerIntervalOffline time.Duration
 	// PeerSteer allows conservative local 11v suggestions when a client is
-	// already very weak and a peer advertises the same SSID. Off by default:
-	// it changes roaming behaviour, and a steering daemon (usteer/dawn) does the
-	// job better when one is installed.
+	// already very weak and a peer advertises the same SSID. On by default in
+	// the shipped UCI file: after the controller is lost this is what keeps
+	// roaming working across the APs.
 	PeerSteer bool
+	// PeerSecret is the shared site key for HMAC-authenticated peer messages.
+	// Empty keeps the historical trusted-L2 behaviour and logs a warning.
+	PeerSecret string
+	// PeerNetwork is the OpenWrt logical network (not a device name) that carries
+	// AP-to-AP traffic. It is resolved to l3_device for IPv6 link-local multicast.
+	// Empty means "try the default network name lan", and a failed resolution
+	// falls back to IPv4 broadcast.
+	PeerNetwork string
 	// StationSource selects how the associated-station table is read:
 	// "auto" (netlink, falling back to iw), "nl80211", or "iw". Empty means
 	// auto. iw costs a fork+exec per BSS, netlink a syscall pair; the option
@@ -210,6 +220,15 @@ func Load(c Config) Config {
 	}
 	if v := os.Getenv("AC_PEER_STEER"); v == "1" || strings.EqualFold(v, "true") {
 		c.PeerSteer = true
+	}
+	if c.PeerSecret == "" {
+		c.PeerSecret = os.Getenv("AC_PEER_SECRET")
+	}
+	if c.PeerNetwork == "" {
+		c.PeerNetwork = os.Getenv("AC_PEER_NETWORK")
+	}
+	if c.PeerNetwork == "" {
+		c.PeerNetwork = "lan"
 	}
 	if c.StationSource == "" {
 		c.StationSource = strings.TrimSpace(os.Getenv("AC_STATION_SOURCE"))
@@ -381,6 +400,10 @@ type State struct {
 	// stored as JSON so a controller outage does not stop local magnet
 	// steering. Empty means the controller has never sent bindings.
 	ClientBindingsRaw string `json:"client_bindings,omitempty"`
+	// NTPServers is the last controller-managed time-source list applied to
+	// /etc/config/system. It is persisted so a reboot during an AC outage does
+	// not lose the time source; an empty list means the controller never sent one.
+	NTPServers []string `json:"ntp_servers,omitempty"`
 	// ActionResults are finished controller actions that have not been
 	// acknowledged yet. Kept on disk so a reboot in the middle of reporting a
 	// command does not lose the outcome.

@@ -12,11 +12,11 @@ import (
 func peerPayload(t *testing.T, mac string, bss []proto.NeighborBSS, clients []proto.PeerClient) []byte {
 	t.Helper()
 	st := proto.PeerState{
-		Type:     proto.MsgPeer,
+		Type:     proto.MsgPeerNR,
 		V:        proto.PeerVersion,
 		MAC:      mac,
 		Hostname: "peer",
-		BSS:      bss,
+		BSS:      sanitizePeerBSS(bss),
 		Clients:  clients,
 	}
 	body, err := json.Marshal(st)

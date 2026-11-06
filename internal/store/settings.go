@@ -19,6 +19,15 @@ const (
 	// registering with the old secret is rejected the moment this is written,
 	// which is exactly the point of rotating it.
 	SettingSharedSecret = "shared_secret"
+	// SettingAdminUser is the login name of the management account. Seeded with
+	// "admin" on first start; the system page can rename it.
+	SettingAdminUser = "admin_user"
+	// SettingAdminPass is the salted PBKDF2 hash of the management password.
+	// The plain text is never stored; a first start seeds the default hash.
+	SettingAdminPass = "admin_password"
+	// SettingNTPServers is the controller-managed site time-source list, stored
+	// as a JSON array. An absent row means "do not manage AP NTP".
+	SettingNTPServers = "ntp_servers"
 )
 
 // GetSetting returns one setting or ErrNotFound.

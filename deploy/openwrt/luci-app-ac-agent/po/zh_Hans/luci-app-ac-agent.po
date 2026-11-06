@@ -112,9 +112,6 @@ msgstr "agent"
 msgid "since"
 msgstr "启动于"
 
-msgid "Dry run is on: the controller is polled and packages are staged, but this access point is not modified."
-msgstr "演练模式已开启：仍会轮询控制器并暂存配置包，但不会修改本接入点。"
-
 msgid "Last apply error: %s"
 msgstr "最近一次应用失败：%s"
 
@@ -145,8 +142,8 @@ msgstr "启动 agent 并设为开机自启，同时在 WAN 防火墙上放行 TC
 msgid "Controller address"
 msgstr "控制器地址"
 
-msgid "host:port of the controller, for example 10.0.30.5:8090. Leave empty to find the controller by UDP broadcast on the local segment; a controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
-msgstr "控制器的 host:port，例如 10.0.30.5:8090。留空则通过本地网段的 UDP 广播自动发现；路由器另一侧的控制器收不到广播，必须在此明确填写。"
+msgid "host:port of the controller. Leave empty to find the controller by UDP broadcast on the local segment; once it answers, the discovered address is filled in here and can be saved to pin it. A controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgstr "控制器的 host:port。留空则通过本地网段的 UDP 广播自动发现；控制器应答后，发现的地址会自动填入此处，保存即可固定。路由器另一侧的控制器收不到广播，必须在此明确填写。"
 
 msgid "Shared secret"
 msgstr "共享密钥"
@@ -160,12 +157,6 @@ msgstr "心跳间隔"
 msgid "Seconds between two polls. The default is 20."
 msgstr "两次轮询之间的秒数，缺省 20。"
 
-msgid "Dry run"
-msgstr "演练模式"
-
-msgid "Render and stage the configuration but never write /etc/config and never reload radios. Use this to check that the controller can be reached before letting it take over."
-msgstr "只渲染并暂存配置，不写 /etc/config、不重载射频。可在允许控制器接管之前先验证连通性。"
-
 msgid "Peer coordination port"
 msgstr "AP 间协同端口"
 
@@ -178,11 +169,23 @@ msgstr "AP 间播报间隔"
 msgid "How often this access point announces its BSS and client state to its peers, for example 30s."
 msgstr "本接入点向邻居播报自身 BSS 与客户端状态的间隔，例如 30s。"
 
+msgid "Peer coordination network"
+msgstr "AP 间协同网络"
+
+msgid "Logical OpenWrt network, for example lan, that carries AP-to-AP traffic. The agent resolves its l3_device and joins IPv6 link-local multicast on it; when IPv6 is unavailable it falls back to IPv4 broadcast."
+msgstr "承载 AP 间流量的 OpenWrt 逻辑网络名，例如 lan。agent 会解析它的 l3_device 并加入 IPv6 link-local 组播；IPv6 不可用时自动回退 IPv4 广播。"
+
+msgid "Peer shared secret"
+msgstr "AP 间共享密钥"
+
+msgid "Shared by every access point and used to authenticate peer messages with HMAC-SHA256. Leave empty only on a trusted management segment; never reuse AC_SHARED_SECRET."
+msgstr "所有接入点共用，用于对 AP 间报文做 HMAC-SHA256 认证。仅在可信管理网段可留空；不要复用 AC_SHARED_SECRET。"
+
 msgid "Local roam suggestion"
 msgstr "本地漫游建议"
 
-msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent and needs no steering daemon. It stays silent whenever a steering daemon (usteer or dawn) is enabled, so two decision-makers never fight over the same client; nrsyncd only distributes 11k neighbour lists and does not compete."
-msgstr "当客户端信号极弱且邻居提供同名 SSID 时，由 agent 自己向客户端发送一条 802.11v 切换建议（BTM）。这是 agent 自带能力，不依赖任何引导守护进程；仅在 usteer/dawn 等真正执行引导的守护进程启用时保持沉默，避免两个决策者争抢同一个客户端。nrsyncd 只分发 11k 邻居表，不会与本地建议冲突。"
+msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent, needs no steering daemon, and is on by default so roaming keeps working across any number of access points after the controller is lost. It stays silent whenever usteer or dawn is enabled; nrsyncd only distributes 11k neighbour lists and does not compete."
+msgstr "当客户端信号极弱且邻居提供同名 SSID 时，由 agent 自己向客户端发送一条 802.11v 切换建议（BTM）。这是 agent 自带能力，不依赖任何引导守护进程，且默认开启：控制器失联后，任意数量的接入点之间仍可继续协同并自行建议漫游。仅在 usteer/dawn 启用时保持沉默；nrsyncd 只分发 11k 邻居表，不会冲突。"
 
 msgid "Settings saved. The agent and the WAN rules now follow the switch."
 msgstr "设置已保存。agent 与 WAN 放行规则已按开关生效。"
@@ -202,47 +205,11 @@ msgstr "复位"
 msgid "The controller no longer knows this access point, but rev %d is still running here. Adopt it again to resume management."
 msgstr "控制器已不再记录本接入点，但本机仍在运行 rev %d。重新采纳即可恢复管理。"
 
-msgid "Roaming steering policy"
-msgstr "漫游引导策略"
-
-msgid "Decides who runs client steering. While the controller answers, its directive always wins: the daemon it names is enabled and dawn/usteer are stopped, so the two never fight over a client. \"Controller first\" additionally hands steering to a local daemon when the controller is lost."
-msgstr "决定由谁执行客户端引导。控制器在线时其指令始终优先：启用它指定的引导守护，并自动停用 dawn/usteer，二者绝不会争抢同一个客户端。「控制器优先」策略还会在控制器失联时把引导交给本地守护进程。"
-
-msgid "Controller first (recommended)"
-msgstr "控制器优先（推荐）"
-
-msgid "Controller only, keep last state on loss"
-msgstr "仅听控制器，失联时保持最后状态"
-
-msgid "Autonomous: local daemons only"
-msgstr "自主引导：仅本地守护进程"
-
-msgid "Steering fallback on controller loss"
-msgstr "失联后的回退引导守护"
-
-msgid "Which local daemon takes over after the controller has been unreachable for about a minute. Steering returns to the controller automatically once it answers again. Only used with the \"Controller first\" policy; \"none\" keeps the last controller state instead."
-msgstr "控制器失联约一分钟后，由哪个本地守护进程接管引导；控制器恢复应答后引导自动交回。仅在「控制器优先」策略下生效；选「不回退」则失联时保持控制器最后一次的状态。"
-
-msgid "No fallback"
-msgstr "不回退"
-
-msgid "nrsyncd (11k only)"
-msgstr "nrsyncd（仅 11k）"
-
-msgid "Controller first"
-msgstr "控制器优先"
-
-msgid "Controller only"
-msgstr "仅控制器"
-
-msgid "Autonomous"
-msgstr "自主引导"
-
 msgid "Roaming steering"
 msgstr "漫游引导"
 
+msgid "agent"
+msgstr "agent"
+
 msgid "running %s"
 msgstr "正在运行 %s"
-
-msgid "The controller was lost, so local steering daemon %s took over. Steering returns to the controller automatically once it answers again."
-msgstr "控制器失联，本地引导守护 %s 已接管。控制器恢复应答后将自动交回。"

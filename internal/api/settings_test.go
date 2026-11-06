@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/naoki66/ac-controller/internal/proto"
@@ -112,9 +113,50 @@ func TestSharedSecretValidation(t *testing.T) {
 	}
 }
 
+func TestNTPServersSettingAndHello(t *testing.T) {
+	f := newFixture(t)
+
+	resp := f.do(http.MethodPut, "/api/v1/settings/ntp", map[string]any{
+		"servers": []string{"10.0.10.1", "NTP.Aliyun.com", "bad host", "10.0.10.1"},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set NTP status = %d", resp.StatusCode)
+	}
+	view := decode[map[string]any](t, resp)
+	list, _ := view["ntp"].([]any)
+	if len(list) != 2 || list[0] != "10.0.10.1" || list[1] != "ntp.aliyun.com" {
+		t.Fatalf("ntp view = %+v", view["ntp"])
+	}
+
+	// The next hello hands the list to an AP, including a pending one.
+	_, reply := f.hello(t, proto.Hello{MAC: testMAC, Model: "XR1710G"})
+	if len(reply.NTP) != 2 || reply.NTP[0] != "10.0.10.1" {
+		t.Fatalf("hello NTP = %v", reply.NTP)
+	}
+
+	// It survives a controller restart and can be cleared from the page.
+	raw, err := f.store.GetSetting(t.Context(), store.SettingNTPServers)
+	if err != nil || !strings.Contains(raw, "ntp.aliyun.com") {
+		t.Fatalf("stored NTP = %q, %v", raw, err)
+	}
+	resp = f.do(http.MethodPut, "/api/v1/settings/ntp", map[string]any{"servers": []string{}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear NTP status = %d", resp.StatusCode)
+	}
+	if _, err := f.store.GetSetting(t.Context(), store.SettingNTPServers); err != store.ErrNotFound {
+		t.Fatalf("setting still present after clear: %v", err)
+	}
+}
+
 func TestSecretOverrideBeatsEnv(t *testing.T) {
 	// env secret set; the override must replace it for AP authentication.
 	f := newFixtureWithAuth(t, "", "env-secret-12345678")
+	if resp := f.login(defaultAdminUsername, defaultAdminPassword); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("login = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
 
 	resp := f.do(http.MethodPut, "/api/v1/settings/shared-secret", map[string]string{"secret": "new-secret-987654"})
 	if resp.StatusCode != http.StatusOK {

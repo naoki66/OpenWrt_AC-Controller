@@ -155,6 +155,16 @@ func (s *Service) generate(ctx context.Context, device store.Device, templateID 
 				device.MAC, unknown, templateID, device.MAC)
 		}
 	}
+	// Per-unit radio values (channel/power/mode) are a property of this AP, not
+	// of the shared template, so they are applied before validation just like
+	// the layer-2 overrides above.
+	if device.RadioOverrides != "" {
+		var ov model.DeviceRadioOverrides
+		if err := json.Unmarshal([]byte(device.RadioOverrides), &ov); err != nil {
+			return Result{}, fmt.Errorf("provision: device %s radio_overrides: %w", device.MAC, err)
+		}
+		tpl = tpl.WithDeviceRadios(ov)
+	}
 	if err := tpl.Validate(); err != nil {
 		return Result{}, fmt.Errorf("provision: template %q is invalid: %w", templateID, err)
 	}

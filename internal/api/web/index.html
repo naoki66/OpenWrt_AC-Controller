@@ -98,17 +98,35 @@
     font-size: 12.5px; color: var(--muted);
   }
   #auth-bar[hidden] { display: none; }
-  #auth-token {
-    flex: 1 1 220px; min-width: 180px;
-    background: var(--bg); color: var(--text);
-    border: 1px solid var(--line); border-radius: 6px;
-    padding: 6px 10px; font: inherit; font-size: 12.5px;
-  }
   #auth-bar button {
     background: var(--accent); color: #fff; border: 0; border-radius: 6px;
     padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
   }
-  #auth-bar button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  /* 登录层：默认隐藏，未登录时覆盖整个页面 */
+  #login-overlay {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 10, 13, .88);
+  }
+  #login-overlay[hidden] { display: none; }
+  .login-card {
+    width: 340px; max-width: calc(100vw - 40px);
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 22px 24px;
+  }
+  .login-card .brand { padding: 0 0 14px; }
+  .login-card label {
+    display: flex; flex-direction: column; gap: 6px;
+    color: var(--muted); font-size: 12px; margin-bottom: 12px;
+  }
+  .login-card label input { color: var(--text); width: 100%; }
+  #login-submit { width: 100%; padding: 8px; font-size: 13px; }
+  .side-user {
+    margin-top: 24px; padding: 12px 8px 0; border-top: 1px solid var(--line);
+    font-size: 12.5px; color: var(--muted);
+  }
+  .side-user .who { margin-bottom: 8px; word-break: break-all; }
+  .side-user .who b { color: var(--text); font-weight: 500; }
   /* 信号强度按 dBm 分档着色：弱信号必须一眼可见 */
   .sig { font-variant-numeric: tabular-nums; white-space: nowrap; }
   .sig.good { color: #4ade80; }
@@ -121,6 +139,28 @@
   }
   .sig-bar > i { display: block; height: 100%; background: currentColor; }
   .hidden { display: none; }
+  /* 客户端详情改成居中弹窗：表格很长时内联面板会落在首屏之外，
+     点击「详情」看起来像没有反应。 */
+  .modal-mask {
+    position: fixed; inset: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 10, 13, .72); padding: 20px;
+  }
+  .modal-mask.hidden { display: none; }
+  .modal-card {
+    width: min(620px, 100%);
+    max-height: calc(100vh - 40px);
+    overflow: auto;
+    margin: 0;
+  }
+  /* 详情里的只读接入信息：当前/上次 AP、接入时间与漫游次数 */
+  .client-facts {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px 16px; margin-bottom: 14px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .client-facts .k { color: var(--muted); font-size: 12px; }
+  .client-facts .v { color: var(--text); font-size: 12.5px; word-break: break-all; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .seg button {
     border: 0; border-radius: 0; background: transparent; color: var(--muted);
@@ -146,7 +186,7 @@
     background: var(--bg); color: var(--text); border: 1px solid var(--line);
     border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12.5px;
   }
-  input[type="text"], input:not([type]), input[type="number"], input[type="time"] {
+  input[type="text"], input:not([type]), input[type="number"], input[type="time"], input[type="password"] {
     background: var(--bg); color: var(--text); border: 1px solid var(--line);
     border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12.5px;
     min-width: 90px;
@@ -165,8 +205,7 @@
   .form label.wide input { width: 100%; }
   .radio-table input, .radio-table select { padding: 2px 6px; }
   input[type="file"] { color: var(--muted); font-size: 12.5px; }
-  /* SSID 列表与单条编辑表单：列表只做概览，字段都在右侧表单里 */
-  .wl-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; align-items: start; }
+  /* SSID 列表与单条编辑表单：列表只做概览，字段都在弹窗里 */
   .wl-list tbody tr { cursor: pointer; }
   .wl-list tbody tr.sel td { background: #1d232b; }
   .wl-editor {
@@ -185,7 +224,6 @@
   #wl-dirty[hidden] { display: none; }
   /* 模板名可能很长；不约束宽度会把「未保存/保存 SSID」挤出视口 */
   #wl-template { max-width: 420px; min-width: 0; flex: 0 1 auto; }
-  @media (max-width: 1040px) { .wl-grid { grid-template-columns: 1fr; } }
   /* AP 诊断输出可能很长，保持等宽、可滚动，不撑破面板 */
   pre.diag-out {
     background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
@@ -200,23 +238,25 @@
   <aside class="sidebar">
     <div class="brand"><span class="brand-mark">AC</span> 无线控制器</div>
     <nav class="nav">
-      <a href="#" data-view="devices" class="active">设备</a>
+      <a href="#" data-view="devices" class="active">设备概览</a>
       <a href="#" data-view="clients">客户端</a>
       <a href="#" data-view="telemetry">遥测</a>
-      <a href="#" data-view="wireless">无线网络</a>
-      <a href="#" data-view="rf">射频</a>
-      <a href="#" data-view="ports">端口 / VLAN</a>
+      <a href="#" data-view="wireless">无线服务</a>
+      <a href="#" data-view="rf">射频管理</a>
+      <a href="#" data-view="ports">设备端口</a>
       <a href="#" data-view="firmware">固件</a>
       <a href="#" data-view="system">系统</a>
     </nav>
+    <div class="side-user">
+      <div class="who">当前用户 <b id="side-user">–</b></div>
+      <button id="logout-btn">退出登录</button>
+    </div>
   </aside>
 
   <main class="main">
     <div id="auth-bar" hidden>
-      <span id="auth-why">此控制器要求管理令牌（AC_ADMIN_TOKEN）。</span>
-      <input id="auth-token" type="password" placeholder="管理令牌" autocomplete="current-password" />
-      <button id="auth-save">确定</button>
-      <button id="auth-clear" class="ghost">清除</button>
+      <span id="auth-why">当前仍在使用默认密码（123456），请尽快修改。</span>
+      <button id="auth-goto">去修改账户</button>
     </div>
 
     <section id="view-devices">
@@ -369,7 +409,7 @@
 
       <div class="form" style="margin-bottom:10px">
         <label style="flex-direction:row;align-items:center;gap:6px">
-          <input type="checkbox" id="client-tracked-only" /> 仅显示追踪
+          <input type="checkbox" id="client-tracked-only" /> 仅显示关注
         </label>
       </div>
 
@@ -385,37 +425,47 @@
         </tbody>
       </table>
 
-      <div id="client-detail" class="wl-editor hidden" style="margin-top:14px"></div>
+      <div id="client-detail-mask" class="modal-mask hidden">
+        <div id="client-detail" class="wl-editor modal-card"></div>
+      </div>
 
       <p class="hint">
         IP 为尽力而为：AP 是纯二层设备，从不与客户端做三层通信，邻接表通常为空。
         要准确的 IP 列表，应从站点 DHCP（10.0.10.1）取，或在 AP 上启用 DHCP snooping。<br />
-        漫游引导由 AP 本地的 <code>nrsyncd</code>（只发布 802.11k 邻居报告，由客户端自行决策）承担；
+        漫游引导：控制器在线时按配置包里的 steering 指令执行；失联后 AP 之间通过 IPv6 link-local
+        组播/UDP 29821 自组织（可配置 HMAC 共享密钥），并由 agent 内置的 11v 建议接管
+        （默认开启，不依赖 <code>nrsyncd</code>，2 台以上 AP 同样有效）。
         控制器不做实时踢除——毫秒级决策放到网络另一端只会适得其反。
       </p>
     </section>
 
     <section id="view-rf" class="hidden">
-      <h1>射频</h1>
+      <h1>射频管理</h1>
       <div class="sub">实时状态来自 AP 上报的无线采样，随页面轮询刷新；模板中的信道/带宽/功率在下一次下发时生效</div>
 
       <div class="panel">
         <h2>实时状态</h2>
         <p class="note">
           这是 AP 最近一次上报的采样（每分钟一次，见“采样”列），不是控制器下发的期望值；
-          灰色行属于离线 AP。信道是 radio 实际落到的信道，不是配置里的 auto——后者只有 ACS 知道答案
+          灰色行属于离线 AP。信道是 radio 实际落到的信道，不是配置里的 auto——后者只有 ACS 知道答案。
+          点“编辑”可按 AP 单独覆盖该 radio 的信道/带宽/功率（不影响共享模板），保存后需重新下发生效。
         </p>
         <table>
           <thead>
             <tr>
               <th>AP</th><th>radio</th><th>频段</th><th>状态</th><th>模式</th><th>信道</th><th>频点</th>
-              <th>带宽</th><th>功率</th><th>国家</th><th>占用率</th><th>客户端</th><th>采样</th>
+              <th>带宽</th><th>功率</th><th>国家</th><th>占用率</th><th>客户端</th><th>采样</th><th>操作</th>
             </tr>
           </thead>
           <tbody id="rf-rows">
-            <tr><td colspan="13" class="empty">暂无射频上报</td></tr>
+            <tr><td colspan="14" class="empty">暂无射频上报</td></tr>
           </tbody>
         </table>
+        <div class="msg" id="rf-live-status"></div>
+      </div>
+
+      <div id="rf-live-mask" class="modal-mask hidden">
+        <div class="wl-editor modal-card" id="rf-live-editor"></div>
       </div>
 
       <div class="panel">
@@ -446,8 +496,21 @@
     </section>
 
     <section id="view-ports" class="hidden">
-      <h1>端口 / VLAN</h1>
-      <div class="sub">DSA bridge-vlan：access 用 <code>:u*</code>（untagged + PVID），trunk 用 <code>:t</code>；无 PoE 控制</div>
+      <h1>设备端口</h1>
+      <div class="sub">物理端口状态来自各 AP 的 sysfs 实测；bridge/VLAN 修改走每台设备的覆盖，access 用 <code>:u*</code>，trunk 用 <code>:t</code></div>
+
+      <div class="panel">
+        <h2>物理端口状态</h2>
+        <p class="note">链路、协商速率、双工与 MTU 由 AP 直接读取，随页面轮询刷新；这里展示真实值，不下发物理网卡参数</p>
+        <table>
+          <thead>
+            <tr><th>AP</th><th>端口</th><th>状态</th><th>速率</th><th>双工</th><th>MTU</th><th>MAC</th><th>采样</th></tr>
+          </thead>
+          <tbody id="port-state-rows">
+            <tr><td colspan="8" class="empty">暂无端口上报</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="panel">
         <h2>
@@ -466,6 +529,8 @@
           <button id="port-clear">清除覆盖</button>
         </h2>
         <p class="note">留空表示沿用模板；清除后设备回到“模板原样”。端口写法：<code>lan2</code>、<code>wan:t</code>、<code>lan2:u*</code></p>
+
+        <div class="wl-checks" id="port-live-ports" style="margin-bottom:10px"></div>
 
         <div class="form">
           <label>bridge 端口
@@ -490,7 +555,7 @@
     </section>
 
     <section id="view-wireless" class="hidden">
-      <h1>无线网络</h1>
+      <h1>无线服务</h1>
       <div class="sub">SSID 属于共享模板；改完保存，已采纳的设备需重新下发才生效</div>
 
       <div class="panel">
@@ -508,26 +573,26 @@
           <button id="wl-save" class="primary">保存 SSID</button>
         </h2>
         <p class="note">
-          左侧列表只做概览，右侧编辑一条 SSID；安全项用预设选择，只填该预设需要的字段。
-          频段至少要选一个且对应射频已启用；漫游 r 需要 4 位十六进制 mobility domain。
-          保存只写 SSID 列表，不影响模板里的网络（bridge/VLAN）与射频配置。
+          列表只做概览，点击某一行或“添加 SSID”会在弹窗里编辑；安全项用预设选择，
+          只填该预设需要的字段。频段至少要选一个且对应射频已启用；漫游 r 需要
+          4 位十六进制 mobility domain。网络接口名可手填（默认 lan），接口本身
+          在端口/VLAN 页管理；保存只写 SSID 列表，不改动网络与射频配置。
         </p>
         <div class="msg" id="wl-msg"></div>
-        <div class="wl-grid">
-          <div class="wl-list">
-            <table>
-              <thead>
-                <tr><th>启用</th><th>SSID</th><th>频段</th><th>安全</th><th>网络</th><th>操作</th></tr>
-              </thead>
-              <tbody id="wl-list">
-                <tr><td colspan="6" class="empty">选择模板…</td></tr>
-              </tbody>
-            </table>
-            <button id="wl-add" style="margin-top:10px">添加 SSID</button>
-          </div>
-          <div class="wl-editor" id="wl-editor">
-            <div class="empty" style="padding:20px">选择模板…</div>
-          </div>
+        <div class="wl-list">
+          <table>
+            <thead>
+              <tr><th>启用</th><th>SSID</th><th>频段</th><th>安全</th><th>网络</th><th>操作</th></tr>
+            </thead>
+            <tbody id="wl-list">
+              <tr><td colspan="6" class="empty">选择模板…</td></tr>
+            </tbody>
+          </table>
+          <button id="wl-add" style="margin-top:10px">添加 SSID</button>
+        </div>
+
+        <div id="wl-editor-mask" class="modal-mask hidden">
+          <div class="wl-editor modal-card" id="wl-editor"></div>
         </div>
       </div>
 
@@ -609,6 +674,38 @@
         <div class="card"><div class="k">设备（在线/总数）</div><div class="v" id="sys-devices">–</div></div>
         <div class="card"><div class="k">客户端（在线/总数）</div><div class="v" id="sys-clients">–</div></div>
         <div class="card"><div class="k">事件总数</div><div class="v" id="sys-events">–</div></div>
+      </div>
+
+      <div class="panel">
+        <h2>账户</h2>
+        <p class="note">
+          当前登录用户：<b id="acct-user">–</b>。用户名和密码都可以在这里修改；
+          保存后其他设备上的登录会话会立即失效，当前页面会自动续期。
+        </p>
+        <div class="form">
+          <label><span>用户名</span><input id="acct-name" type="text" autocomplete="username"></label>
+          <label><span>当前密码</span><input id="acct-old" type="password" autocomplete="current-password"></label>
+          <label><span>新密码（留空则不修改）</span><input id="acct-new" type="password" autocomplete="new-password"></label>
+          <label><span>确认新密码</span><input id="acct-new2" type="password" autocomplete="new-password"></label>
+          <button id="acct-save" class="primary">保存账户设置</button>
+        </div>
+        <div class="msg" id="acct-msg"></div>
+      </div>
+
+      <div class="panel">
+        <h2>站点时间源（NTP）</h2>
+        <p class="note">
+          下发给所有 AP：AP 在下次心跳时写入 <code>/etc/config/system</code> 并重启 sysntpd。
+          列表保存在 AP 本地，AC 离线后仍继续使用，因此时间同步不依赖控制器的可用性。
+          留空恢复默认的公共 NTP 列表；如果站点有内网 NTP（网关/NAS），把它放在第一项。
+          控制器本身不在列表中。
+        </p>
+        <div class="form">
+          <label class="wide"><span>NTP 服务器（逗号或空格分隔，最多 8 个）</span>
+            <input id="ntp-servers" placeholder="ntp.ntsc.ac.cn, ntp1.aliyun.com, ntp.tencent.com, cn.pool.ntp.org"></label>
+          <button id="ntp-save" class="primary">保存 NTP 服务器</button>
+        </div>
+        <div class="msg" id="ntp-msg"></div>
       </div>
 
       <div class="panel">
@@ -721,10 +818,21 @@
   </main>
 </div>
 
+<div id="login-overlay" hidden>
+  <form id="login-form" class="login-card">
+    <div class="brand"><span class="brand-mark">AC</span> 无线控制器</div>
+    <label><span>用户名</span><input id="login-user" type="text" autocomplete="username"></label>
+    <label><span>密码</span><input id="login-pass" type="password" autocomplete="current-password"></label>
+    <button id="login-submit" class="primary" type="submit">登录</button>
+    <div class="msg" id="login-msg"></div>
+  </form>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const rows = $('rows');
 const clientRows = $('client-rows');
+const clientDetailMask = $('client-detail-mask');
 const clientDetail = $('client-detail');
 const msg = $('msg');
 
@@ -736,6 +844,15 @@ function ago(ts) {
   if (s < 60) return s + ' 秒前';
   if (s < 3600) return Math.floor(s / 60) + ' 分钟前';
   return Math.floor(s / 3600) + ' 小时前';
+}
+
+// when renders an absolute controller-local timestamp for detail views.
+function when(ts) {
+  if (!ts) return '–';
+  const d = new Date(ts * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
 function duration(sec) {
@@ -800,59 +917,112 @@ const FW_STATE_LABELS = {
   failed: ['失败', 'failed'],
 };
 
-// The token lives in localStorage rather than a cookie: the UI is a static page
-// and the API is a plain Bearer scheme, so there is no session to attach to.
-// It is sent only to same-origin /api paths.
-const TOKEN_KEY = 'ac.admin_token';
-let adminToken = localStorage.getItem(TOKEN_KEY) || '';
-let authRequired = false;
+// 登录态保存在 HttpOnly Cookie 中，脚本读不到也不需要读：同源 fetch 会自动
+// 带上。启动时先问 /auth/session，未登录就盖上一层登录框。
+let loggedIn = false;
+let currentUser = '';
+let authDefaultPassword = false;
 
+const loginOverlay = $('login-overlay');
+const loginForm = $('login-form');
+const loginMsg = $('login-msg');
+const loginUser = $('login-user');
+const loginPass = $('login-pass');
 const authBar = $('auth-bar');
-const authToken = $('auth-token');
-const authWhy = $('auth-why');
 
-function showAuth(why) {
-  authRequired = true;
-  authWhy.textContent = why || '此控制器要求管理令牌（AC_ADMIN_TOKEN）。';
-  authToken.value = adminToken;
-  authBar.hidden = false;
+function showLogin(why) {
+  loggedIn = false;
+  loginOverlay.hidden = false;
+  loginMsg.textContent = why || '';
+  loginMsg.className = 'msg' + (why ? ' err' : '');
+  setTimeout(() => {
+    if (!loginUser.value) loginUser.focus();
+    else if (!loginPass.value) loginPass.focus();
+  }, 30);
 }
 
-function hideAuth() {
-  authRequired = false;
-  authBar.hidden = true;
+function hideLogin() {
+  loginOverlay.hidden = true;
+  loginMsg.textContent = '';
 }
 
-function setToken(value) {
-  adminToken = value || '';
-  if (adminToken) localStorage.setItem(TOKEN_KEY, adminToken);
-  else localStorage.removeItem(TOKEN_KEY);
+function applySession(s) {
+  // 登录响应在旧后端上可能只有 username，没有 authenticated；两者都接受，
+  // 免得登录成功却仍被登录框挡住。
+  if (!s || !(s.authenticated || s.username)) { showLogin(); return false; }
+  loggedIn = true;
+  currentUser = s.username || '';
+  authDefaultPassword = !!s.default_password;
+  $('side-user').textContent = currentUser || '–';
+  $('acct-user').textContent = currentUser || '–';
+  $('acct-name').value = currentUser;
+  // 改名后重新登录时，登录框不应再默认填旧名。
+  loginUser.value = currentUser;
+  // 默认密码没改过就一直提醒，但只是提醒，不阻挡使用。
+  authBar.hidden = !authDefaultPassword;
+  hideLogin();
+  return true;
 }
 
-$('auth-save').addEventListener('click', () => {
-  setToken(authToken.value.trim());
-  if (adminToken) hideAuth();
-  refresh();
+async function loadSession() {
+  try { return await api('GET', '/api/v1/auth/session'); }
+  catch (_) { return { authenticated: false }; }
+}
+
+async function logout() {
+  try { await api('POST', '/api/v1/auth/logout'); } catch (_) { /* 已经失效 */ }
+  loginPass.value = '';
+  applySession({ authenticated: false });
+  showLogin('已退出登录。');
+}
+
+loginForm.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const btn = $('login-submit');
+  btn.disabled = true;
+  loginMsg.textContent = '';
+  try {
+    const s = await api('POST', '/api/v1/auth/login', {
+      username: loginUser.value.trim(),
+      password: loginPass.value,
+    });
+    loginPass.value = '';
+    if (applySession(s)) {
+      refresh();
+    }
+  } catch (e) {
+    loginMsg.textContent = e.status === 429
+      ? '尝试次数过多，请一分钟后再试。'
+      : (e.status === 401 ? '用户名或密码错误。' : (e.message || '登录失败'));
+    loginMsg.className = 'msg err';
+  } finally {
+    btn.disabled = false;
+  }
 });
-authToken.addEventListener('keydown', (e) => { if (e.key === 'Enter') $('auth-save').click(); });
-$('auth-clear').addEventListener('click', () => { setToken(''); authToken.value = ''; refresh(); });
 
-// A 401 means "credential problem", not "operation failed": surface the bar once
-// instead of letting every row of the table fail on its own. A 429 is the
+$('logout-btn').addEventListener('click', logout);
+
+$('auth-goto').addEventListener('click', () => {
+  const link = document.querySelector('.nav a[data-view="system"]');
+  if (link) link.click();
+});
+
+// A 401 means "session gone", not "operation failed": surface the login layer
+// once instead of letting every row of the table fail on its own. A 429 is the
 // server's failed-attempt budget: retrying immediately would only extend it.
 function noteUnauthorized(err) {
   if (err && err.status === 429) {
-    showAuth('鉴权失败次数过多，请稍后再试。');
+    loginMsg.textContent = '尝试次数过多，请稍后再试。';
+    loginMsg.className = 'msg err';
     return true;
   }
   if (err && err.status !== 401 && !/401/.test(err.message || '')) return false;
-  showAuth(adminToken ? '令牌无效或已更换，请重新输入。' : '此控制器要求管理令牌（AC_ADMIN_TOKEN）。');
+  showLogin('登录已失效，请重新登录。');
   return true;
 }
 
 async function api(method, path, body) {
-  const opts = { method, headers: {} };
-  if (adminToken) opts.headers['Authorization'] = 'Bearer ' + adminToken;
+  const opts = { method, headers: {}, credentials: 'same-origin' };
   if (body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -867,13 +1037,11 @@ async function api(method, path, body) {
   return data;
 }
 
-// window.location cannot carry an Authorization header, and the bundle holds
-// PSKs, so downloading one has to go through fetch.
+// 浏览器下载走 fetch 再转 blob：会话 Cookie 会自动带上，同时保留 401 的
+// 处理逻辑，不会在未登录时静默失败。
 async function downloadPackage(mac, rev) {
   const path = '/api/v1/devices/' + encodeURIComponent(mac) + '/package' + (rev ? '?rev=' + rev : '');
-  const headers = {};
-  if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
-  const resp = await fetch(path, { headers });
+  const resp = await fetch(path, { credentials: 'same-origin' });
   if (!resp.ok) throw Object.assign(new Error('HTTP ' + resp.status), { status: resp.status });
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
@@ -1360,8 +1528,12 @@ function renderDevices(list) {
     }
     tr.appendChild(st);
 
-    // 这是 AP 自己探测后上报的实际状态，不是控制器下发的期望值
-    cell(tr, dev.steering, 'mono');
+    // 这是 AP 自己探测后上报的实际状态，不是控制器下发的期望值。
+    // none 表示 nrsyncd/usteer/dawn 都没启用，此时由 agent 内置的 11v
+    // 建议接管漫游；展示成 agent，避免操作员误以为“没有漫游能力”。
+    const steeringTd = cell(tr, dev.steering === 'none' ? 'agent' : dev.steering, 'mono');
+    if (dev.steering === 'none')
+      steeringTd.title = '未启用本地 steering 守护进程，由 agent 内置 11v 建议接管';
     cell(tr, ago(dev.last_seen));
     // uptime 来自上一次心跳，在线时叠加心跳间隔才能显示"现在"的时长；
     // 离线 AP 只保留最后一次上报值，别把陈旧数据伪装成实时。
@@ -1419,19 +1591,19 @@ function renderClients(payload) {
   const visible = trackedOnly ? list.filter(c => c.tracked) : list;
   if (!visible.length) {
     clientRows.innerHTML = '<tr><td colspan="10" class="empty">'
-      + (trackedOnly ? '没有追踪中的客户端' : '暂无客户端上报') + '</td></tr>';
+      + (trackedOnly ? '没有关注的客户端' : '暂无客户端上报') + '</td></tr>';
     return;
   }
   clientRows.innerHTML = '';
   for (const c of visible) {
     const tr = document.createElement('tr');
     if (!c.online) tr.style.opacity = '.5';
-    // 名称列优先显示别名，并给追踪中的客户端一个标记。
+    // 名称列优先显示别名，并给已关注的客户端一个标记。
     const nameTD = cell(tr, c.alias || c.mac, 'mono');
     if (c.tracked) {
       const tag = document.createElement('span');
       tag.className = 'badge adopted';
-      tag.textContent = '追踪';
+      tag.textContent = '关注';
       tag.style.marginLeft = '6px';
       nameTD.appendChild(tag);
     }
@@ -1462,7 +1634,7 @@ let lastClientPayload = null;
 // closeClientDetail hides the form without losing the list itself.
 function closeClientDetail() {
   clientSelected = '';
-  clientDetail.classList.add('hidden');
+  clientDetailMask.classList.add('hidden');
   clientDetail.innerHTML = '';
   clientDetail.dataset.mac = '';
 }
@@ -1487,12 +1659,38 @@ function openClientDetail(mac) {
   if (!c) return;
   clientSelected = mac;
   clientDetail.dataset.mac = mac;
-  clientDetail.classList.remove('hidden');
+  clientDetailMask.classList.remove('hidden');
   clientDetail.innerHTML = '';
 
   const h = document.createElement('h3');
   h.textContent = (c.alias || c.mac) + ' · ' + (c.online ? '在线' : '离线');
   clientDetail.appendChild(h);
+
+  // 接入信息以只读方式展示：当前/上次 AP、对应接入时间、漫游次数由控制器
+  // 依据 AP 上报的 ap_mac 变化累计，不由操作员填写。
+  const facts = document.createElement('div');
+  facts.className = 'client-facts';
+  const fact = (label, value, mono) => {
+    const item = document.createElement('div');
+    const k = document.createElement('div');
+    k.className = 'k';
+    k.textContent = label;
+    const v = document.createElement('div');
+    v.className = 'v' + (mono ? ' mono' : '');
+    v.textContent = value == null || value === '' ? '–' : value;
+    item.appendChild(k);
+    item.appendChild(v);
+    facts.appendChild(item);
+  };
+  const apName = (m) => apNames[m] || m;
+  fact('当前接入 AP', c.online ? apName(c.ap_mac) : '离线', true);
+  fact('当前接入时间', c.online ? when(c.connected_since) : '–');
+  fact('本次在线时长', c.online ? duration(c.connected_seconds) : '–');
+  fact('上次接入 AP', c.prev_ap_mac ? apName(c.prev_ap_mac) : '–', true);
+  fact('上次接入时间', c.prev_connected_since ? when(c.prev_connected_since) : '–');
+  fact('漫游次数', String(c.roam_count || 0));
+  fact('最近上报', c.last_seen ? ago(c.last_seen) : '–');
+  clientDetail.appendChild(facts);
 
   const fields = document.createElement('div');
   fields.className = 'wl-fields';
@@ -1513,7 +1711,7 @@ function openClientDetail(mac) {
   aliasInput.maxLength = 64;
   aliasLabel.appendChild(aliasInput);
 
-  const trackLabel = addField('追踪');
+  const trackLabel = addField('关注');
   const trackBox = document.createElement('label');
   trackBox.style.flexDirection = 'row';
   trackBox.style.alignItems = 'center';
@@ -1523,7 +1721,7 @@ function openClientDetail(mac) {
   trackInput.checked = !!c.tracked;
   trackBox.appendChild(trackInput);
   const trackText = document.createElement('span');
-  trackText.textContent = '仅显示追踪时保留此客户端';
+  trackText.textContent = '标记关注，仅用于列表筛选，不影响数据保留';
   trackBox.appendChild(trackText);
   trackLabel.appendChild(trackBox);
 
@@ -1629,18 +1827,26 @@ clientRows.addEventListener('click', (ev) => {
   else if (b.dataset.action === 'client-kick') kickClient(b.dataset.mac);
 });
 
+// 点击遮罩空白处或按 Esc 关闭详情弹窗。
+clientDetailMask.addEventListener('click', (ev) => {
+  if (ev.target === clientDetailMask) closeClientDetail();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !clientDetailMask.classList.contains('hidden')) closeClientDetail();
+});
+
 $('client-tracked-only').addEventListener('change', () => {
   if (lastClientPayload) renderClients(lastClientPayload);
 });
 
 async function refresh() {
+  // 未登录时不轮询：所有管理接口都会 401，只会反复弹登录层。
+  if (!loggedIn) return;
   try {
-    // Health first: it is reachable without a credential and it says whether
-    // one is needed at all, so the UI can prompt before anything 401s.
+    // Health 无需登录，控制器 ID 与公钥先填充；鉴权状态由 /auth/session 给出。
     const h = await api('GET', '/api/v1/health');
     $('acid').textContent = h.ac_id || '–';
     $('pubkey').textContent = h.pubkey || '–';
-    if (h.admin_auth_required && !adminToken) showAuth();
 
     const [d, c, g] = await Promise.all([
       api('GET', '/api/v1/devices'),
@@ -1666,15 +1872,15 @@ async function refresh() {
     // 射频页的实时状态随同一轮轮询刷新；renderRadioTable 只重绘状态表，
     // 模板工作频率编辑器留在 loadRF 里，避免轮询重置未保存的编辑。
     if (currentView === 'rf') refreshRFStatus();
+    if (currentView === 'ports') refreshPortStates();
     // 系统页复用这一轮已经取到的设备列表，再补一次运维查询。
     if (currentView === 'system') {
       fillDiagDevices(devices);
       refreshSystemLive();
     }
-    if (adminToken) hideAuth();
     loadSecretPanel();
   } catch (e) {
-    /* controller restarting, or the token was rejected; next tick will recover */
+    /* controller restarting, or the session expired; next tick recovers after login */
     noteUnauthorized(e);
   }
 }
@@ -1917,6 +2123,7 @@ let templates = [];
 let rfTemplateId = '';
 let portTemplateId = '';
 let portDeviceMac = '';
+let portStates = [];   // 每台 AP 物理端口的实测状态
 let wlTemplateId = '';
 let wlDeviceMac = '';
 let deviceCache = [];
@@ -2042,7 +2249,17 @@ function esc(s) {
 
 function sayRF(text, kind) { const m = $('rf-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
 function sayPort(text, kind) { const m = $('port-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
-function sayWL(text, kind) { const m = $('wl-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function sayWL(text, kind) {
+  const m = $('wl-msg');
+  m.textContent = text || '';
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+  // 编辑弹窗打开时，校验/保存结果也要出现在弹窗内，否则会被遮罩挡住。
+  const em = $('wl-edit-msg');
+  if (em) {
+    em.textContent = text || '';
+    em.className = 'msg' + (kind ? ' ' + kind : '');
+  }
+}
 
 async function loadTemplates() {
   const res = await api('GET', '/api/v1/templates');
@@ -2098,10 +2315,26 @@ function fillTemplatePicker(sel, selected) {
   if (selected && templates.some(t => t.id === selected)) sel.value = selected;
 }
 
+// 实时 radio 名形如 radio0；模板与设备覆写都按数字 index 对齐。
+function rfRadioIndex(name) {
+  const m = /radio(\d+)/.exec(name || '');
+  return m ? Number(m[1]) : -1;
+}
+
+function rfDeviceOverrides(dev) {
+  if (!dev || !dev.radio_overrides) return [];
+  try {
+    const ov = JSON.parse(dev.radio_overrides);
+    return (ov && ov.radios) || [];
+  } catch (_) {
+    return [];
+  }
+}
+
 function renderRadioTable(list) {
   const body = $('rf-rows');
   if (!list.length) {
-    body.innerHTML = '<tr><td colspan="13" class="empty">暂无射频上报</td></tr>';
+    body.innerHTML = '<tr><td colspan="14" class="empty">暂无射频上报</td></tr>';
     return;
   }
   body.innerHTML = '';
@@ -2145,9 +2378,263 @@ function renderRadioTable(list) {
     tr.appendChild(ut);
     cell(tr, p.clients || 0);
     cell(tr, ago(p.ts));
+
+    const idx = rfRadioIndex(p.radio);
+    const op = document.createElement('td');
+    op.className = 'actions';
+    const edit = document.createElement('button');
+    edit.textContent = '编辑';
+    edit.disabled = idx < 0;
+    edit.addEventListener('click', () => openRFLiveEditor(p));
+    op.appendChild(edit);
+    if (dev && idx >= 0 && rfDeviceOverrides(dev).some(o => o.index === idx)) {
+      const tag = document.createElement('span');
+      tag.className = 'badge pending';
+      tag.textContent = '已覆盖';
+      tag.style.marginLeft = '6px';
+      op.appendChild(tag);
+    }
+    tr.appendChild(op);
     body.appendChild(tr);
   }
 }
+
+// --- 每 AP 的 radio 覆盖 -------------------------------------------------------
+// 覆盖保存在设备上（radio_overrides），渲染配置包时叠加到共享模板，因此
+// 同一模板下的不同 AP 可以有各自的信道/带宽/功率。
+const rfLiveMask = $('rf-live-mask');
+
+function sayRFLive(text, kind) {
+  const m = $('rf-live-status');
+  m.textContent = text || '';
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+function closeRFLiveEditor() {
+  rfLiveMask.classList.add('hidden');
+}
+
+function openRFLiveEditor(p) {
+  const host = $('rf-live-editor');
+  const dev = deviceCache.find(x => x.mac === p.ap_mac);
+  const idx = rfRadioIndex(p.radio);
+  if (!dev || idx < 0) return;
+  const prev = rfDeviceOverrides(dev).find(o => o.index === idx) || null;
+  const band = p.band;
+
+  host.innerHTML = '';
+  const h = document.createElement('h3');
+  h.textContent = (dev.hostname || dev.mac) + ' · ' + p.radio + '（' + bandLabel(band) + '）';
+  host.appendChild(h);
+
+  const msg = document.createElement('div');
+  msg.className = 'msg';
+  msg.id = 'rf-live-msg';
+  host.appendChild(msg);
+  const say = (text, kind) => {
+    msg.textContent = text || '';
+    msg.className = 'msg' + (kind ? ' ' + kind : '');
+  };
+
+  const fields = document.createElement('div');
+  fields.className = 'wl-fields';
+  host.appendChild(fields);
+  const addField = (text) => {
+    const label = document.createElement('label');
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    fields.appendChild(label);
+    return label;
+  };
+
+  const htmode = (prev && prev.htmode) || p.htmode || '';
+  const parsed = parseHTMode(htmode);
+
+  const modeLabel = addField('模式');
+  const modeSel = document.createElement('select');
+  for (const [m, text] of (WIFIMODES[band] || [])) {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = text;
+    if (m === parsed.mode) o.selected = true;
+    modeSel.appendChild(o);
+  }
+  if (htmode && !parsed.mode) {
+    const o = document.createElement('option');
+    o.value = htmode;
+    o.textContent = '保持 ' + htmode;
+    o.selected = true;
+    modeSel.appendChild(o);
+    modeSel.dataset.raw = '1';
+  } else if (!parsed.mode) {
+    const last = (WIFIMODES[band] || []).slice(-1)[0];
+    if (last) modeSel.value = last[0];
+  }
+  modeLabel.appendChild(modeSel);
+
+  const widthLabel = addField('通道宽度');
+  const widthSel = document.createElement('select');
+  for (const w of (WIDTHS[band] || [])) {
+    const o = document.createElement('option');
+    o.value = String(w);
+    o.textContent = w + ' MHz';
+    if (w === (parsed.width || p.width_mhz)) o.selected = true;
+    widthSel.appendChild(o);
+  }
+  widthLabel.appendChild(widthSel);
+
+  const chanLabel = addField('信道');
+  const chanSel = document.createElement('select');
+  const auto = document.createElement('option');
+  auto.value = 'auto';
+  auto.textContent = 'auto（ACS）';
+  chanSel.appendChild(auto);
+  const curChan = (prev && prev.channel) || (p.channel > 0 ? String(p.channel) : 'auto');
+  for (const ch of (CHANNELS[band] || [])) {
+    const o = document.createElement('option');
+    o.value = String(ch);
+    const f = channelFreq(band, ch);
+    o.textContent = ch + (f ? ' (' + f + ' MHz)' : '');
+    chanSel.appendChild(o);
+  }
+  if (curChan === 'auto') {
+    chanSel.value = 'auto';
+  } else if ((CHANNELS[band] || []).includes(Number(curChan))) {
+    chanSel.value = curChan;
+  } else {
+    const o = document.createElement('option');
+    o.value = curChan;
+    o.textContent = '保持 ' + curChan;
+    chanSel.appendChild(o);
+    chanSel.value = curChan;
+  }
+  chanLabel.appendChild(chanSel);
+
+  const powerLabel = addField('最大传输功率');
+  const powerSel = document.createElement('select');
+  const pmax = TXPOWER_MAX[band] || 30;
+  const curPower = (prev && prev.txpower != null) ? prev.txpower : p.txpower;
+  for (let d = 0; d <= pmax; d++) {
+    const o = document.createElement('option');
+    o.value = String(d);
+    o.textContent = d + ' dBm (' + dbmToMW(d) + ' mW)';
+    if (d === curPower) o.selected = true;
+    powerSel.appendChild(o);
+  }
+  if (curPower > pmax) {
+    const o = document.createElement('option');
+    o.value = String(curPower);
+    o.textContent = '保持 ' + curPower + ' dBm';
+    o.selected = true;
+    powerSel.appendChild(o);
+  }
+  powerLabel.appendChild(powerSel);
+
+  const countryLabel = addField('国家代码');
+  const countrySel = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '不设置';
+  countrySel.appendChild(blank);
+  const curCountry = (prev && prev.country) || p.country || '';
+  for (const [code, name] of COUNTRIES) {
+    const o = document.createElement('option');
+    o.value = code;
+    o.textContent = code + ' - ' + name;
+    if (code === curCountry) o.selected = true;
+    countrySel.appendChild(o);
+  }
+  if (curCountry && !COUNTRIES.some(c => c[0] === curCountry)) {
+    const o = document.createElement('option');
+    o.value = curCountry;
+    o.textContent = '保持 ' + curCountry;
+    o.selected = true;
+    countrySel.appendChild(o);
+  }
+  countrySel.value = curCountry;
+  countryLabel.appendChild(countrySel);
+
+  const enableLabel = addField('启用');
+  const enableBox = document.createElement('input');
+  enableBox.type = 'checkbox';
+  enableBox.checked = !(prev && prev.disabled === true);
+  enableLabel.appendChild(enableBox);
+
+  const note = document.createElement('p');
+  note.className = 'hint';
+  note.textContent = '只覆盖这台 AP 的这个 radio，不改共享模板；“清除覆盖”恢复为模板值。保存后需在设备页重新下发才生效。';
+  host.appendChild(note);
+
+  const actions = document.createElement('div');
+  actions.style.marginTop = '12px';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary';
+  saveBtn.textContent = '保存覆盖';
+  saveBtn.addEventListener('click', async () => {
+    const channel = chanSel.value.trim() || 'auto';
+    if (channel !== 'auto' && !/^\d{1,3}$/.test(channel)) return say('信道必须是 auto 或数字', 'err');
+    let nextHT = '';
+    if (modeSel.dataset.raw) {
+      nextHT = modeSel.value;
+    } else {
+      const m = modeSel.value;
+      const w = parseInt(widthSel.value, 10) || 0;
+      if (!m || !w) return say('请选择模式和通道宽度', 'err');
+      nextHT = m + w;
+    }
+    const body = {
+      radios: rfDeviceOverrides(dev).filter(o => o.index !== idx).concat([{
+        index: idx,
+        channel,
+        htmode: nextHT,
+        txpower: Number(powerSel.value),
+        country: countrySel.value,
+        disabled: !enableBox.checked,
+      }]),
+    };
+    try {
+      await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/radios', body);
+      closeRFLiveEditor();
+      await refresh();
+      sayRFLive(dev.mac + ' · ' + p.radio + ' 覆盖已保存；重新下发后生效', 'ok');
+    } catch (e) {
+      if (!noteUnauthorized(e)) say('保存失败：' + e.message, 'err');
+    }
+  });
+  actions.appendChild(saveBtn);
+
+  const clearBtn = document.createElement('button');
+  clearBtn.textContent = '清除覆盖';
+  clearBtn.disabled = !prev;
+  clearBtn.addEventListener('click', async () => {
+    const body = { radios: rfDeviceOverrides(dev).filter(o => o.index !== idx) };
+    try {
+      await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/radios', body);
+      closeRFLiveEditor();
+      await refresh();
+      sayRFLive(dev.mac + ' · ' + p.radio + ' 已恢复模板值', 'ok');
+    } catch (e) {
+      if (!noteUnauthorized(e)) say('清除失败：' + e.message, 'err');
+    }
+  });
+  actions.appendChild(clearBtn);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '关闭';
+  closeBtn.addEventListener('click', closeRFLiveEditor);
+  actions.appendChild(closeBtn);
+  host.appendChild(actions);
+
+  rfLiveMask.classList.remove('hidden');
+}
+
+rfLiveMask.addEventListener('click', (ev) => {
+  if (ev.target === rfLiveMask) closeRFLiveEditor();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !rfLiveMask.classList.contains('hidden')) closeRFLiveEditor();
+});
 
 function renderRFEditor() {
   const body = $('rf-edit-rows');
@@ -2427,6 +2914,7 @@ function renderPortDevice() {
   if (!dev) {
     $('port-bridge').value = '';
     $('port-igmp').value = '';
+    renderPortCheckboxes();
     return;
   }
   let ov = {};
@@ -2438,6 +2926,88 @@ function renderPortDevice() {
   const vlans = ov.vlans || [];
   for (const v of vlans) addVLANRow(v.vlan, v.ports || []);
   if (!vlans.length) addVLANRow('', []);
+  renderPortCheckboxes();
+}
+
+// renderPortCheckboxes offers the ports this AP actually reported. Checking one
+// appends it to the bridge list; the text field stays authoritative so manual
+// names (for a port the agent has not reported yet) still work.
+function renderPortCheckboxes() {
+  const host = $('port-live-ports');
+  host.innerHTML = '';
+  const states = portStates.filter(p => p.ap_mac === portDeviceMac);
+  if (!states.length) {
+    const hint = document.createElement('span');
+    hint.className = 'wl-roam-title';
+    hint.textContent = '该设备尚未上报物理端口';
+    host.appendChild(hint);
+    return;
+  }
+  const title = document.createElement('span');
+  title.className = 'wl-roam-title';
+  title.textContent = '实际端口：';
+  host.appendChild(title);
+
+  for (const p of states) {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = $('port-bridge').value.split(/[\s,]+/).filter(Boolean).includes(p.name);
+    cb.addEventListener('change', () => {
+      const set = new Set($('port-bridge').value.split(/[\s,]+/).filter(Boolean));
+      if (cb.checked) set.add(p.name);
+      else set.delete(p.name);
+      $('port-bridge').value = [...set].join(' ');
+    });
+    label.appendChild(cb);
+    const text = document.createElement('span');
+    text.textContent = p.name + (p.up ? '' : '（down）');
+    label.appendChild(text);
+    host.appendChild(label);
+  }
+}
+
+function renderPortStates(list) {
+  const body = $('port-state-rows');
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">暂无端口上报</td></tr>';
+    return;
+  }
+  body.innerHTML = '';
+  for (const p of list) {
+    const tr = document.createElement('tr');
+    if (!p.up) tr.style.opacity = '.55';
+    cell(tr, apNames[p.ap_mac] || p.ap_mac, 'mono');
+    cell(tr, p.name, 'mono');
+    const st = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (p.up ? 'adopted' : 'pending');
+    badge.textContent = p.up ? 'up' : 'down';
+    st.appendChild(badge);
+    tr.appendChild(st);
+    cell(tr, p.speed_mbps ? fmtSpeed(p.speed_mbps) : '–');
+    cell(tr, p.duplex === 'full' ? '全双工' : p.duplex === 'half' ? '半双工' : (p.duplex || '–'));
+    cell(tr, p.mtu || '–');
+    cell(tr, p.mac || '–', 'mono');
+    cell(tr, ago(p.updated_at));
+    body.appendChild(tr);
+  }
+}
+
+function fmtSpeed(mbps) {
+  if (mbps >= 1000) return (mbps / 1000) + ' Gbps';
+  return mbps + ' Mbps';
+}
+
+async function refreshPortStates() {
+  try {
+    const r = await api('GET', '/api/v1/ports');
+    portStates = r.ports || [];
+    renderPortStates(portStates);
+    renderPortCheckboxes();
+  } catch (_) {
+    /* 下一个轮询周期再试 */
+  }
 }
 
 async function loadPorts() {
@@ -2461,6 +3031,7 @@ async function loadPorts() {
     if (portDeviceMac && deviceCache.some(x => x.mac === portDeviceMac)) sel.value = portDeviceMac;
     else if (deviceCache.length) { sel.value = deviceCache[0].mac; portDeviceMac = sel.value; }
     else portDeviceMac = '';
+    await refreshPortStates();
     renderPortDevice();
   } catch (e) {
     if (!noteUnauthorized(e)) sayPort(e.message, 'err');
@@ -2532,7 +3103,7 @@ $('port-clear').addEventListener('click', async () => {
   catch (e) { if (!noteUnauthorized(e)) sayPort(e.message, 'err'); }
 });
 
-// --- 无线网络视图 ------------------------------------------------------------
+// --- 无线服务视图 ------------------------------------------------------------
 // SSID 是共享模板的一部分，这里整模板读、整模板写（POST /api/v1/templates），
 // 未编辑的字段（rrm、ft_over_ds、wnm 等）靠深拷贝原样保留。
 
@@ -2553,6 +3124,25 @@ const SECURITY_PRESETS = [
 let wlDraft = [];     // 编辑中的 SSID 数组，模板 ssids 的深拷贝
 let wlSelected = -1;  // 列表选中项
 let wlDirty = false;
+const wlEditorMask = $('wl-editor-mask');
+
+function openWLEditor(idx) {
+  wlSelected = idx;
+  renderWLList();
+  renderWLEditor();
+  wlEditorMask.classList.remove('hidden');
+}
+
+function closeWLEditor() {
+  wlEditorMask.classList.add('hidden');
+}
+
+wlEditorMask.addEventListener('click', (ev) => {
+  if (ev.target === wlEditorMask) closeWLEditor();
+});
+document.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape' && !wlEditorMask.classList.contains('hidden')) closeWLEditor();
+});
 
 function wlPreset(v) { return SECURITY_PRESETS.find(p => p.value === v) || null; }
 
@@ -2586,11 +3176,7 @@ function renderWLList() {
   wlDraft.forEach((s, idx) => {
     const tr = document.createElement('tr');
     if (idx === wlSelected) tr.className = 'sel';
-    tr.addEventListener('click', () => {
-      wlSelected = idx;
-      renderWLList();
-      renderWLEditor();
-    });
+    tr.addEventListener('click', () => openWLEditor(idx));
 
     const en = document.createElement('td');
     const cb = document.createElement('input');
@@ -2644,11 +3230,7 @@ function renderWLEditor() {
   host.innerHTML = '';
   const tpl = templates.find(t => t.id === wlTemplateId);
   if (!tpl || wlSelected < 0 || !wlDraft[wlSelected]) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.style.padding = '20px';
-    empty.textContent = tpl ? '选择或添加一条 SSID…' : '选择模板…';
-    host.appendChild(empty);
+    closeWLEditor();
     return;
   }
   const s = wlDraft[wlSelected];
@@ -2656,6 +3238,11 @@ function renderWLEditor() {
   const title = document.createElement('h3');
   title.textContent = '编辑第 ' + (wlSelected + 1) + ' 条 SSID';
   host.appendChild(title);
+
+  const editMsg = document.createElement('div');
+  editMsg.className = 'msg';
+  editMsg.id = 'wl-edit-msg';
+  host.appendChild(editMsg);
 
   const fields = document.createElement('div');
   fields.className = 'wl-fields';
@@ -2707,57 +3294,33 @@ function renderWLEditor() {
   });
   bandField.appendChild(bandBox);
 
-  // 网络引用与 bridge 配置解耦：network 只是 BSS 桥接进的 netifd 接口名。
-  // 模板声明了 bridge 接口就用下拉（防止引用渲染不出的接口）；
-  // 无线基线模板刻意不管理网络（接口留在 AP 本地），此时允许自由填写。
+  // network 只是 BSS 桥接进的 netifd 接口名：无线服务与网络解耦，这里始终
+  // 允许手填，候选只作提示；接口本身由端口/VLAN 页声明和管理。
   const netLabel = addField('网络（netifd 接口）');
   const declaredNetworks = tplNetworks(tpl);
-  let netCtl;
-  if (declaredNetworks.length) {
-    const netSel = document.createElement('select');
-    const blank = document.createElement('option');
-    blank.value = '';
-    blank.textContent = '—';
-    netSel.appendChild(blank);
-    const names = declaredNetworks.slice();
-    if (s.network && !names.includes(s.network)) names.push(s.network);
-    for (const n of names) {
-      const o = document.createElement('option');
-      o.value = n;
-      o.textContent = n;
-      if (n === s.network) o.selected = true;
-      netSel.appendChild(o);
-    }
-    netSel.addEventListener('change', () => {
-      s.network = netSel.value;
-      setWLDirty(true);
-      renderWLList();
-    });
-    netCtl = netSel;
-    netLabel.appendChild(netSel);
-  } else {
-    const netInput = document.createElement('input');
-    netInput.value = s.network || '';
-    netInput.placeholder = '如 lan / lan2';
-    // 候选来自模板里其他 SSID 已在用的网络，输入时可以直接选。
-    const dl = document.createElement('datalist');
-    dl.id = 'wl-network-options';
-    const used = new Set((tpl.ssids || []).map(x => x.network).filter(Boolean));
-    for (const n of used) {
-      const o = document.createElement('option');
-      o.value = n;
-      dl.appendChild(o);
-    }
-    netInput.setAttribute('list', dl.id);
-    netInput.addEventListener('input', () => {
-      s.network = netInput.value.trim();
-      setWLDirty(true);
-      renderWLList();
-    });
-    netCtl = netInput;
-    netLabel.appendChild(netInput);
-    netLabel.appendChild(dl);
+  if (!s.network) s.network = 'lan';
+  const netInput = document.createElement('input');
+  netInput.value = s.network;
+  netInput.placeholder = '如 lan / lan2';
+  const dl = document.createElement('datalist');
+  dl.id = 'wl-network-options';
+  const candidates = new Set(declaredNetworks);
+  for (const x of (tpl.ssids || [])) {
+    if (x.network) candidates.add(x.network);
   }
+  for (const n of candidates) {
+    const o = document.createElement('option');
+    o.value = n;
+    dl.appendChild(o);
+  }
+  netInput.setAttribute('list', dl.id);
+  netInput.addEventListener('input', () => {
+    s.network = netInput.value.trim();
+    setWLDirty(true);
+    renderWLList();
+  });
+  netLabel.appendChild(netInput);
+  netLabel.appendChild(dl);
 
   const secLabel = addField('安全预设');
   const secSel = document.createElement('select');
@@ -2902,6 +3465,9 @@ function renderWLEditor() {
   if (!s.roaming) s.roaming = {};
   const ro = s.roaming;
 
+  const randomMobilityDomain = () =>
+    Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+
   const mdLabel = document.createElement('label');
   const mdText = document.createElement('span');
   mdText.textContent = 'mobility domain';
@@ -2916,16 +3482,25 @@ function renderWLEditor() {
   });
   mdLabel.appendChild(mdText);
   mdLabel.appendChild(mdInput);
-  roam.appendChild(mdLabel);
 
   addToggle(roam, '802.11k 邻居报告', ro.k, v => { ro.k = v; setWLDirty(true); });
   addToggle(roam, '802.11v BSS 过渡', ro.v, v => { ro.v = v; setWLDirty(true); });
   addToggle(roam, '802.11r 快速漫游', ro.r, v => {
     ro.r = v;
-    mdInput.disabled = !v;
+    // 只有启用 11r 才需要 mobility domain；没填过就随机生成一个。
+    if (v && !ro.mobility_domain) ro.mobility_domain = randomMobilityDomain();
+    mdInput.value = ro.mobility_domain || '';
+    mdLabel.style.display = v ? '' : 'none';
     setWLDirty(true);
   });
-  mdInput.disabled = !ro.r;
+  // 输入框排到 802.11r 开关之后，且只在 11r 启用时显示。
+  roam.appendChild(mdLabel);
+  if (ro.r && !ro.mobility_domain) {
+    ro.mobility_domain = randomMobilityDomain();
+    mdInput.value = ro.mobility_domain;
+    setWLDirty(true);
+  }
+  mdLabel.style.display = ro.r ? '' : 'none';
 
   // 定时开关只是计划：AP 侧 wifi_schedule 已被禁用（docs/ac-boot-wireless.md），
   // 所以这里保存意图并在列表里标记，不做任何执行承诺。
@@ -3036,16 +3611,27 @@ function renderWLEditor() {
     renderWLList();
   });
   syncSchedule();
+
+  const editActions = document.createElement('div');
+  editActions.style.marginTop = '14px';
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'primary';
+  saveBtn.textContent = '保存 SSID';
+  saveBtn.addEventListener('click', saveWLSSIDs);
+  const doneBtn = document.createElement('button');
+  doneBtn.textContent = '关闭';
+  doneBtn.addEventListener('click', closeWLEditor);
+  editActions.appendChild(saveBtn);
+  editActions.appendChild(doneBtn);
+  host.appendChild(editActions);
 }
 
 function wlCopySSID(idx) {
   const clone = JSON.parse(JSON.stringify(wlDraft[idx]));
   clone.ssid = (clone.ssid || '') + ' 副本';
   wlDraft.splice(idx + 1, 0, clone);
-  wlSelected = idx + 1;
   setWLDirty(true);
-  renderWLList();
-  renderWLEditor();
+  openWLEditor(idx + 1);
   sayWL('已复制，未保存；请修改名称后保存', '');
 }
 
@@ -3059,7 +3645,7 @@ function wlDeleteSSID(idx) {
   else if (wlSelected === idx) wlSelected = Math.min(idx, wlDraft.length - 1);
   setWLDirty(true);
   renderWLList();
-  renderWLEditor();
+  if (!wlEditorMask.classList.contains('hidden')) renderWLEditor();
 }
 
 function wlValidateSSID(s, i, tpl) {
@@ -3084,13 +3670,9 @@ function wlValidateSSID(s, i, tpl) {
     throw new Error(where + '：' + preset.label + ' 不需要密码');
   }
 
-  if (!s.disabled) {
-    const networks = tplNetworks(tpl);
-    if (!s.network) throw new Error(where + '：请选择网络');
-    if (networks.length && !networks.includes(s.network)) {
-      throw new Error(where + '：网络 ' + s.network + ' 不在模板 bridge 接口中');
-    }
-  }
+  // 网络名不再要求出现在模板 bridge 接口中：无线服务与端口/VLAN 解耦，
+  // 接口是否存在由端口/VLAN 页负责。
+  if (!s.disabled && !s.network) throw new Error(where + '：请填写网络');
 
   if (s.roaming && s.roaming.r && !/^[0-9a-fA-F]{4}$/.test((s.roaming.mobility_domain || '').trim())) {
     throw new Error(where + '：启用 802.11r 时 mobility domain 必须是 4 位十六进制');
@@ -3148,6 +3730,7 @@ function renderWirelessEditor() {
   if (!wlDraft.length) wlSelected = -1;
   else if (wlSelected < 0 || wlSelected >= wlDraft.length) wlSelected = 0;
   setWLDirty(false);
+  closeWLEditor();
   renderWLList();
   renderWLEditor();
   renderWLRefs();
@@ -3203,20 +3786,18 @@ $('wl-add').addEventListener('click', () => {
   wlDraft.push({
     ssid: '',
     bands: ['2g', '5g'],
-    network: tplNetworks(tpl)[0] || '',
+    network: 'lan',
     security: SECURITY_PRESETS[0].value,
     psk: '',
   });
-  wlSelected = wlDraft.length - 1;
   setWLDirty(true);
+  openWLEditor(wlDraft.length - 1);
   sayWL('');
-  renderWLList();
-  renderWLEditor();
   const input = $('wl-ssid-input');
   if (input) input.focus();
 });
 
-$('wl-save').addEventListener('click', async () => {
+async function saveWLSSIDs() {
   try {
     const tpl = templates.find(t => t.id === wlTemplateId);
     if (!tpl) throw new Error('请选择模板');
@@ -3252,7 +3833,9 @@ $('wl-save').addEventListener('click', async () => {
   } catch (e) {
     if (!noteUnauthorized(e)) sayWL(e.message, 'err');
   }
-});
+}
+
+$('wl-save').addEventListener('click', saveWLSSIDs);
 
 // 克隆：复制一个模板做试验，不必改动生产设备正在用的那一份。
 // 后端自动生成 <id>-copy-xxxx 作为新 ID。
@@ -3537,15 +4120,13 @@ async function deleteFirmware(f) {
   }
 }
 
-// 仓库里的镜像可以直接下载下来核对摘要；浏览器不会把 Bearer 头带上，
-// 所以和配置包一样走 fetch 再转 blob。
+// 仓库里的镜像可以直接下载下来核对摘要；和配置包一样走 fetch 再转 blob，
+// 会话 Cookie 会自动带上。
 async function downloadFirmwareImage(f) {
   try {
-    const headers = {};
-    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
     const path = '/api/v1/firmwares/image?model=' + encodeURIComponent(f.model) +
       '&version=' + encodeURIComponent(f.version);
-    const resp = await fetch(path, { headers });
+    const resp = await fetch(path, { credentials: 'same-origin' });
     if (!resp.ok) throw Object.assign(new Error('HTTP ' + resp.status), { status: resp.status });
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
@@ -3588,12 +4169,11 @@ $('fw-upload').addEventListener('click', async () => {
 
     btn.disabled = true;
     sayFW('正在上传 ' + file.name + '（' + fmtSize(file.size) + '）…');
-    const headers = {};
-    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
     const query = '?model=' + encodeURIComponent(model) +
       '&version=' + encodeURIComponent(version) +
       '&filename=' + encodeURIComponent(file.name);
-    const resp = await fetch('/api/v1/firmwares' + query, { method: 'POST', headers, body: file });
+    const resp = await fetch('/api/v1/firmwares' + query,
+      { method: 'POST', credentials: 'same-origin', body: file });
 
     const text = await resp.text();
     let data = null;
@@ -3647,7 +4227,7 @@ function renderDiagnostics(d) {
     ['事件', (d.events && d.events.total) || 0],
     ['心跳采样间隔', d.sample_interval_seconds > 0 ? d.sample_interval_seconds + ' 秒' : '每轮心跳都入库'],
     ['离线判定', (d.offline_after_seconds || 0) + ' 秒'],
-    ['管理鉴权', d.admin_auth_required ? '已启用（AC_ADMIN_TOKEN）' : '未启用'],
+    ['管理鉴权', d.admin_auth_required ? '已启用（账户登录）' : '未启用'],
     ['AP 鉴权', d.ap_auth_required ? '已启用（AC_SHARED_SECRET）' : '未启用'],
   ];
   const body = $('sys-rows');
@@ -3748,7 +4328,38 @@ async function refreshSystemLive() {
 async function loadSystem() {
   fillDiagDevices(deviceCache);
   await refreshSystemLive();
+  await loadNTPPanel();
 }
+
+// --- 站点时间源 -------------------------------------------------------------
+// 下发给所有 AP 的 NTP 列表。AP 自己持久化，AC 离线后照常走 NTP。
+function sayNTP(text, kind) {
+  const m = $('ntp-msg');
+  m.textContent = text || '';
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+async function loadNTPPanel() {
+  try {
+    const cfg = await api('GET', '/api/v1/settings');
+    $('ntp-servers').value = (cfg.ntp || []).join(', ');
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayNTP(e.message, 'err');
+  }
+}
+
+$('ntp-save').addEventListener('click', async () => {
+  const servers = $('ntp-servers').value.split(/[,\s]+/).filter(Boolean);
+  try {
+    await api('PUT', '/api/v1/settings/ntp', { servers });
+    sayNTP(servers.length
+      ? '已保存，AP 会在下次心跳应用并重启 sysntpd；AC 离线后仍使用该列表'
+      : '已清除页面设置，恢复使用环境变量 AC_NTP_SERVERS', 'ok');
+    await loadNTPPanel();
+  } catch (e) {
+    if (!noteUnauthorized(e)) sayNTP(e.message, 'err');
+  }
+});
 
 $('diag-device').addEventListener('change', () => {
   diagMAC = $('diag-device').value;
@@ -3773,9 +4384,7 @@ $('diag-run').addEventListener('click', async () => {
 
 $('cfg-export').addEventListener('click', async () => {
   try {
-    const headers = {};
-    if (adminToken) headers['Authorization'] = 'Bearer ' + adminToken;
-    const resp = await fetch('/api/v1/config/export', { headers });
+    const resp = await fetch('/api/v1/config/export', { credentials: 'same-origin' });
     if (!resp.ok) {
       let text = '';
       try { const data = await resp.json(); text = data.error || ''; } catch (_) { /* 非 JSON */ }
@@ -3821,6 +4430,52 @@ $('cfg-import').addEventListener('click', async () => {
     refresh();
   } catch (e) {
     if (!noteUnauthorized(e)) sayCfg('导入失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function sayAcct(text, kind) {
+  const m = $('acct-msg');
+  m.textContent = text || '';
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+}
+
+$('acct-save').addEventListener('click', async () => {
+  const name = $('acct-name').value.trim();
+  const oldPass = $('acct-old').value;
+  const newPass = $('acct-new').value;
+  const confirmPass = $('acct-new2').value;
+  if (!name) { sayAcct('用户名不能为空', 'err'); return; }
+  if (newPass && newPass.length < 6) { sayAcct('新密码至少 6 个字符', 'err'); return; }
+  if (newPass !== confirmPass) { sayAcct('两次输入的新密码不一致', 'err'); return; }
+  if (name === currentUser && !newPass) {
+    sayAcct('没有需要修改的内容', 'err');
+    return;
+  }
+  if (!oldPass) { sayAcct('请输入当前密码以确认修改', 'err'); return; }
+  const btn = $('acct-save');
+  btn.disabled = true;
+  try {
+    const s = await api('PUT', '/api/v1/auth/account', {
+      username: name,
+      current_password: oldPass,
+      new_password: newPass,
+    });
+    currentUser = s.username || name;
+    authDefaultPassword = !!s.default_password;
+    $('side-user').textContent = currentUser;
+    $('acct-user').textContent = currentUser;
+    $('acct-name').value = currentUser;
+    $('acct-old').value = '';
+    $('acct-new').value = '';
+    $('acct-new2').value = '';
+    authBar.hidden = !authDefaultPassword;
+    sayAcct('账户已更新，其他设备上的登录会话已失效', 'ok');
+  } catch (e) {
+    // 当前密码错误返回 401，但不是会话失效，不能触发登录层。
+    if (e.status === 401) sayAcct('当前密码不正确', 'err');
+    else if (!noteUnauthorized(e)) sayAcct('修改失败：' + e.message, 'err');
   } finally {
     btn.disabled = false;
   }
@@ -3882,8 +4537,12 @@ function fillClientPicker(list) {
   if (keep && list.some(c => c.mac === keep)) sel.value = keep;
 }
 
-refresh();
-setInterval(refresh, 5000);
+// 先确认会话再开始轮询：未登录时只显示登录框，不向管理接口打无意义的 401。
+(async function boot() {
+  const s = await loadSession();
+  if (applySession(s)) refresh();
+  setInterval(refresh, 5000);
+})();
 </script>
 </body>
 </html>

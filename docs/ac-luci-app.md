@@ -56,8 +56,8 @@ agent 侧（`Status.State`）：
 
 - 状态徽章 + 一句话原因（红/橙/绿）；
 - 控制器地址与来源：`手动配置的地址` / `广播发现`；
-- 控制器 ID、已生效/待应用 rev、最近心跳（含成功与否）、MAC/型号、上报 BSS 数、agent 版本与启动时间；
-- `dry_run` 开启时单独告警；最近一次失败原因单独一行。
+- 控制器 ID、已生效/待应用 rev、最近心跳（含成功与否）、MAC/型号、上报 BSS 数、当前实际运行的引导守护、agent 版本与启动时间；
+- 最近一次失败原因单独一行。
 
 **按钮**：`重启 agent`。没有单独的"立即同步"：
 `ac-agent once` 会与常驻进程争抢 `state.json`，而重启本来就立刻跑一轮 `Step()`。
@@ -71,8 +71,14 @@ agent 侧（`Status.State`）：
 | `ac_addr` | 控制器 `host:port`；留空 = 二层广播发现。**AC 在 WAN 上游时必须填**，广播跨不了三层 |
 | `secret` | 与控制器 `AC_SHARED_SECRET` 一致 |
 | `interval` | 心跳秒数，缺省 20 |
-| `dry_run` | 只渲染暂存，不写 `/etc/config`、不 reload |
-| `peer_port` / `peer_interval` / `peer_steer` | AP 间 11k 协同 |
+| `peer_port` / `peer_interval` | AP 间协同端口与播报间隔 |
+| `peer_network` | 承载 AP 间流量的逻辑网络名（缺省 `lan`），用于 IPv6 link-local 组播绑定 |
+| `peer_secret` | AP 间 HMAC-SHA256 共享密钥；所有 AP 一致，留空仅限可信管理网段 |
+| `peer_steer` | `peer_steer` 缺省开，控制器失联后由 agent 内置的 11v 建议接管，不依赖 nrsyncd |
+
+页面不再提供 `dry_run` / `steering_mode` / `steering_fallback` 三个选项：
+演练只保留命令行 `ac-agent once --dry-run`；引导策略固定为“控制器优先”，失联后不切换守护进程，
+由 29821 的 IPv6 组播（失败回退 IPv4 广播）AP 间协同与内置 11v 建议继续工作。
 
 保存后走 `uci.apply()`，触发 init 脚本里注册的 `procd_add_reload_trigger ac`，
 服务重启；随后页面调 `applyEnabled`，按刚保存的开关启动/停止 agent 并增删 WAN 规则。

@@ -27,5 +27,7 @@ services:
       # 不设固定值；需要强制通告地址时再通过环境变量覆盖。
       AC_ADVERTISE_IP: "${AC_ADVERTISE_IP:-}"
       AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
+      # 下发给所有 AP 的站点 NTP 源；AP 本地持久化，AC 离线后继续生效。
+      AC_NTP_SERVERS: "${AC_NTP_SERVERS:-}"
     volumes:
       - /srv/ac-controller/data:/var/lib/ac

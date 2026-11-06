@@ -46,6 +46,10 @@ type Device struct {
 	// takes the template as written. Stored as text rather than columns because it
 	// is a whole small document that only the renderer reads.
 	NetworkParams string `json:"network_params,omitempty"`
+	// RadioOverrides is the per-unit radio override as JSON
+	// (model.DeviceRadioOverrides): channels, power and mode for this AP only.
+	// Empty means "render the template as written".
+	RadioOverrides string `json:"radio_overrides,omitempty"`
 	// FwTarget is the firmware version an operator asked this AP to run. Empty
 	// means "leave it alone". FWState mirrors the agent's report
 	// (upgrading/applied/failed) and is what stops the controller re-sending an
@@ -132,6 +136,7 @@ CREATE TABLE IF NOT EXISTS devices (
 	sync_at INTEGER NOT NULL DEFAULT 0,
 	steering TEXT NOT NULL DEFAULT '',
 	network_params TEXT NOT NULL DEFAULT '',
+	radio_overrides TEXT NOT NULL DEFAULT '',
 	fw_target  TEXT NOT NULL DEFAULT '',
 	fw_state   TEXT NOT NULL DEFAULT '',
 	fw_message TEXT NOT NULL DEFAULT '',
@@ -190,7 +195,10 @@ CREATE TABLE IF NOT EXISTS clients (
 	connected_since INTEGER NOT NULL DEFAULT 0,
 	first_seen INTEGER NOT NULL DEFAULT 0,
 	last_seen  INTEGER NOT NULL DEFAULT 0,
-	online     INTEGER NOT NULL DEFAULT 1
+	online     INTEGER NOT NULL DEFAULT 1,
+	prev_ap_mac TEXT NOT NULL DEFAULT '',
+	prev_connected_since INTEGER NOT NULL DEFAULT 0,
+	roam_count INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_clients_ap ON clients(ap_mac);
 CREATE INDEX IF NOT EXISTS idx_clients_last_seen ON clients(last_seen);
@@ -302,6 +310,22 @@ CREATE TABLE IF NOT EXISTS radio_state (
 	PRIMARY KEY (ap_mac, radio)
 );
 
+-- port_state is the "now" view of each AP's wired ports, replaced wholesale by
+-- the hello handler. It is measured state (link, negotiated speed), not the
+-- controller's desired configuration.
+CREATE TABLE IF NOT EXISTS port_state (
+	ap_mac      TEXT NOT NULL,
+	name        TEXT NOT NULL,
+	mac         TEXT NOT NULL DEFAULT '',
+	up          INTEGER NOT NULL DEFAULT 0,
+	speed_mbps  INTEGER NOT NULL DEFAULT 0,
+	duplex      TEXT NOT NULL DEFAULT '',
+	mtu         INTEGER NOT NULL DEFAULT 0,
+	updated_at  INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY (ap_mac, name)
+);
+CREATE INDEX IF NOT EXISTS idx_port_state_ap ON port_state(ap_mac);
+
 -- Packages are kept whole so the exact bytes handed to an AP stay auditable.
 CREATE TABLE IF NOT EXISTS packages (
 	mac        TEXT NOT NULL,
@@ -374,8 +398,21 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"led_on_next_at", `ALTER TABLE devices ADD COLUMN led_on_next_at INTEGER NOT NULL DEFAULT 0`},
 		{"led_off_next_at", `ALTER TABLE devices ADD COLUMN led_off_next_at INTEGER NOT NULL DEFAULT 0`},
 		{"group_id", `ALTER TABLE devices ADD COLUMN group_id TEXT NOT NULL DEFAULT ''`},
+		{"radio_overrides", `ALTER TABLE devices ADD COLUMN radio_overrides TEXT NOT NULL DEFAULT ''`},
 	} {
 		if err := s.addColumnIfMissing(ctx, "devices", col.name, col.ddl); err != nil {
+			return err
+		}
+	}
+
+	// Databases created before client AP history existed keep ''/0 until the
+	// station moves again, which is the correct "never roamed" state.
+	for _, col := range []struct{ name, ddl string }{
+		{"prev_ap_mac", `ALTER TABLE clients ADD COLUMN prev_ap_mac TEXT NOT NULL DEFAULT ''`},
+		{"prev_connected_since", `ALTER TABLE clients ADD COLUMN prev_connected_since INTEGER NOT NULL DEFAULT 0`},
+		{"roam_count", `ALTER TABLE clients ADD COLUMN roam_count INTEGER NOT NULL DEFAULT 0`},
+	} {
+		if err := s.addColumnIfMissing(ctx, "clients", col.name, col.ddl); err != nil {
 			return err
 		}
 	}
@@ -476,14 +513,14 @@ ON CONFLICT(mac) DO UPDATE SET
 }
 
 // deviceColumns keeps SELECT lists and Scan order in one place.
-const deviceColumns = `mac, model, firmware, ip, hostname, state, template_id, config_rev, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id`
+const deviceColumns = `mac, model, firmware, ip, hostname, state, template_id, config_rev, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, radio_overrides, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id`
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
 	err := row.Scan(&d.MAC, &d.Model, &d.Firmware, &d.IP, &d.Hostname,
 		&d.State, &d.TemplateID, &d.ConfigRev, &d.AppliedRev,
 		&d.SyncState, &d.SyncMessage, &d.SyncAt, &d.Steering, &d.LastSeen, &d.CreatedAt,
-		&d.NetworkParams, &d.FwTarget, &d.FWState, &d.FWMessage, &d.FWAt, &d.Uptime,
+		&d.NetworkParams, &d.RadioOverrides, &d.FwTarget, &d.FWState, &d.FWMessage, &d.FWAt, &d.Uptime,
 		&d.RebootPeriodDays, &d.RebootAt, &d.RebootNextAt,
 		&d.LEDOnAt, &d.LEDOffAt, &d.LEDOnNextAt, &d.LEDOffNextAt, &d.GroupID)
 	return d, err
@@ -642,6 +679,20 @@ func (s *Store) SetDeviceNetwork(ctx context.Context, mac, params string) error 
 		`UPDATE devices SET network_params = ? WHERE mac = ?`, params, mac)
 	if err != nil {
 		return fmt.Errorf("set device network %s: %w", mac, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetDeviceRadios stores the per-unit radio override. An empty string clears it,
+// which returns the device to "template as written".
+func (s *Store) SetDeviceRadios(ctx context.Context, mac, params string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE devices SET radio_overrides = ? WHERE mac = ?`, params, mac)
+	if err != nil {
+		return fmt.Errorf("set device radios %s: %w", mac, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

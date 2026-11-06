@@ -67,8 +67,8 @@ func TestPackageUsesDeviceNetworkParams(t *testing.T) {
 
 	for _, want := range []string{
 		"list ipaddr '10.0.10.50/24'", // per-unit address
-		"list ports 'lan3:u*'",         // per-unit VLAN port map
-		"list ports 'lan4'",            // per-unit bridge ports
+		"list ports 'lan3:u*'",        // per-unit VLAN port map
+		"list ports 'lan4'",           // per-unit bridge ports
 	} {
 		if !strings.Contains(network, want) {
 			t.Errorf("network missing %q:\n%s", want, network)
@@ -90,6 +90,38 @@ func TestPackageUsesDeviceNetworkParams(t *testing.T) {
 	}
 	if strings.Contains(network, "config interface 'ac_") {
 		t.Errorf("network prefixed a netifd interface:\n%s", network)
+	}
+}
+
+// Radio settings are per-unit too: the AP renders its own channel and power
+// instead of the shared template's values.
+func TestPackageUsesDeviceRadioOverrides(t *testing.T) {
+	svc := newService(t)
+	if err := svc.Store.UpsertTemplate(context.Background(), managedNetworkTemplate()); err != nil {
+		t.Fatalf("seed template: %v", err)
+	}
+
+	power := 17
+	ov := model.DeviceRadioOverrides{Radios: []model.DeviceRadio{
+		{Index: 1, Channel: "100", TxPower: &power},
+	}}
+	blob, _ := json.Marshal(ov)
+	if err := svc.Store.SetDeviceRadios(context.Background(), ap1, string(blob)); err != nil {
+		t.Fatalf("set device radios: %v", err)
+	}
+
+	res, err := svc.Adopt(context.Background(), ap1, "net")
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	wireless := string(extract(t, svc, res.MAC, res.Rev)[render.FileWireless])
+	for _, want := range []string{"option channel '100'", "option txpower '17'"} {
+		if !strings.Contains(wireless, want) {
+			t.Errorf("wireless missing %q:\n%s", want, wireless)
+		}
+	}
+	if strings.Contains(wireless, "option channel '36'") {
+		t.Errorf("template channel leaked through the override:\n%s", wireless)
 	}
 }
 

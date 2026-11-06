@@ -38,9 +38,9 @@ type Server struct {
 	// precedence (see secretOverride) so an operator can rotate it without
 	// recreating the container.
 	SharedSecret string
-	// AdminToken guards the management REST API. Templates are served in clear
-	// text and carry PSKs, so leaving this empty is only defensible on a
-	// segment that no untrusted device can reach.
+	// AdminToken is an optional Bearer credential for automation. The Web UI no
+	// longer uses it: operators log in with the account seeded by
+	// EnsureAdminAccount, and the session cookie is accepted here as well.
 	AdminToken string
 	// SampleInterval throttles how often a hello may append telemetry rows.
 	// Heartbeats run every 20s; storing a row per station that often costs
@@ -60,14 +60,44 @@ type Server struct {
 	sampleMu   sync.Mutex
 
 	// auth tracks failed credential attempts per source address so a guessed
-	// token cannot be hammered at network speed. The zero value is usable; a
-	// restart simply clears every lockout.
+	// token or password cannot be hammered at network speed. The zero value is
+	// usable; a restart simply clears every lockout.
 	auth authTracker
+
+	// sessions holds the login sessions issued by POST /api/v1/auth/login. The
+	// zero value is usable; a restart logs everyone out.
+	sessions sessionStore
 
 	// secretOverride mirrors the shared_secret row in the settings table. It
 	// is read on every AP request, hence the lock; writes are one-per-click.
 	secretMu       sync.RWMutex
 	secretOverride string
+
+	// NTPServers is the environment default for site time sources. An override
+	// set from the system page wins, exactly like the shared secret.
+	NTPServers  []string
+	ntpMu       sync.RWMutex
+	ntpOverride []string
+}
+
+// SetNTPOverride seeds the runtime NTP list. Nil means "no override", in which
+// case the AC_NTP_SERVERS default applies.
+func (s *Server) SetNTPOverride(v []string) {
+	s.ntpMu.Lock()
+	s.ntpOverride = append([]string(nil), v...)
+	s.ntpMu.Unlock()
+}
+
+// EffectiveNTPServers returns a copy of the list handed to APs.
+func (s *Server) EffectiveNTPServers() []string {
+	s.ntpMu.RLock()
+	if len(s.ntpOverride) > 0 {
+		out := append([]string(nil), s.ntpOverride...)
+		s.ntpMu.RUnlock()
+		return out
+	}
+	s.ntpMu.RUnlock()
+	return append([]string(nil), s.NTPServers...)
 }
 
 // SetSecretOverride seeds the runtime override. Call once during startup with
@@ -117,9 +147,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/ac/pubkey", s.handlePubKey)
 	mux.HandleFunc("POST /api/v1/ap/hello", s.handleHello)
 
+	// Login itself has to be reachable without a session; the session probe is
+	// how the UI decides whether to show the login form.
+	mux.HandleFunc("GET /api/v1/auth/session", s.handleSession)
+	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+
 	// Everything below is the management surface: it exposes templates, which
 	// carry PSKs in clear text, and lets a caller rewrite network configuration.
-	// It is gated by AC_ADMIN_TOKEN when one is configured.
+	// It requires a logged-in session, or AC_ADMIN_TOKEN for automation.
 	admin := func(pattern string, h http.HandlerFunc) {
 		mux.HandleFunc(pattern, s.adminOnly(h))
 	}
@@ -129,6 +165,7 @@ func (s *Server) Handler() http.Handler {
 	admin("POST /api/v1/devices/{mac}/adopt", s.handleAdopt)
 	admin("POST /api/v1/devices/{mac}/repush", s.handleRepush)
 	admin("PUT /api/v1/devices/{mac}/network", s.handleSetDeviceNetwork)
+	admin("PUT /api/v1/devices/{mac}/radios", s.handleSetDeviceRadios)
 	admin("PUT /api/v1/devices/{mac}/group", s.handleSetDeviceGroup)
 	admin("POST /api/v1/devices/{mac}/release", s.handleRelease)
 	admin("GET /api/v1/devices/{mac}/packages", s.handlePackages)
@@ -152,6 +189,7 @@ func (s *Server) Handler() http.Handler {
 	admin("PUT /api/v1/devices/{mac}/led-schedule", s.handleSetLEDSchedule)
 
 	admin("GET /api/v1/radios", s.handleRadios)
+	admin("GET /api/v1/ports", s.handlePorts)
 	admin("GET /api/v1/telemetry/clients", s.handleTelemetryClients)
 	admin("GET /api/v1/telemetry/radios", s.handleTelemetryRadios)
 	admin("GET /api/v1/telemetry/counts", s.handleTelemetryCounts)
@@ -182,6 +220,11 @@ func (s *Server) Handler() http.Handler {
 	// Runtime settings (AP shared secret rotation from the devices page).
 	admin("GET /api/v1/settings", s.handleSettings)
 	admin("PUT /api/v1/settings/shared-secret", s.handleSetSharedSecret)
+	admin("PUT /api/v1/settings/ntp", s.handleSetNTP)
+
+	// Account management: the login name and password are what the UI rotates
+	// from the system page.
+	admin("PUT /api/v1/auth/account", s.handleChangeAccount)
 
 	// The package download is the one endpoint both sides use: the AP pulls its
 	// own bundle with the shared secret, an operator pulls one to inspect it.
@@ -200,19 +243,19 @@ func (s *Server) Handler() http.Handler {
 	return logRequests(s.Log, mux)
 }
 
-// adminOnly rejects a request unless it carries the configured admin token.
+// adminOnly rejects a request unless it carries a logged-in session or the
+// configured admin token.
 //
-// Unconfigured means open, deliberately: the controller is often run on a
-// management VLAN for a first bring-up, and a hard failure there would be worse
-// than the risk. The startup log warns, and /api/v1/health reports
-// admin_auth_required so the UI can say so too.
+// Login is always required now, unlike the old token-only scheme which stayed
+// open when AC_ADMIN_TOKEN was empty: the account is seeded on first start
+// (admin/123456), so there is always something to log in with.
 func (s *Server) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Management responses carry PSKs and device topology; a caching proxy
 		// between the browser and the controller must not keep them.
 		w.Header().Set("Cache-Control", "no-store")
 		if !s.authorizedAdmin(r) {
-			s.rejectAuth(w, r, "invalid or missing admin token")
+			s.rejectAuth(w, r, "login required")
 			return
 		}
 		s.auth.reset(remoteIP(r))
@@ -235,10 +278,12 @@ func (s *Server) adminOrAP(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *Server) authorizedAdmin(r *http.Request) bool {
-	if s.AdminToken == "" {
+	// Automation keeps using the Bearer token; the UI uses the session cookie.
+	if s.AdminToken != "" && bearerMatches(r, s.AdminToken) {
 		return true
 	}
-	return bearerMatches(r, s.AdminToken)
+	_, ok := s.sessionFrom(r)
+	return ok
 }
 
 // Failed-attempt budget. Five guesses per minute from one address is far more
@@ -380,10 +425,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"devices":   n,
 		"pubkey":    s.Key.PublicHex(),
 		"algorithm": "ed25519",
-		// Let the UI say "this controller is open" instead of failing obscurely
-		// on the first API call. Health stays unauthenticated on purpose: it is
-		// what a monitor or an AP about to enrol can reach.
-		"admin_auth_required": s.AdminToken != "",
+		// The management surface always requires a login account now. Health
+		// stays unauthenticated on purpose: it is what a monitor or an AP about
+		// to enrol can reach.
+		"admin_auth_required": true,
+		"login_required":      true,
 	})
 }
 
@@ -500,6 +546,60 @@ func (s *Server) handleSetDeviceNetwork(w http.ResponseWriter, r *http.Request) 
 		stored = string(blob)
 	}
 	if err := s.Store.SetDeviceNetwork(r.Context(), mac, stored); err != nil {
+		writeStoreError(w, err)
+		return
+	}
+
+	// Return the stored form so the caller sees exactly what took effect.
+	d, err := s.Store.GetDevice(r.Context(), mac)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+// handleSetDeviceRadios stores the per-unit radio values: channel, mode, power
+// or country this AP should use instead of the shared template. Sending an empty
+// list clears the override and returns the unit to "template as written".
+func (s *Server) handleSetDeviceRadios(w http.ResponseWriter, r *http.Request) {
+	mac, ok := pathMAC(w, r)
+	if !ok {
+		return
+	}
+
+	var ov model.DeviceRadioOverrides
+	if r.ContentLength > 0 {
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&ov); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+			return
+		}
+	}
+	seen := map[int]bool{}
+	for _, radio := range ov.Radios {
+		if radio.Index < 0 {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("radio index %d is invalid", radio.Index))
+			return
+		}
+		if seen[radio.Index] {
+			writeError(w, http.StatusBadRequest, fmt.Errorf("radio index %d appears twice", radio.Index))
+			return
+		}
+		seen[radio.Index] = true
+	}
+
+	stored := ""
+	if !ov.IsZero() {
+		blob, err := json.Marshal(ov)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		stored = string(blob)
+	}
+	if err := s.Store.SetDeviceRadios(r.Context(), mac, stored); err != nil {
 		writeStoreError(w, err)
 		return
 	}

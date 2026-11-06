@@ -113,9 +113,6 @@ msgstr ""
 msgid "since"
 msgstr ""
 
-msgid "Dry run is on: the controller is polled and packages are staged, but this access point is not modified."
-msgstr ""
-
 msgid "Last apply error: %s"
 msgstr ""
 
@@ -146,7 +143,7 @@ msgstr ""
 msgid "Controller address"
 msgstr ""
 
-msgid "host:port of the controller, for example 10.0.30.5:8090. Leave empty to find the controller by UDP broadcast on the local segment; a controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgid "host:port of the controller. Leave empty to find the controller by UDP broadcast on the local segment; once it answers, the discovered address is filled in here and can be saved to pin it. A controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
 msgstr ""
 
 msgid "Shared secret"
@@ -161,12 +158,6 @@ msgstr ""
 msgid "Seconds between two polls. The default is 20."
 msgstr ""
 
-msgid "Dry run"
-msgstr ""
-
-msgid "Render and stage the configuration but never write /etc/config and never reload radios. Use this to check that the controller can be reached before letting it take over."
-msgstr ""
-
 msgid "Peer coordination port"
 msgstr ""
 
@@ -179,10 +170,22 @@ msgstr ""
 msgid "How often this access point announces its BSS and client state to its peers, for example 30s."
 msgstr ""
 
+msgid "Peer coordination network"
+msgstr ""
+
+msgid "Logical OpenWrt network, for example lan, that carries AP-to-AP traffic. The agent resolves its l3_device and joins IPv6 link-local multicast on it; when IPv6 is unavailable it falls back to IPv4 broadcast."
+msgstr ""
+
+msgid "Peer shared secret"
+msgstr ""
+
+msgid "Shared by every access point and used to authenticate peer messages with HMAC-SHA256. Leave empty only on a trusted management segment; never reuse AC_SHARED_SECRET."
+msgstr ""
+
 msgid "Local roam suggestion"
 msgstr ""
 
-msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent and needs no steering daemon. It stays silent whenever a steering daemon (usteer or dawn) is enabled, so two decision-makers never fight over the same client; nrsyncd only distributes 11k neighbour lists and does not compete."
+msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent, needs no steering daemon, and is on by default so roaming keeps working across any number of access points after the controller is lost. It stays silent whenever usteer or dawn is enabled; nrsyncd only distributes 11k neighbour lists and does not compete."
 msgstr ""
 
 msgid "Settings saved. The agent and the WAN rules now follow the switch."
@@ -203,47 +206,11 @@ msgstr ""
 msgid "The controller no longer knows this access point, but rev %d is still running here. Adopt it again to resume management."
 msgstr ""
 
-msgid "Roaming steering policy"
-msgstr ""
-
-msgid "Decides who runs client steering. While the controller answers, its directive always wins: the daemon it names is enabled and dawn/usteer are stopped, so the two never fight over a client. \"Controller first\" additionally hands steering to a local daemon when the controller is lost."
-msgstr ""
-
-msgid "Controller first (recommended)"
-msgstr ""
-
-msgid "Controller only, keep last state on loss"
-msgstr ""
-
-msgid "Autonomous: local daemons only"
-msgstr ""
-
-msgid "Steering fallback on controller loss"
-msgstr ""
-
-msgid "Which local daemon takes over after the controller has been unreachable for about a minute. Steering returns to the controller automatically once it answers again. Only used with the \"Controller first\" policy; \"none\" keeps the last controller state instead."
-msgstr ""
-
-msgid "No fallback"
-msgstr ""
-
-msgid "nrsyncd (11k only)"
-msgstr ""
-
-msgid "Controller first"
-msgstr ""
-
-msgid "Controller only"
-msgstr ""
-
-msgid "Autonomous"
-msgstr ""
-
 msgid "Roaming steering"
 msgstr ""
 
-msgid "running %s"
+msgid "agent"
 msgstr ""
 
-msgid "The controller was lost, so local steering daemon %s took over. Steering returns to the controller automatically once it answers again."
+msgid "running %s"
 msgstr ""

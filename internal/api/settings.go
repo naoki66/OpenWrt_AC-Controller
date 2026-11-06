@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/naoki66/ac-controller/internal/model"
 	"github.com/naoki66/ac-controller/internal/store"
 )
 
@@ -39,7 +40,51 @@ func (s *Server) sharedSecretView() sharedSecretView {
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"shared_secret": s.sharedSecretView()})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"shared_secret": s.sharedSecretView(),
+		"ntp":           s.EffectiveNTPServers(),
+	})
+}
+
+// handleSetNTP replaces the site time-source list. An empty list removes the
+// override and falls back to AC_NTP_SERVERS; APs keep their last applied list
+// either way, so an AC outage never stops the NTP client.
+func (s *Server) handleSetNTP(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Servers []string `json:"servers"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("invalid JSON body"))
+		return
+	}
+	servers := model.NormalizeNTPServers(req.Servers)
+
+	if len(servers) == 0 {
+		if err := s.Store.DeleteSetting(r.Context(), store.SettingNTPServers); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.SetNTPOverride(nil)
+		s.Store.LogEvent(r.Context(), "settings", "", "NTP server override removed; "+
+			"falling back to AC_NTP_SERVERS")
+	} else {
+		raw, err := json.Marshal(servers)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := s.Store.SetSetting(r.Context(), store.SettingNTPServers, string(raw)); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		s.SetNTPOverride(servers)
+		s.Store.LogEvent(r.Context(), "settings", "",
+			"NTP servers set from the system page: "+strings.Join(servers, ","))
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"ntp": s.EffectiveNTPServers()})
 }
 
 // handleSetSharedSecret rotates the AP shared secret at runtime.

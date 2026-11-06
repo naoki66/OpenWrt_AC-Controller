@@ -272,6 +272,10 @@ type Agent struct {
 	// "unobserved" would swallow the first peer that ever appears.
 	peerVersion     uint64
 	peerVersionSeen bool
+	// peerNTP is the time-source list learned from a peer this cycle. It is used
+	// only when this AP has never received a controller list, so a new AP during
+	// an AC outage can still find the site time source.
+	peerNTP []string
 	// pinnedAC is true when the controller address came from configuration
 	// rather than discovery; only a discovered address may be forgotten and
 	// re-resolved, so an operator-provided address is never overridden.
@@ -443,7 +447,15 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 		a.Neighbors.Ubus = a.ubus
 	}
 	if cfg.PeerPort > 0 {
-		a.peerBus = NewPeerBus(cfg.PeerPort, cfg.PeerInterval, id.MAC, log)
+		a.peerBus = NewPeerBusWithOptions(PeerOptions{
+			Port:     cfg.PeerPort,
+			Interval: cfg.PeerInterval,
+			SelfMAC:  id.MAC,
+			Log:      log,
+			Secret:   cfg.PeerSecret,
+			Network:  cfg.PeerNetwork,
+			Runner:   runner,
+		})
 	}
 	a.btm = newBTMGuard()
 	a.steer = NewSteerLoop()
@@ -696,6 +708,11 @@ func (a *Agent) Step(ctx context.Context) error {
 	// an AP that stops serving roaming data during an AC outage is exactly the
 	// failure this design is meant to avoid.
 	hello := a.buildHello(ctx)
+	if len(a.state.NTPServers) == 0 && len(a.peerNTP) > 0 {
+		if err := a.applyNTP(ctx, a.peerNTP); err != nil {
+			a.Log.Warn("peer NTP list not applied", "err", err)
+		}
+	}
 	a.restoreNeighborsIfDue(ctx)
 	a.restoreNeighborsOnPeerChange(ctx)
 
@@ -799,6 +816,10 @@ func (a *Agent) Step(ctx context.Context) error {
 		return err
 	}
 
+	// Time sources are site-wide intent from the controller. Applying them is
+	// best effort and independent of config revisions.
+	a.applyNTPFromReply(ctx, reply)
+
 	// Commands are independent of configuration revisions. A reboot stops the
 	// cycle: nothing else should run on a box that is going down.
 	reboot, err := a.runActions(ctx, reply.Actions)
@@ -877,6 +898,7 @@ func (a *Agent) buildHello(ctx context.Context) proto.Hello {
 		Clients:     clients,
 		Neighbors:   a.collectNeighbors(ctx),
 		Radios:      a.collectRadios(ctx, clients),
+		Ports:       collectPorts(a.Config.Root),
 
 		FirmwareState:   a.state.FirmwareState,
 		FirmwareMessage: a.state.FirmwareMessage,

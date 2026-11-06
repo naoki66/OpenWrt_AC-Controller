@@ -28,15 +28,29 @@ type fixture struct {
 	server *httptest.Server
 	key    keys.Key
 	srv    *Server
+	// cookie is the session issued by login. newFixture logs in as the seeded
+	// default account so ordinary behaviour tests exercise what an operator sees.
+	cookie *http.Cookie
 }
 
+// newFixture returns an authenticated operator fixture. Login is always
+// required now, so tests that are about devices/templates/telemetry rather than
+// credentials log in as the seeded default account.
 func newFixture(t *testing.T) *fixture {
-	return newFixtureWithAuth(t, "", "")
+	t.Helper()
+	f := newFixtureWithAuth(t, "", "")
+	resp := f.login(defaultAdminUsername, defaultAdminPassword)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("default login = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+	return f
 }
 
 // newFixtureWithAuth builds a controller that demands credentials. adminToken
 // guards the management API, sharedSecret guards the AP channel; either empty
-// keeps that half open.
+// keeps that half open (the login account is always seeded, but this fixture
+// does not log in — that is what auth tests measure).
 func newFixtureWithAuth(t *testing.T, adminToken, sharedSecret string) *fixture {
 	t.Helper()
 
@@ -47,6 +61,9 @@ func newFixtureWithAuth(t *testing.T, adminToken, sharedSecret string) *fixture 
 	ctx := context.Background()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := EnsureAdminAccount(ctx, st); err != nil {
+		t.Fatalf("seed admin account: %v", err)
 	}
 	if err := st.UpsertTemplate(ctx, provision.DefaultTemplate()); err != nil {
 		t.Fatalf("seed template: %v", err)
@@ -87,15 +104,19 @@ func newFixtureWithAuth(t *testing.T, adminToken, sharedSecret string) *fixture 
 
 func (f *fixture) do(method, path string, body any) *http.Response {
 	f.t.Helper()
-	return f.doAuth("", method, path, body)
+	return f.send("", true, method, path, body)
 }
 
 // doAuth sends the request with an Authorization: Bearer header, so tests can
 // exercise the admin token and the AP shared secret through the same path a
-// real caller uses.
+// real caller uses. It deliberately ignores the fixture's session cookie: an
+// empty token means "no credential at all".
 func (f *fixture) doAuth(token, method, path string, body any) *http.Response {
 	f.t.Helper()
+	return f.send(token, false, method, path, body)
+}
 
+func (f *fixture) send(token string, withCookie bool, method, path string, body any) *http.Response {
 	var rdr io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -111,9 +132,27 @@ func (f *fixture) doAuth(token, method, path string, body any) *http.Response {
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
+	if withCookie && f.cookie != nil {
+		req.AddCookie(f.cookie)
+	}
 	resp, err := f.server.Client().Do(req)
 	if err != nil {
 		f.t.Fatalf("%s %s: %v", method, path, err)
+	}
+	return resp
+}
+
+// login posts the credentials and stores the session cookie for later requests.
+func (f *fixture) login(username, password string) *http.Response {
+	f.t.Helper()
+	resp := f.send("", false, http.MethodPost, "/api/v1/auth/login",
+		credentialsRequest{Username: username, Password: password})
+	if resp.StatusCode == http.StatusOK {
+		for _, c := range resp.Cookies() {
+			if c.Name == sessionCookieName {
+				f.cookie = c
+			}
+		}
 	}
 	return resp
 }

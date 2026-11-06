@@ -26,6 +26,8 @@ func uploadRow(t *testing.T, f *fixture, token, model, version string, blob []by
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
+	} else if f.cookie != nil {
+		req.AddCookie(f.cookie)
 	}
 	resp, err := f.server.Client().Do(req)
 	if err != nil {
@@ -100,7 +102,7 @@ func TestFirmwareRepositoryCRUD(t *testing.T) {
 		t.Error("served image differs from the upload")
 	}
 
-	if resp := f.doAuth("", http.MethodDelete, "/api/v1/firmwares?model=XR1710G&version=20261026", nil); resp.StatusCode != http.StatusNoContent {
+	if resp := f.do(http.MethodDelete, "/api/v1/firmwares?model=XR1710G&version=20261026", nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("delete status = %d", resp.StatusCode)
 	}
 	if _, _, err := f.store.GetFirmware(context.Background(), "XR1710G", "20261026"); !errors.Is(err, store.ErrNotFound) {

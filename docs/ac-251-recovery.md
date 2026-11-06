@@ -108,13 +108,14 @@ scp deploy/openwrt/ac-agent/files/ac.config     root@10.0.30.251:/etc/config/ac
 chmod 0755 /usr/sbin/ac-agent /etc/init.d/ac-agent
 uci set ac.agent.ac_addr='10.0.30.5:8090'
 uci set ac.agent.secret='<AC_SHARED_SECRET>'
-uci set ac.agent.dry_run='1'      # 先只渲染暂存，不落地
 uci commit ac
 /etc/init.d/ac-agent enable
 /etc/init.d/ac-agent start
 ```
 
 ### 4a. 先空跑一遍看暂存结果
+
+演练模式只保留为命令行开关，不再写入 UCI；常驻 agent 启动前先手工跑一轮：
 
 ```sh
 ac-agent once --dry-run -v
@@ -125,10 +126,10 @@ ac-agent once --dry-run -v
 - `config interface 'lan'` / `'lan2'` … `'lan6'` —— **不能**出现 `config interface 'ac_'`
 - `config device 'ac_bridge'`、`config bridge-vlan 'ac_bvlan*'` —— 这两个带前缀是对的
 
-确认无误再关掉 dry-run：
+确认无误后直接重启常驻 agent（它不带 `--dry-run`，会正常落地）：
 
 ```sh
-uci set ac.agent.dry_run='0'; uci commit ac; /etc/init.d/ac-agent restart
+/etc/init.d/ac-agent restart
 ```
 
 ---

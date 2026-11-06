@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -94,6 +95,17 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 
+	// Login accounts are seeded on first start so a fresh deployment is usable
+	// immediately (admin/123456). The warning is the only nudge to rotate it.
+	seededAccount, err := api.EnsureAdminAccount(ctx, st)
+	if err != nil {
+		return err
+	}
+	if seededAccount {
+		log.Warn("seeded default admin account: username admin, password 123456; " +
+			"change it from the system page")
+	}
+
 	for _, warning := range cfg.SecretWarnings() {
 		log.Warn(warning)
 	}
@@ -116,6 +128,7 @@ func serve(log *slog.Logger) error {
 		AdminToken:     cfg.AdminToken,
 		SampleInterval: cfg.SampleInterval,
 		OfflineAfter:   cfg.OfflineAfter,
+		NTPServers:     cfg.NTPServers,
 		Log:            log,
 	}
 	// A secret rotated from the devices page persists in the settings table and
@@ -123,6 +136,17 @@ func serve(log *slog.Logger) error {
 	if v, err := st.GetSetting(ctx, store.SettingSharedSecret); err == nil {
 		apiSrv.SetSecretOverride(v)
 		log.Info("shared secret override loaded from settings", "source", "settings")
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	if v, err := st.GetSetting(ctx, store.SettingNTPServers); err == nil {
+		var list []string
+		if err := json.Unmarshal([]byte(v), &list); err == nil {
+			apiSrv.SetNTPOverride(list)
+			log.Info("NTP server override loaded from settings", "servers", list)
+		} else {
+			log.Warn("stored NTP server list is invalid; using AC_NTP_SERVERS", "err", err)
+		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return err
 	}

@@ -125,6 +125,7 @@ func netTemplate() Template {
 }
 
 func boolPtr(b bool) *bool { return &b }
+func intPtr(i int) *int    { return &i }
 
 // Disabling every radio would render an AP that beacons nothing. The reference
 // AC enforces "at least one radio enabled", and doing it here keeps the failure
@@ -194,6 +195,34 @@ func TestWithDeviceNetworkDoesNotMutateTemplate(t *testing.T) {
 	}
 	if fmt.Sprint(base.Bridge.Interfaces[0].IPAddr) != "[10.0.10.9/24]" {
 		t.Errorf("original interface mutated: %v", base.Bridge.Interfaces[0].IPAddr)
+	}
+}
+
+// Per-unit radio overrides replace only the fields present in the document:
+// a channel-only override keeps the template's mode, power and country.
+func TestWithDeviceRadiosOverridesOnlyNamedFields(t *testing.T) {
+	base := Template{Radios: []Radio{
+		{Index: 0, Band: Band2G, Channel: "auto", HTMode: "HE20", TxPower: 20, Country: "US"},
+		{Index: 1, Band: Band5G, Channel: "36", HTMode: "EHT160", TxPower: 23},
+	}}
+
+	got := base.WithDeviceRadios(DeviceRadioOverrides{Radios: []DeviceRadio{
+		{Index: 1, Channel: "100", TxPower: intPtr(17), Disabled: boolPtr(true)},
+	}})
+
+	if got.Radios[0].Channel != "auto" || got.Radios[0].TxPower != 20 {
+		t.Errorf("untargeted radio changed: %+v", got.Radios[0])
+	}
+	r := got.Radios[1]
+	if r.Channel != "100" || r.TxPower != 17 || !r.Disabled {
+		t.Errorf("override not applied: %+v", r)
+	}
+	if r.HTMode != "EHT160" || r.Country != "" {
+		t.Errorf("unspecified fields were overwritten: %+v", r)
+	}
+	// Shared templates must not be mutated by rendering one unit.
+	if base.Radios[1].Channel != "36" || base.Radios[1].Disabled {
+		t.Errorf("original template mutated: %+v", base.Radios[1])
 	}
 }
 

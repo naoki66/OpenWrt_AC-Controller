@@ -48,8 +48,10 @@ func TestDiagnosticsReportsCountsWithoutSecrets(t *testing.T) {
 	if got.Telemetry.ClientSamples != 1 || got.Telemetry.RadioSamples != 1 {
 		t.Errorf("telemetry = %+v", got.Telemetry)
 	}
-	if got.AdminAuth || got.APAuth {
-		t.Errorf("auth flags = admin %v ap %v, want both false on the open test fixture", got.AdminAuth, got.APAuth)
+	// Login is always required, so the management flag is true even on a fixture
+	// with no admin token; the AP channel stays open without a secret.
+	if !got.AdminAuth || got.APAuth {
+		t.Errorf("auth flags = admin %v ap %v, want admin true and ap false", got.AdminAuth, got.APAuth)
 	}
 	if got.ACID == "" {
 		t.Error("ac_id missing")

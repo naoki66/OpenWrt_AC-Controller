@@ -707,6 +707,62 @@ func (t Template) UnmanagedInterfaceAddrs(ov DeviceNetwork) []string {
 	return out
 }
 
+// DeviceRadio pins radio settings that belong to one physical unit rather than
+// the shared template: two APs running the same SSID layout often need
+// different channels or power levels.
+type DeviceRadio struct {
+	Index    int    `json:"index"`
+	Channel  string `json:"channel,omitempty"`
+	HTMode   string `json:"htmode,omitempty"`
+	TxPower  *int   `json:"txpower,omitempty"`
+	Country  string `json:"country,omitempty"`
+	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+// DeviceRadioOverrides is the per-unit radio override document stored on a
+// device. An empty list means "never overridden" and renders the template as
+// written.
+type DeviceRadioOverrides struct {
+	Radios []DeviceRadio `json:"radios,omitempty"`
+}
+
+func (d DeviceRadioOverrides) IsZero() bool { return len(d.Radios) == 0 }
+
+// WithDeviceRadios returns a copy of the template with per-unit radio values
+// applied. Only the fields present on the override replace template values, so
+// an override written for channel alone keeps the template's mode and power.
+func (t Template) WithDeviceRadios(ov DeviceRadioOverrides) Template {
+	if ov.IsZero() {
+		return t
+	}
+	out := t
+	out.Radios = append([]Radio(nil), t.Radios...)
+	for i := range out.Radios {
+		for _, o := range ov.Radios {
+			if o.Index != out.Radios[i].Index {
+				continue
+			}
+			r := &out.Radios[i]
+			if o.Channel != "" {
+				r.Channel = o.Channel
+			}
+			if o.HTMode != "" {
+				r.HTMode = o.HTMode
+			}
+			if o.TxPower != nil {
+				r.TxPower = *o.TxPower
+			}
+			if o.Country != "" {
+				r.Country = o.Country
+			}
+			if o.Disabled != nil {
+				r.Disabled = *o.Disabled
+			}
+		}
+	}
+	return out
+}
+
 func (t Template) WithDeviceNetwork(ov DeviceNetwork) Template {
 	if ov.IsZero() {
 		return t

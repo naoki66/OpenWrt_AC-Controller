@@ -20,9 +20,17 @@ type apFixture struct {
 	t      *testing.T
 	store  *store.Store
 	server *httptest.Server
+	// cookie is the session used by the read-only management calls do makes.
+	cookie *http.Cookie
 }
 
 func newAPFixture(t *testing.T, secret string) *apFixture {
+	f := newAPFixtureNoLogin(t, secret)
+	f.login(defaultAdminUsername, defaultAdminPassword)
+	return f
+}
+
+func newAPFixtureNoLogin(t *testing.T, secret string) *apFixture {
 	t.Helper()
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "ac.db"))
@@ -32,6 +40,9 @@ func newAPFixture(t *testing.T, secret string) *apFixture {
 	ctx := context.Background()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := EnsureAdminAccount(ctx, st); err != nil {
+		t.Fatalf("seed admin account: %v", err)
 	}
 
 	key, err := keys.FromSeed(bytes.Repeat([]byte{5}, 32))
@@ -52,6 +63,32 @@ func newAPFixture(t *testing.T, secret string) *apFixture {
 		st.Close()
 	})
 	return &apFixture{t: t, store: st, server: ts}
+}
+
+func (f *apFixture) login(username, password string) {
+	f.t.Helper()
+	raw, err := json.Marshal(credentialsRequest{Username: username, Password: password})
+	if err != nil {
+		f.t.Fatalf("marshal login: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, f.server.URL+"/api/v1/auth/login", bytes.NewReader(raw))
+	if err != nil {
+		f.t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := f.server.Client().Do(req)
+	if err != nil {
+		f.t.Fatalf("login: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		f.t.Fatalf("login = %d, want 200", resp.StatusCode)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == sessionCookieName {
+			f.cookie = c
+		}
+	}
 }
 
 func (f *apFixture) hello(secret string, h proto.Hello) (*http.Response, proto.HelloReply) {
@@ -90,6 +127,9 @@ func (f *apFixture) do(method, path string) *http.Response {
 	req, err := http.NewRequest(method, f.server.URL+path, nil)
 	if err != nil {
 		f.t.Fatalf("request: %v", err)
+	}
+	if f.cookie != nil {
+		req.AddCookie(f.cookie)
 	}
 	resp, err := f.server.Client().Do(req)
 	if err != nil {

@@ -5,25 +5,262 @@ import (
 	"testing"
 )
 
-// Unconfigured means open, deliberately: a controller brought up on a
-// management VLAN must not lock its operator out on the first boot. The
-// trade-off is logged at startup and reported by /api/v1/health.
-func TestManagementAPIStaysOpenWithoutAToken(t *testing.T) {
+// The deployment story this supports: a fresh controller is usable as soon as
+// the page loads — log in as admin/123456 and change the password afterwards.
+func TestDefaultAccountIsSeededAndLogsIn(t *testing.T) {
+	f := newFixtureWithAuth(t, "", "")
+
+	login := f.login(defaultAdminUsername, defaultAdminPassword)
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login with the seeded account = %d, want 200", login.StatusCode)
+	}
+	body := decode[struct {
+		Username        string `json:"username"`
+		DefaultPassword bool   `json:"default_password"`
+	}](t, login)
+	if body.Username != defaultAdminUsername {
+		t.Errorf("login username = %q, want %q", body.Username, defaultAdminUsername)
+	}
+	if !body.DefaultPassword {
+		t.Error("login did not report the seeded default password")
+	}
+
+	session := decode[struct {
+		Authenticated   bool   `json:"authenticated"`
+		Username        string `json:"username"`
+		DefaultPassword bool   `json:"default_password"`
+	}](t, f.do("GET", "/api/v1/auth/session", nil))
+	if !session.Authenticated || session.Username != defaultAdminUsername {
+		t.Errorf("session = %+v, want an authenticated admin", session)
+	}
+	if !session.DefaultPassword {
+		t.Error("session did not report the seeded default password")
+	}
+
+	// The cookie is now enough to read the management surface.
+	resp := f.do("GET", "/api/v1/devices", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /devices with the session cookie = %d, want 200", resp.StatusCode)
+	}
+}
+
+// Management data (templates carry PSKs) must never be readable without a
+// credential — unlike the old token-only scheme, "no token configured" is no
+// longer open.
+func TestManagementAPIRequiresLogin(t *testing.T) {
+	f := newFixtureWithAuth(t, "", "")
+
+	cases := []struct{ method, path string }{
+		{"GET", "/api/v1/devices"},
+		{"GET", "/api/v1/templates"},
+		{"GET", "/api/v1/templates/default"},
+		{"GET", "/api/v1/clients"},
+		{"POST", "/api/v1/devices/" + testMAC + "/repush"},
+	}
+	for _, c := range cases {
+		resp := f.do(c.method, c.path, nil)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s without a login = %d, want 401", c.method, c.path, resp.StatusCode)
+		}
+	}
+
+	if resp := f.login(defaultAdminUsername, defaultAdminPassword); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("login = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+
+	for _, c := range cases {
+		resp := f.do(c.method, c.path, nil)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			t.Errorf("%s %s with the session cookie = 401, want it to pass auth", c.method, c.path)
+		}
+	}
+}
+
+// A wrong password must be refused, and the guesses must be budgeted: five
+// refusals from one address trip a short lockout, and a correct password still
+// gets in so a shared address is not held hostage.
+func TestWrongPasswordIsRefusedAndThrottled(t *testing.T) {
+	f := newFixtureWithAuth(t, "", "")
+
+	for i := 1; i < authFailureLimit; i++ {
+		resp := f.login(defaultAdminUsername, "wrong-password")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("wrong password attempt %d = %d, want 401", i, resp.StatusCode)
+		}
+	}
+
+	resp := f.login(defaultAdminUsername, "wrong-password")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("attempt %d = %d, want 429", authFailureLimit, resp.StatusCode)
+	}
+	if v := resp.Header.Get("Retry-After"); v == "" || v == "0" {
+		t.Errorf("Retry-After = %q, want a positive number of seconds", v)
+	}
+
+	// Further guesses are refused without being checked.
+	resp = f.login(defaultAdminUsername, "wrong-password")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("attempt during lockout = %d, want 429", resp.StatusCode)
+	}
+
+	// A correct password during the lockout still works and clears the budget.
+	resp = f.login(defaultAdminUsername, defaultAdminPassword)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("correct login during lockout = %d, want 200", resp.StatusCode)
+	}
+
+	resp = f.login(defaultAdminUsername, "wrong-password")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("wrong password after a success = %d, want 401", resp.StatusCode)
+	}
+}
+
+// The password change re-hashes, drops every other session, and keeps the
+// caller logged in with a fresh cookie.
+func TestChangePasswordRotatesCredentialsAndSessions(t *testing.T) {
+	f := newFixtureWithAuth(t, "", "")
+	if resp := f.login(defaultAdminUsername, defaultAdminPassword); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("login = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	oldCookie := f.cookie
+
+	// The current password is required, so a session alone cannot change it.
+	resp := f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": defaultAdminUsername, "current_password": "not-it", "new_password": "newpass123"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("change with a wrong current password = %d, want 401", resp.StatusCode)
+	}
+
+	resp = f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": defaultAdminUsername, "current_password": defaultAdminPassword, "new_password": "abc"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("change to a too-short password = %d, want 400", resp.StatusCode)
+	}
+
+	// Renaming to the same name with no new password is a no-op, not an error
+	// the UI can act on silently.
+	resp = f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": defaultAdminUsername, "current_password": defaultAdminPassword})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("no-op change = %d, want 400", resp.StatusCode)
+	}
+
+	resp = f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": defaultAdminUsername, "current_password": defaultAdminPassword, "new_password": "newpass123"})
+	body := decode[struct {
+		Username        string `json:"username"`
+		DefaultPassword bool   `json:"default_password"`
+	}](t, resp)
+	if body.Username != defaultAdminUsername || body.DefaultPassword {
+		t.Errorf("change response = %+v, want admin with a non-default password", body)
+	}
+
+	// The old session cookie was revoked by the change.
+	f.cookie = oldCookie
+	resp = f.do("GET", "/api/v1/devices", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old session after a password change = %d, want 401", resp.StatusCode)
+	}
+
+	// The old password no longer works, the new one does.
+	login := f.login(defaultAdminUsername, defaultAdminPassword)
+	login.Body.Close()
+	if login.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login with the old password = %d, want 401", login.StatusCode)
+	}
+	login = f.login(defaultAdminUsername, "newpass123")
+	login.Body.Close()
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login with the new password = %d, want 200", login.StatusCode)
+	}
+}
+
+// The login name is editable too: renaming drops the old session and makes the
+// old name unusable while the password hash stays untouched.
+func TestRenameAccountChangesLoginName(t *testing.T) {
+	f := newFixtureWithAuth(t, "", "")
+	if resp := f.login(defaultAdminUsername, defaultAdminPassword); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("login = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	oldCookie := f.cookie
+
+	// A name with whitespace is refused.
+	resp := f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": "ops admin", "current_password": defaultAdminPassword})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("rename to a name with a space = %d, want 400", resp.StatusCode)
+	}
+
+	resp = f.do("PUT", "/api/v1/auth/account",
+		map[string]string{"username": "ops", "current_password": defaultAdminPassword})
+	body := decode[struct {
+		Username        string `json:"username"`
+		DefaultPassword bool   `json:"default_password"`
+	}](t, resp)
+	if body.Username != "ops" {
+		t.Errorf("rename response username = %q, want ops", body.Username)
+	}
+	if !body.DefaultPassword {
+		t.Error("renaming must not change the password, which is still the seeded default")
+	}
+
+	// The session issued under the old name is gone.
+	f.cookie = oldCookie
+	resp = f.do("GET", "/api/v1/devices", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old session after a rename = %d, want 401", resp.StatusCode)
+	}
+
+	// The old name no longer logs in; the new one does with the same password.
+	login := f.login(defaultAdminUsername, defaultAdminPassword)
+	login.Body.Close()
+	if login.StatusCode != http.StatusUnauthorized {
+		t.Errorf("login with the old name = %d, want 401", login.StatusCode)
+	}
+	login = f.login("ops", defaultAdminPassword)
+	login.Body.Close()
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login with the new name = %d, want 200", login.StatusCode)
+	}
+}
+
+func TestLogoutEndsTheSession(t *testing.T) {
 	f := newFixture(t)
 
-	resp := f.do("GET", "/api/v1/devices", nil)
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("GET /devices = %d, want 200 when no admin token is set", resp.StatusCode)
-	}
+	resp := f.do("POST", "/api/v1/auth/logout", nil)
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("logout = %d, want 204", resp.StatusCode)
+	}
 
-	health := f.do("GET", "/api/v1/health", nil)
-	defer health.Body.Close()
-	body := decode[struct {
-		AdminAuthRequired bool `json:"admin_auth_required"`
-	}](t, health)
-	if body.AdminAuthRequired {
-		t.Error("health reported admin_auth_required with no token configured")
+	// The fixture still replays the cookie; the server must have dropped it.
+	resp = f.do("GET", "/api/v1/devices", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /devices after logout = %d, want 401", resp.StatusCode)
 	}
 }
 
@@ -120,7 +357,7 @@ func TestBadTokenAttemptsAreThrottled(t *testing.T) {
 }
 
 // The package download is the one endpoint both sides use: the AP has only the
-// shared secret, an operator has only the admin token.
+// shared secret, an operator has a session or the admin token.
 func TestPackageAcceptsEitherCredential(t *testing.T) {
 	const admin, secret = "admin-token", "ap-secret"
 	f := newFixtureWithAuth(t, admin, secret)
@@ -146,6 +383,19 @@ func TestPackageAcceptsEitherCredential(t *testing.T) {
 			t.Errorf("package with the %s = 401, want it to pass auth", name)
 		}
 	}
+
+	// A browser holding the session cookie can also download the bundle.
+	if resp := f.login(defaultAdminUsername, defaultAdminPassword); resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("login = %d, want 200", resp.StatusCode)
+	} else {
+		resp.Body.Close()
+	}
+	resp = f.do("GET", path, nil)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		t.Error("package with the session cookie = 401, want it to pass auth")
+	}
 }
 
 // Management responses carry PSKs and topology; a reverse proxy or shared
@@ -163,9 +413,9 @@ func TestManagementResponsesAreNotCacheable(t *testing.T) {
 	}
 }
 
-// Health and the public key are what an AP or a monitor can reach before it has
-// any credential at all.
-func TestHealthAndPubKeyStayPublic(t *testing.T) {
+// Health, the public key and the login surface are what an AP or a monitor can
+// reach before it has any credential at all.
+func TestHealthAndLoginSurfaceStayPublic(t *testing.T) {
 	f := newFixtureWithAuth(t, "admin-token", "ap-secret")
 
 	for _, path := range []string{"/api/v1/health", "/api/v1/ac/pubkey"} {
@@ -176,7 +426,15 @@ func TestHealthAndPubKeyStayPublic(t *testing.T) {
 		}
 	}
 
-	// The UI itself must load, otherwise there is nowhere to enter a token.
+	// The session probe answers rather than 401s: it is how the UI decides to
+	// show the login form.
+	probe := f.do("GET", "/api/v1/auth/session", nil)
+	probe.Body.Close()
+	if probe.StatusCode != http.StatusOK {
+		t.Errorf("GET /auth/session = %d, want 200 unauthenticated", probe.StatusCode)
+	}
+
+	// The UI itself must load, otherwise there is nowhere to log in.
 	resp := f.do("GET", "/", nil)
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

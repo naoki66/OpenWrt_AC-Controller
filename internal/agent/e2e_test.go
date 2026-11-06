@@ -100,6 +100,7 @@ type acFixture struct {
 	store  *store.Store
 	key    keys.Key
 	t      *testing.T
+	cookie *http.Cookie
 }
 
 func newAC(t *testing.T, secret string) *acFixture {
@@ -112,6 +113,9 @@ func newAC(t *testing.T, secret string) *acFixture {
 	ctx := context.Background()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if _, err := api.EnsureAdminAccount(ctx, st); err != nil {
+		t.Fatalf("seed admin account: %v", err)
 	}
 	if err := st.UpsertTemplate(ctx, provision.DefaultTemplate()); err != nil {
 		t.Fatalf("seed template: %v", err)
@@ -135,7 +139,49 @@ func newAC(t *testing.T, secret string) *acFixture {
 		ts.Close()
 		st.Close()
 	})
-	return &acFixture{server: ts, store: st, key: key, t: t}
+
+	f := &acFixture{server: ts, store: st, key: key, t: t}
+	f.login()
+	return f
+}
+
+// login obtains the session cookie the management calls need. The seeded
+// credentials are the same defaults the deployment page advertises.
+func (f *acFixture) login() {
+	f.t.Helper()
+	resp, err := http.Post(f.server.URL+"/api/v1/auth/login", "application/json",
+		strings.NewReader(`{"username":"admin","password":"123456"}`))
+	if err != nil {
+		f.t.Fatalf("login: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		f.t.Fatalf("login status %d", resp.StatusCode)
+	}
+	for _, c := range resp.Cookies() {
+		if c.Name == "ac_session" {
+			f.cookie = c
+		}
+	}
+	if f.cookie == nil {
+		f.t.Fatal("login returned no session cookie")
+	}
+}
+
+// post sends a management request carrying the session cookie.
+func (f *acFixture) post(path, body string) *http.Response {
+	f.t.Helper()
+	req, err := http.NewRequest(http.MethodPost, f.server.URL+path, strings.NewReader(body))
+	if err != nil {
+		f.t.Fatalf("request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(f.cookie)
+	resp, err := f.server.Client().Do(req)
+	if err != nil {
+		f.t.Fatalf("post %s: %v", path, err)
+	}
+	return resp
 }
 
 // ensureDevice stands in for AP discovery so adopt has something to act on.
@@ -151,11 +197,7 @@ func (f *acFixture) ensureDevice(t *testing.T, mac string) {
 func (f *acFixture) adopt(t *testing.T, mac string) {
 	t.Helper()
 	f.ensureDevice(t, mac)
-	resp, err := http.Post(f.server.URL+"/api/v1/devices/"+mac+"/adopt",
-		"application/json", strings.NewReader(`{"template_id":"default"}`))
-	if err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
+	resp := f.post("/api/v1/devices/"+mac+"/adopt", `{"template_id":"default"}`)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -514,11 +556,7 @@ func TestAgentAppliesAllBands(t *testing.T) {
 	if err := a.Step(ctx); err != nil {
 		t.Fatalf("register: %v", err)
 	}
-	resp, err := http.Post(ac.server.URL+"/api/v1/devices/"+apMAC+"/adopt",
-		"application/json", strings.NewReader(`{"template_id":"tri-band"}`))
-	if err != nil {
-		t.Fatalf("adopt: %v", err)
-	}
+	resp := ac.post("/api/v1/devices/"+apMAC+"/adopt", `{"template_id":"tri-band"}`)
 	resp.Body.Close()
 
 	if err := a.Step(ctx); err != nil {

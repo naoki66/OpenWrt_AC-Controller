@@ -42,9 +42,10 @@ type configGroup struct {
 }
 
 type configDeviceOverride struct {
-	MAC     string               `json:"mac"`
-	GroupID string               `json:"group_id,omitempty"`
-	Network *model.DeviceNetwork `json:"network,omitempty"`
+	MAC     string                      `json:"mac"`
+	GroupID string                      `json:"group_id,omitempty"`
+	Network *model.DeviceNetwork        `json:"network,omitempty"`
+	Radios  *model.DeviceRadioOverrides `json:"radios,omitempty"`
 }
 
 type configSnapshot struct {
@@ -97,7 +98,7 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 		snap.Groups = append(snap.Groups, configGroup{ID: g.ID, Name: g.Name, TemplateID: g.TemplateID})
 	}
 	for _, d := range devices {
-		if d.GroupID == "" && d.NetworkParams == "" {
+		if d.GroupID == "" && d.NetworkParams == "" && d.RadioOverrides == "" {
 			continue
 		}
 		ov := configDeviceOverride{MAC: d.MAC, GroupID: d.GroupID}
@@ -109,6 +110,12 @@ func (s *Server) handleConfigExport(w http.ResponseWriter, r *http.Request) {
 			// A row written by an older controller may not decode into today's
 			// struct. Dropping the unreadable override is better than exporting
 			// something the importing controller would apply blind.
+		}
+		if d.RadioOverrides != "" {
+			var radios model.DeviceRadioOverrides
+			if err := json.Unmarshal([]byte(d.RadioOverrides), &radios); err == nil {
+				ov.Radios = &radios
+			}
 		}
 		snap.DeviceOverrides = append(snap.DeviceOverrides, ov)
 	}
@@ -292,6 +299,17 @@ func (s *Server) applyConfigSnapshot(r *http.Request, snap *configSnapshot) (con
 			stored = string(blob)
 		}
 		if err := s.Store.SetDeviceNetwork(ctx, mac, stored); err != nil {
+			return res, err
+		}
+		radios := ""
+		if ov.Radios != nil && !ov.Radios.IsZero() {
+			blob, err := json.Marshal(*ov.Radios)
+			if err != nil {
+				return res, err
+			}
+			radios = string(blob)
+		}
+		if err := s.Store.SetDeviceRadios(ctx, mac, radios); err != nil {
 			return res, err
 		}
 		res.Devices++

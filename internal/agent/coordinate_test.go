@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,10 +21,40 @@ const (
 	testPeerMAC = "8c:de:52:aa:bb:cc"
 )
 
+// testNRReport builds a valid 13-byte neighbour report body whose first six
+// bytes are the BSSID. Peer ingest rejects anything shorter or inconsistent,
+// so fixtures use this instead of arbitrary placeholders.
+func testNRReport(bssid string) string {
+	hw, err := net.ParseMAC(bssid)
+	if err != nil || len(hw) != 6 {
+		return ""
+	}
+	raw := make([]byte, 13)
+	copy(raw, hw)
+	raw[10] = 115 // 5 GHz operating class
+	raw[11] = 36  // channel
+	raw[12] = 7   // VHT PHY
+	return hex.EncodeToString(raw)
+}
+
+func sanitizePeerBSS(list []proto.NeighborBSS) []proto.NeighborBSS {
+	out := make([]proto.NeighborBSS, 0, len(list))
+	for _, e := range list {
+		// Leave deliberately incomplete fixtures incomplete so the tests that
+		// exercise the rejection path still see them rejected.
+		if e.BSSID != "" && e.Report != "" {
+			e.Report = testNRReport(e.BSSID)
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
 func peerAnnouncement(t *testing.T, st proto.PeerState) []byte {
 	t.Helper()
-	st.Type = proto.MsgPeer
+	st.Type = proto.MsgPeerNR
 	st.V = proto.PeerVersion
+	st.BSS = sanitizePeerBSS(st.BSS)
 	body, err := json.Marshal(st)
 	if err != nil {
 		t.Fatalf("marshal peer state: %v", err)
@@ -135,6 +167,49 @@ func TestMergeNeighborLists(t *testing.T) {
 	for _, entry := range list {
 		if entry[0] == "cc:bb:cc:dd:ee:03" {
 			t.Errorf("foreign SSID leaked into the list: %v", list)
+		}
+	}
+}
+
+// More than two APs must all see each other. Every agent announces its own BSS
+// set and merges every live peer's same-SSID BSS, so the site forms a full mesh
+// on the management segment rather than a chain that only the two ends know.
+func TestMergeNeighborListsIncludesEveryPeerAP(t *testing.T) {
+	bus := NewPeerBus(0, time.Minute, testSelfMAC, testLog())
+	bus.ingest(peerAnnouncement(t, proto.PeerState{
+		MAC: "8c:de:52:aa:bb:01",
+		BSS: []proto.NeighborBSS{
+			{Ifname: "phy1.1-ap0", BSSID: "00:11:22:33:44:02", SSID: "SSID-A_5G", Report: "peer1"},
+		},
+	}))
+	bus.ingest(peerAnnouncement(t, proto.PeerState{
+		MAC: "8c:de:52:aa:bb:02",
+		BSS: []proto.NeighborBSS{
+			{Ifname: "phy2.1-ap0", BSSID: "00:11:22:33:44:03", SSID: "SSID-A_5G", Report: "peer2"},
+		},
+	}))
+
+	snap := bus.Snapshot()
+	if len(snap.APs) != 2 {
+		t.Fatalf("peers = %v, want two APs", snap.APs)
+	}
+	own := []proto.NeighborBSS{
+		{Ifname: "phy0.1-ap0", BSSID: "00:11:22:33:44:01", SSID: "SSID-A_5G", Report: "self"},
+	}
+	merged := mergeNeighborLists(nil, own, snap.BSS)
+	list := merged["phy0.1-ap0"]
+	if len(list) != 2 {
+		t.Fatalf("list = %v, want both peer APs", list)
+	}
+	for _, want := range []string{"00:11:22:33:44:02", "00:11:22:33:44:03"} {
+		found := false
+		for _, entry := range list {
+			if entry[0] == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("peer %s missing from %v", want, list)
 		}
 	}
 }
@@ -435,6 +510,9 @@ func newSteerAgent(t *testing.T, runner *steerRunner, enabled bool) *Agent {
 		peerBus: bus,
 		Log:     testLog(),
 		btm:     newBTMGuard(),
+		// A device that has never been adopted must not steer on its own; the
+		// helper models the normal case, an AP already managed once.
+		state: State{AppliedRev: 1},
 	}
 }
 
@@ -456,6 +534,18 @@ func TestMaybeSteerIsOffByDefault(t *testing.T) {
 	a.maybeSteer(context.Background(), weakHello())
 	if calls := runner.btmCalls(); len(calls) != 0 {
 		t.Errorf("11v sent while disabled: %v", calls)
+	}
+}
+
+// Before the controller ever adopted this AP its wireless may still be factory
+// config; the built-in suggestion must wait for the first applied revision.
+func TestMaybeSteerSkipsNeverAdoptedAP(t *testing.T) {
+	runner := &steerRunner{}
+	a := newSteerAgent(t, runner, true)
+	a.state.AppliedRev = 0
+	a.maybeSteer(context.Background(), weakHello())
+	if calls := runner.btmCalls(); len(calls) != 0 {
+		t.Errorf("11v sent before adoption: %v", calls)
 	}
 }
 
@@ -482,7 +572,7 @@ func TestMaybeSteerRunsAlongsideNeighborOnlyDaemon(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("11v calls = %v, want one alongside nrsyncd", calls)
 	}
-	if !strings.Contains(calls[0], "00bbbbccddee02") {
+	if !strings.Contains(calls[0], testNRReport("bb:bb:cc:dd:ee:02")) {
 		t.Errorf("suggestion does not carry the peer's neighbour report: %s", calls[0])
 	}
 }
@@ -497,7 +587,7 @@ func TestMaybeSteerSuggestsPeerForWeakClient(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("11v calls = %v, want exactly one", calls)
 	}
-	if !strings.Contains(calls[0], "00bbbbccddee02") {
+	if !strings.Contains(calls[0], testNRReport("bb:bb:cc:dd:ee:02")) {
 		t.Errorf("suggestion does not carry the peer's neighbour report: %s", calls[0])
 	}
 	if strings.Contains(calls[0], "bb:bb:cc:dd:ee:02") {

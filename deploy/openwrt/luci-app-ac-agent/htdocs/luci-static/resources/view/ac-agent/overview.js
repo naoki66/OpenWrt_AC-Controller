@@ -72,11 +72,12 @@ function sourceLabel(source) {
 	}
 }
 
-var STEERING_MODES = {
-	ac_priority: _('Controller first'),
-	ac_only:     _('Controller only'),
-	autonomous:  _('Autonomous')
-};
+/* The agent reports "none" when nrsyncd/usteer/dawn are all disabled. Roaming
+ * is then handled by the agent's own 11v suggestion loop, so display that
+ * instead of the misleading "none". */
+function steeringLabel(daemon) {
+	return daemon === 'none' ? _('agent') : daemon;
+}
 
 function fmtTime(iso) {
 	if (!iso)
@@ -178,12 +179,26 @@ return view.extend({
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'ac_addr', _('Controller address'),
-			_('host:port of the controller, for example 10.0.30.5:8090. ' +
+			_('host:port of the controller. ' +
 			  'Leave empty to find the controller by UDP broadcast on the local segment; ' +
-			  'a controller on the other side of a router must be entered explicitly, ' +
+			  'once it answers, the discovered address is filled in here and can be saved to pin it. ' +
+			  'A controller on the other side of a router must be entered explicitly, ' +
 			  'because broadcast never crosses layer 3.'));
-		o.placeholder = '10.0.30.5:8090';
+		o.placeholder = 'controller:8090';
 		o.rmempty = true;
+
+		/* Prefill the field with the address the agent actually discovered, but
+		 * only while UCI has none: saving the form pins it, and a pinned address
+		 * survives a reboot without another broadcast. cfgvalue is overridden
+		 * rather than default set, because the shipped config carries an empty
+		 * "option ac_addr ''" and LuCI then treats the value as present. */
+		var discovered = this.data.status;
+		var discoveredAddr = (discovered && discovered.ac_addr &&
+			discovered.ac_addr_source === 'discovered') ? discovered.ac_addr : '';
+		if (discoveredAddr && !uci.get('ac', 'agent', 'ac_addr'))
+			o.cfgvalue = function(section_id) {
+				return uci.get('ac', section_id, 'ac_addr') || discoveredAddr;
+			};
 
 		o = s.option(form.Value, 'secret', _('Shared secret'),
 			_('Must match AC_SHARED_SECRET on the controller. Leave empty when the controller does not check one.'));
@@ -196,12 +211,6 @@ return view.extend({
 		o.placeholder = '20';
 		o.rmempty = true;
 
-		o = s.option(form.Flag, 'dry_run', _('Dry run'),
-			_('Render and stage the configuration but never write /etc/config and never reload radios. ' +
-			  'Use this to check that the controller can be reached before letting it take over.'));
-		o.default = '0';
-		o.rmempty = false;
-
 		o = s.option(form.Value, 'peer_port', _('Peer coordination port'),
 			_('UDP port used to exchange 802.11k data between access points directly. 0 disables it.'));
 		o.datatype = 'uinteger';
@@ -213,33 +222,32 @@ return view.extend({
 		o.placeholder = '30s';
 		o.rmempty = true;
 
+		o = s.option(form.Value, 'peer_network', _('Peer coordination network'),
+			_('Logical OpenWrt network, for example lan, that carries AP-to-AP traffic. ' +
+			  'The agent resolves its l3_device and joins IPv6 link-local multicast on it; ' +
+			  'when IPv6 is unavailable it falls back to IPv4 broadcast.'));
+		o.placeholder = 'lan';
+		o.rmempty = true;
+
+		o = s.option(form.Value, 'peer_secret', _('Peer shared secret'),
+			_('Shared by every access point and used to authenticate peer messages with HMAC-SHA256. ' +
+			  'Leave empty only on a trusted management segment; never reuse AC_SHARED_SECRET.'));
+		o.password = true;
+		o.rmempty = true;
+
+		/* On by default: the controller still decides while it answers, but when
+		 * it is lost the APs keep exchanging BSS/client state directly on UDP
+		 * 29821 and can suggest a roam themselves. That works for any number of
+		 * access points on the same management segment and does not depend on
+		 * nrsyncd or another steering daemon. */
 		o = s.option(form.Flag, 'peer_steer', _('Local roam suggestion'),
 			_('Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak ' +
-			  'and a peer serves the same SSID. This is built into the agent and needs no steering daemon. ' +
-			  'It stays silent whenever a steering daemon (usteer or dawn) is enabled, so two decision-makers ' +
-			  'never fight over the same client; nrsyncd only distributes 11k neighbour lists and does not compete.'));
-		o.default = '0';
+			  'and a peer serves the same SSID. This is built into the agent, needs no steering daemon, and is ' +
+			  'on by default so roaming keeps working across any number of access points after the controller ' +
+			  'is lost. It stays silent whenever usteer or dawn is enabled; nrsyncd only distributes 11k ' +
+			  'neighbour lists and does not compete.'));
+		o.default = '1';
 		o.rmempty = false;
-
-		o = s.option(form.ListValue, 'steering_mode', _('Roaming steering policy'),
-			_('Decides who runs client steering. While the controller answers, its directive always wins: ' +
-			  'the daemon it names is enabled and dawn/usteer are stopped, so the two never fight over a client. ' +
-			  '"Controller first" additionally hands steering to a local daemon when the controller is lost.'));
-		o.value('ac_priority', _('Controller first (recommended)'));
-		o.value('ac_only', _('Controller only, keep last state on loss'));
-		o.value('autonomous', _('Autonomous: local daemons only'));
-		o.default = 'ac_priority';
-
-		o = s.option(form.ListValue, 'steering_fallback', _('Steering fallback on controller loss'),
-			_('Which local daemon takes over after the controller has been unreachable for about a minute. ' +
-			  'Steering returns to the controller automatically once it answers again. ' +
-			  'Only used with the "Controller first" policy; "none" keeps the last controller state instead.'));
-		o.value('none', _('No fallback'));
-		o.value('usteer', 'usteer');
-		o.value('dawn', 'dawn');
-		o.value('nrsyncd', 'nrsyncd (11k only)');
-		o.default = 'none';
-		o.depends('steering_mode', 'ac_priority');
 
 		/* Save, then apply: applying the ac config raises procd's reload trigger
 		 * for this service, which restarts the agent with the new values.
@@ -353,27 +361,15 @@ return view.extend({
 			this.card.appendChild(valueRow(_('Access point'),
 				[ status.mac || '-', ' ', E('em', {}, status.model || '') ]));
 
-			if (status.steering_mode || status.steering)
-				this.card.appendChild(valueRow(_('Roaming steering'), [
-					STEERING_MODES[status.steering_mode] || status.steering_mode || '-',
-					status.steering ? ' · ' + _('running %s').format(status.steering) : ''
-				]));
-
-			if (status.steering_fallback_active)
-				this.card.appendChild(E('div', { class: 'alert-message warning' },
-					_('The controller was lost, so local steering daemon %s took over. ' +
-					  'Steering returns to the controller automatically once it answers again.')
-						.format(status.steering || '-')));
+			if (status.steering)
+				this.card.appendChild(valueRow(_('Roaming steering'),
+					_('running %s').format(steeringLabel(status.steering))));
 
 			if (status.bss)
 				this.card.appendChild(valueRow(_('BSS reported'), String(status.bss)));
 
 			this.card.appendChild(valueRow(_('Agent'),
 				[ status.version || '-', ' ', _('since'), ' ', fmtTime(status.started_at) ]));
-
-			if (status.dry_run)
-				this.card.appendChild(E('div', { class: 'alert-message warning' },
-					_('Dry run is on: the controller is polled and packages are staged, but this access point is not modified.')));
 
 			/* Shown whenever the last exchange failed for a reason the badge does
 			 * not already spell out (for instance a changed controller key). */

@@ -24,18 +24,20 @@ import (
 
 func main() {
 	var (
-		verbose   = flag.Bool("v", false, "enable debug logging")
-		acAddr    = flag.String("ac", "", "controller address host:port (empty = discover via broadcast)")
-		secret    = flag.String("secret", "", "shared secret (or AC_SECRET)")
-		root      = flag.String("root", "", "filesystem root, defaults to / (or AC_ROOT)")
-		dryRun    = flag.Bool("dry-run", false, "render and stage only, never touch /etc/config")
-		interval  = flag.Duration("interval", 0, "sync interval (or AC_INTERVAL)")
-		mac       = flag.String("mac", "", "override local MAC (used when /sys is unavailable)")
-		model     = flag.String("model", "", "override model")
-		keepDHCP  = flag.Bool("keep-dhcp", false, "do NOT stop dnsmasq/odhcpd (AP mode must not serve DHCP)")
-		peerPort  = flag.Int("peer-port", 0, "AP-to-AP coordination UDP port (0 = AC_PEER_PORT/29821, <0 disables)")
-		peerSteer = flag.Bool("peer-steer", false, "suggest roaming locally when a client is weak and a peer has the same SSID (or AC_PEER_STEER)")
-		jsonOut   = flag.Bool("json", false, "with status: print the machine-readable status LuCI reads")
+		verbose     = flag.Bool("v", false, "enable debug logging")
+		acAddr      = flag.String("ac", "", "controller address host:port (empty = discover via broadcast)")
+		secret      = flag.String("secret", "", "shared secret (or AC_SECRET)")
+		root        = flag.String("root", "", "filesystem root, defaults to / (or AC_ROOT)")
+		dryRun      = flag.Bool("dry-run", false, "render and stage only, never touch /etc/config")
+		interval    = flag.Duration("interval", 0, "sync interval (or AC_INTERVAL)")
+		mac         = flag.String("mac", "", "override local MAC (used when /sys is unavailable)")
+		model       = flag.String("model", "", "override model")
+		keepDHCP    = flag.Bool("keep-dhcp", false, "do NOT stop dnsmasq/odhcpd (AP mode must not serve DHCP)")
+		peerPort    = flag.Int("peer-port", 0, "AP-to-AP coordination UDP port (0 = AC_PEER_PORT/29821, <0 disables)")
+		peerSteer   = flag.Bool("peer-steer", false, "suggest roaming locally when a client is weak and a peer has the same SSID (or AC_PEER_STEER)")
+		peerSecret  = flag.String("peer-secret", "", "shared key for HMAC-authenticated peer messages (or AC_PEER_SECRET)")
+		peerNetwork = flag.String("peer-network", "", "OpenWrt logical network carrying AP-to-AP traffic (or AC_PEER_NETWORK/lan)")
+		jsonOut     = flag.Bool("json", false, "with status: print the machine-readable status LuCI reads")
 	)
 
 	// Accept the subcommand anywhere: procd starts the agent as
@@ -53,6 +55,8 @@ func main() {
 		"-mac": true, "--mac": true,
 		"-model": true, "--model": true,
 		"-peer-port": true, "--peer-port": true,
+		"-peer-secret": true, "--peer-secret": true,
+		"-peer-network": true, "--peer-network": true,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -82,15 +86,17 @@ func main() {
 	}
 
 	cfg := agent.Load(agent.Config{
-		Root:      *root,
-		ACAddr:    *acAddr,
-		Secret:    *secret,
-		Interval:  *interval,
-		DryRun:    *dryRun,
-		KeepDHCP:  *keepDHCP,
-		PeerPort:  *peerPort,
-		PeerSteer: *peerSteer,
-		Identity:  agent.Identity{MAC: *mac, Model: *model},
+		Root:        *root,
+		ACAddr:      *acAddr,
+		Secret:      *secret,
+		Interval:    *interval,
+		DryRun:      *dryRun,
+		KeepDHCP:    *keepDHCP,
+		PeerPort:    *peerPort,
+		PeerSteer:   *peerSteer,
+		PeerSecret:  *peerSecret,
+		PeerNetwork: *peerNetwork,
+		Identity:    agent.Identity{MAC: *mac, Model: *model},
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -323,6 +329,8 @@ func printStatus(a *agent.Agent) {
 		fmt.Printf("last_error   %s\n", st.LastError)
 	}
 	fmt.Printf("peer_port    %d\n", a.Config.PeerPort)
+	fmt.Printf("peer_network %s\n", a.Config.PeerNetwork)
+	fmt.Printf("peer_auth    %v\n", a.Config.PeerSecret != "")
 	fmt.Printf("peer_steer   %v\n", a.Config.PeerSteer)
 	fmt.Printf("steering     %s (mode %s", snap.Steering, snap.SteeringMode)
 	if snap.SteeringFallback != "" && snap.SteeringFallback != "none" {

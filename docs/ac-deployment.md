@@ -89,7 +89,7 @@ curl -s http://10.0.30.5:8090/api/v1/health
 /srv/ac-controller/
 ├── docker-compose.yml    # 替换为 deploy/fnos/docker-compose.yml
 ├── update-docker.sh      # 来自 deploy/fnos/update-docker.sh
-├── .env                  # AC_SHARED_SECRET、AC_ADVERTISE_IP、AC_ADMIN_TOKEN
+├── .env                  # AC_SHARED_SECRET、AC_ADVERTISE_IP、AC_ADMIN_TOKEN、AC_NTP_SERVERS（可选）
 ├── .ghcr_pat             # read:packages 的 PAT，chmod 600，不入库
 └── data/                 # 挂给容器 /var/lib/ac，属主 1000:1000
 ```
@@ -113,7 +113,12 @@ printf '%s' '<带 read:packages 的 PAT>' > .ghcr_pat && chmod 600 .ghcr_pat
 
 已有 `.env` 时不要覆盖：只需确认里面有 `AC_SHARED_SECRET`；
 `AC_ADVERTISE_IP` 留空即可（NAS 多 IP 时按 AP 来源路由逐请求推导，不会把某一台
-NAS 的地址硬塞给所有 AP）；`AC_ADMIN_TOKEN` 留空表示不校验管理 API。
+NAS 的地址硬塞给所有 AP）；`AC_ADMIN_TOKEN` 留空不影响页面使用——管理面始终要求
+登录，首次启动用 `admin` / `123456` 进入后到「系统 → 账户」修改用户名或密码即可。
+`AC_NTP_SERVERS` 缺省为 `ntp.ntsc.ac.cn,ntp1.aliyun.com,ntp.tencent.com,cn.pool.ntp.org`
+（公共源默认，适配任意网段，控制器本身不在列表里）；如果站点有内网 NTP
+（网关/NAS），在「系统 → 站点时间源（NTP）」里把它放到第一项。AP 会持久化该列表，
+AC 离线后继续同步。
 
 `update-docker.sh` 的行为：
 
@@ -157,14 +162,19 @@ ssh root@10.0.30.251 'chmod 0755 /etc/init.d/ac-agent'
 
 ```sh
 config agent 'agent'
+	option enabled '1'
 	option ac_addr '10.0.30.5:8090'
 	option secret '<AC_SHARED_SECRET>'
 	option interval '20'
-	option dry_run '0'
+	option peer_network 'lan'
+	option peer_secret '<PEER_SHARED_SECRET>'
+	option peer_steer '1'
 ```
 
-`chmod 600`。首次接入建议先 `dry_run '1'`：只渲染并暂存到
-`/etc/ac/staging/rev<N>/`，不写 `/etc/config`、不 reload。
+`peer_secret` 必须与站点内所有 AP 一致，且不要复用 `AC_SHARED_SECRET`；留空表示 AP 间
+报文不认证，只适用于可信管理网段。首次接入先用命令行演练：`ac-agent once --dry-run -v`，
+它只渲染并暂存到 `/etc/ac/staging/rev<N>/`，不写 `/etc/config`、不 reload；
+`dry_run` 已不再是 UCI 选项。
 
 ```sh
 ssh root@10.0.30.251 '/etc/init.d/ac-agent enable && /etc/init.d/ac-agent start'

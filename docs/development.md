@@ -53,7 +53,7 @@ ac-agent once --dry-run -v --ac 127.0.0.1:8080         # 只渲染 + 暂存，�
 `--dry-run` 的产物在 `/etc/ac/staging/rev<N>/`（`--root` 可改根，本机调试用）。
 **首次接真机必须先 dry-run 看合并结果**，再 `enable && start`。
 注意 dry-run 是**零副作用**的：它连 hostapd 的 11k 列表都不会写，更不会 `wifi up`（坑 H7）。
-长时间把设备留在 `dry_run=1` 是静默风险——模板改了也不下发，控制器却还是 `applied`。
+不要让生产 agent 常驻在 `--dry-run`：模板改了也不下发，控制器却仍显示 `applied`。
 
 ### 1.4 真机
 
@@ -70,7 +70,8 @@ ssh root@<ap> '/etc/init.d/wifi_schedule disable'
 ```
 
 agent 参数：`-v`（debug 日志）、`--ac host:port`、`--secret`、`--root`、`--dry-run`、
-`--interval`、`--mac`、`--model`、`--keep-dhcp`、`--peer-port`、`--peer-steer`。
+`--interval`、`--mac`、`--model`、`--keep-dhcp`、`--peer-port`、`--peer-steer`、
+`--peer-secret`、`--peer-network`。
 生产由 `/etc/init.d/ac-agent` 从 `/etc/config/ac` 读取（`uci get`，不用 `config_load`，见坑 G4）。
 
 ---
@@ -458,7 +459,7 @@ agent 以 `desired_rev != applied_rev` 判断是否需要下发，`RecordHello` 
 
 | 项 | 状态 |
 |---|---|
-| 管理 API 鉴权（模板 API 明文返回 PSK） | **已做**（`AC_ADMIN_TOKEN` Bearer；AP 通道 `AC_SHARED_SECRET` 独立；包下载/镜像下载两者之一即可；启动检查空/短/两值相同并告警，管理响应 `Cache-Control: no-store`；**错误凭据按来源 IP 计失败次数，5 次/分钟锁定 1 分钟并返回 429+`Retry-After`**，锁定时写 `auth` 审计事件；未带凭据只返回 401，不消耗预算；正确凭据优先校验，不会被同地址的猜测拖累） |
+| 管理 API 鉴权（模板 API 明文返回 PSK） | **已做**（页面使用账户登录：首次启动自动创建 `admin`/`123456`，`PUT /api/v1/auth/account` 可同时修改用户名与密码（需当前密码），改后注销其它会话，密码以 PBKDF2-HMAC-SHA256 哈希存 `settings` 表，会话为 HttpOnly Cookie；自动化仍可用 `AC_ADMIN_TOKEN` Bearer。AP 通道 `AC_SHARED_SECRET` 独立；包下载/镜像下载两者之一即可；启动检查空/短/两值相同并告警，管理响应 `Cache-Control: no-store`；**错误凭据按来源 IP 计失败次数，5 次/分钟锁定 1 分钟并返回 429+`Retry-After`**，锁定时写 `auth` 审计事件；未带凭据只返回 401，不消耗预算；正确凭据优先校验，不会被同地址的猜测拖累） |
 | 时序遥测（速率/信道曲线）入库与展示（P4） | **已做**：`client_samples`/`radio_samples` 按 `AC_SAMPLE_INTERVAL` 节流、`AC_SAMPLE_RETENTION` 裁剪；遥测页含客户端信号/速率与射频信道/占用率。实时射频视图读 `radio_state`：每次 hello 按上报集合全量收敛（nil=不上报不动表，空列表=清空该 AP），改名/删除的 radio 在下一个心跳即消失；旧库升级时从 `radio_samples` 一次性回填（settings 标记防重复） |
 | 固件升级 | **已做**：镜像仓库 + 固件页（上传/下载/删除/设定目标/失败重试/实时状态）+ 目标随 Hello 下发 + agent 下载前上报 `downloading`、流式下载并校验 SHA-256/大小后调度 `sysupgrade`；未做批量重启/升级编排 |
 | AC→AP 动作通道（P2/P3） | **已做**：`POST/GET /api/v1/devices/<mac>/actions`（`reboot`/`wifi_reload`/`factory_reset`，202 + 审计事件）；命令随 Hello 回复下发、结果随下一次 Hello 回报；SQLite 队列带 10 分钟派发超时与 24 小时入队 TTL；agent 执行前持久化 action ID（重启不重放），reboot/factory_reset 分离执行并先回报；设备页带「重启无线/重启 AP/恢复出厂」按钮。未做批量动作与自由 shell |
@@ -468,10 +469,10 @@ agent 以 `desired_rev != applied_rev` 判断是否需要下发，`RecordHello` 
 | 状态 LED 开关与定时（P3） | **已做**：`led_set` 动作（`args.state=on/off`，`ProtocolVersion=6`）由 agent 直接写 `/sys/class/leds/*status*/{trigger,brightness}`；`on` 只点亮绿色 status 灯，`off` 全部熄灭；`PUT /api/v1/devices/<mac>/led-schedule` 保存每日开/关时间（`HH:MM`，留空即关闭该边），控制器每分钟扫描到期边并通过动作队列下发，有 pending `led_set` 时跳过；设备页带立即开关按钮、定时面板与状态徽标 |
 | AP 分组 → 绑定模板（P2） | **已做**：`ap_groups` 表 + `GET/POST/PUT/DELETE /api/v1/groups`、`PUT /api/v1/devices/<mac>/group`；组内有设备时拒绝删除；已采纳设备加入带模板的组立即生成下一版（`AssignTemplate`），待采纳设备采纳时默认使用组模板（显式 `template_id` 优先）；设备页带分组面板与设备行分组徽标 |
 | SSID 高级项与模板生命周期（P3） | **已做**：SSID 增加 `maxsta`（渲染为 UCI `maxassoc`，0 表示不限）、业务隔离与定时计划；业务隔离没有 hostapd 开关，保存时强制独占 `network`（前后端同规则）；定时仅保存计划意图，AP 侧 `wifi_schedule` 已禁用、UI 明示不会自动执行；`GET /api/v1/templates` 返回引用计数（设备 + 分组），被引用或最后一个模板拒绝删除（409）；`POST /api/v1/templates/<id>/clone` 自动生成 `<id>-copy-xxxx`；无线页带克隆/删除按钮与引用徽标 |
-| 客户端管理（P4） | **已做**：`client_meta` 单表保存别名/备注/追踪/磁吸目标，`PUT /api/v1/clients/<mac>` 部分更新，`GET /api/v1/clients` 合并返回；`POST /api/v1/clients/<mac>/kick` 通过 `kick_client` 动作调用 hostapd `deauthenticate`（离线 409）；SSID 增加 MAC ACL（`macfilter` allow/deny + `maclist`，前后端同规则校验）；智能磁吸在 Hello 回复下发 `bindings[]`（`ProtocolVersion=5`），控制器解析 BSSID，AP 本地 5 分钟冷却的 BTM 建议、绝不强踢，绑定客户端不参与弱信号强踢，绑定持久化到 `state.json`；客户端页含追踪过滤、详情面板与踢下线按钮 |
+| 客户端管理（P4） | **已做**：`client_meta` 单表保存别名/备注/关注/磁吸目标，`PUT /api/v1/clients/<mac>` 部分更新，`GET /api/v1/clients` 合并返回；`POST /api/v1/clients/<mac>/kick` 通过 `kick_client` 动作调用 hostapd `deauthenticate`（离线 409）；SSID 增加 MAC ACL（`macfilter` allow/deny + `maclist`，前后端同规则校验）；智能磁吸在 Hello 回复下发 `bindings[]`（`ProtocolVersion=5`），控制器解析 BSSID，AP 本地 5 分钟冷却的 BTM 建议、绝不强踢，绑定客户端不参与弱信号强踢，绑定持久化到 `state.json`；客户端页含关注过滤、详情面板与踢下线按钮 |
 | AC 中断自治与 AP 间漫游 | **已做**：AP 间 UDP 29821 交换 BSS/客户端/射频，首轮与每 15 轮把「控制器缓存 ∪ 本机自报 ∪ peer」写回 11k；动态发现的 AC 连续 3 次失败后 60 s 退避重发现（配置地址不覆盖）；可选本地 11v 建议（默认关闭）；真机双 AP 联调已通过（P6） |
 | PPE L2B 卸载实测（P0/R1） | 未定论：设计 §7.3 用 `cpu`(GDM1) RX 判据不成立 —— GDM1 是内部 MT7530 conduit，本该为 0 |
-| Web UI 扩展：无线网络 / 射频 / 端口页（P3） | **已做**：无线网络页（模板 SSID 编辑 + 设备重新下发）、射频页（实时状态 + 模板射频编辑）、端口/VLAN 页（模板展示 + 每机覆盖） |
+| Web UI 扩展：无线服务 / 射频管理 / 端口页（P3） | **已做**：无线服务页（模板 SSID 弹窗编辑 + 设备重新下发）、射频管理页（实时状态 + 模板射频编辑 + 每 AP radio 覆盖）、设备端口页（物理端口实测 + 模板展示 + 每机覆盖） |
 | 仪表盘聚合与系统运维（P5） | **已完成**：原 `GET /api/v1/dashboard` 聚合页已移除（与设备页卡片重复，聚合数字并入设备页）；保留配置导入导出、控制器诊断、事件日志；AP 诊断/系统/内核日志经 `diagnose` 动作按固定命令执行 |
 | 双 AP 漫游联调（P6） | **已完成（2026-11-03）**：11k 双向邻居表互指（`.250`↔`.251`，hex 报告一致）；11v BTM 修正为真实 ubus 参数（`disassociation_imminent` + 邻居报告 hex 数组），`.251` 上客户端回 `BSS-TM-RESP status_code=0` 并从 -80 dBm 迁到 `.250`（-34/-47 dBm），旧“Invalid argument”消失；11r 在 5G/6G 上配置为 `FT-PSK` / `FT-SAE`（SSID-A_5G 带 `ft_psk_generate_local=1`，mobility domain `1111`–`6666` 双 AP 一致），2.4G 按现网基线仅 k/v、无 11r；11r 实机验收（2026-11-03）：Android 手机在 SSID-A_5G（FT-PSK）经 BTM `.250`→`.251`，`.250` 回 `BSS-TM-RESP status_code=0 target_bssid=00:00:00:00:00:23`，`.251` 记录 `AP-STA-CONNECTED ... auth_alg=ft` 且无 `EAPOL-4WAY-HS-COMPLETED`/`WPA: pairwise key handshake completed`，FT-PSK 通过；同一手机在 SSID-C_5G（5G 过渡模式）与 SSID-C_6G（纯 `SAE FT-SAE`）上三次均在 `.251` 报 `did not acknowledge authentication response`，手机回退 `.250` 后可正常 SAE 接入，判定为客户端 FT-SAE 支持缺失；Windows FastConnect 7800 两种 AKM 也只做全握手。FT-SAE 待换客户端补测。`.251` 曾因 `applied_rev>config_rev` 的旧闸门停滞在 rev9（7 BSS），修复后已降级到 rev7 并恢复全部 11 个 BSS，双 AP 配置一致 |
 | `.250`（AP-B） | 2026-11-03 恢复出厂后已重装 agent（`deploy-20261103b`）、用 `ap-xr1710g-full` 重新采纳为 rev7，管理 IP 与 `maint` 防失联口在位；`network.wan`/`wan6` 残留已由 ucimerge 桥口规则删除 |

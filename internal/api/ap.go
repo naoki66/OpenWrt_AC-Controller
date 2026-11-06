@@ -161,6 +161,30 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Wired port state follows the same nil/empty contract as radios. It is
+	// measured on the AP (sysfs), never derived from the controller's config.
+	if hello.Ports != nil {
+		ports := make([]store.PortState, 0, len(hello.Ports))
+		for _, p := range hello.Ports {
+			if p.Name == "" {
+				continue
+			}
+			ports = append(ports, store.PortState{
+				APMAC:     reportingMAC,
+				Name:      p.Name,
+				MAC:       discovery.NormalizeMAC(p.MAC),
+				Up:        p.Up,
+				SpeedMbps: p.SpeedMbps,
+				Duplex:    p.Duplex,
+				MTU:       p.MTU,
+			})
+		}
+		if err := s.Store.ReplacePortsForAP(ctx, reportingMAC, ports); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+
 	// One row per station per interval, not per hello: the throttle is what
 	// keeps the tables from growing at heartbeat rate.
 	if s.sampleDue(mac) {
@@ -227,6 +251,9 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		PubKey:         s.Key.PublicHex(),
 		SecretRequired: s.EffectiveSecret() != "",
 		Firmware:       s.firmwareRef(r, device),
+		// NTP is safe for a pending device too: a factory AP needs time before
+		// adoption, and the list is independent of configuration revisions.
+		NTP: s.EffectiveNTPServers(),
 	}
 	if device.State == store.StateAdopted && device.ConfigRev > 0 {
 		reply.DesiredRev = device.ConfigRev

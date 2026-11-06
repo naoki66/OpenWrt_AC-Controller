@@ -30,6 +30,9 @@ func newTelemetryFixture(t *testing.T, interval time.Duration) *apFixture {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if _, err := EnsureAdminAccount(ctx, st); err != nil {
+		t.Fatalf("seed admin account: %v", err)
+	}
 	key, err := keys.FromSeed(bytes.Repeat([]byte{9}, 32))
 	if err != nil {
 		t.Fatalf("key: %v", err)
@@ -46,7 +49,9 @@ func newTelemetryFixture(t *testing.T, interval time.Duration) *apFixture {
 		ts.Close()
 		st.Close()
 	})
-	return &apFixture{t: t, store: st, server: ts}
+	f := &apFixture{t: t, store: st, server: ts}
+	f.login(defaultAdminUsername, defaultAdminPassword)
+	return f
 }
 
 func TestParseRange(t *testing.T) {

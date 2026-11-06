@@ -88,10 +88,9 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		"go_version": runtime.Version(),
 		"os":         runtime.GOOS,
 		"arch":       runtime.GOARCH,
-		// Configuration tells an operator whether a deployment is open, which
-		// is exactly what /api/v1/health already reports. Repeating it here
-		// keeps the system page from needing two calls.
-		"admin_auth_required": s.AdminToken != "",
+		// The management surface always requires a login account; the AP channel
+		// is only protected when a shared secret is in force.
+		"admin_auth_required": true,
 		"ap_auth_required":    s.EffectiveSecret() != "",
 		// Zero means every heartbeat is stored; the agent's cadence is the
 		// throttle instead of a controller-side timer.

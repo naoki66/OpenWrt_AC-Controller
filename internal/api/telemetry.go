@@ -64,6 +64,21 @@ func bucketFor(d time.Duration) int {
 	return b
 }
 
+// handlePorts returns the newest measured state of every wired port. It is
+// read-only: changing a port's bridge/VLAN membership stays in the device
+// network override, while link/speed/duplex come from the AP itself.
+func (s *Server) handlePorts(w http.ResponseWriter, r *http.Request) {
+	ports, err := s.Store.LatestPorts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if ports == nil {
+		ports = []store.PortState{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
+}
+
 // handleTelemetryClients returns one client's signal and rate history.
 //
 // The client MAC is required: a chart of every client at once is unreadable and

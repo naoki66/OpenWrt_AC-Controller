@@ -12,7 +12,7 @@ LUCI_DESCRIPTION:=Shows whether this access point is under the control of an AC 
 	controller, how it reaches it, and lets the operator set the uplink address \
 	and the boot behaviour.
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=3
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=ac-controller
 

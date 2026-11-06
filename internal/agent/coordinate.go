@@ -18,10 +18,12 @@ import (
 // or when hostapd has forgotten its lists, agents merge each other's reports
 // directly and write them back locally. Nothing here depends on a working AC.
 //
-// Local 11v suggestions are opt-in (PeerSteer) and deliberately conservative.
-// APs cannot measure a station that is associated elsewhere, so a suggestion is
-// only made when the local link is already weak enough that staying is the worse
-// option. There is no forced disassociation, no kick, and no repeated nagging.
+// Local 11v suggestions (PeerSteer) are on by default and deliberately
+// conservative. APs cannot measure a station that is associated elsewhere, so a
+// suggestion is only made when the local link is already weak enough that staying
+// is the worse option. There is no forced disassociation, no kick, and no repeated
+// nagging. The same path keeps working after the controller is lost, for any
+// number of APs, without depending on nrsyncd.
 
 const (
 	// steerWeakSignal is the local RSSI at or below which a client is about to
@@ -56,7 +58,15 @@ func (a *Agent) coordinatePeers(ctx context.Context, h proto.Hello) {
 	if a.peerBus == nil {
 		return
 	}
-	a.peerBus.Announce(peerStateFrom(h))
+	st := peerStateFrom(h)
+	// Peers carry the applied site time sources: a new AP that joined while the
+	// controller was down can adopt the list without ever seeing a hello reply.
+	st.NTP = a.state.NTPServers
+	a.peerBus.Announce(st)
+	snap := a.peerBus.Snapshot()
+	if len(snap.NTP) > 0 {
+		a.peerNTP = snap.NTP
+	}
 	a.maybeSteer(ctx, h)
 }
 
@@ -197,13 +207,14 @@ func peerStateFrom(h proto.Hello) proto.PeerState {
 
 // maybeSteer sends at most one 11v suggestion per cycle.
 //
-// Opt-in on purpose: without a measurement of the candidate link this is a
-// best-effort hint, and the shipped default should never change roaming
-// behaviour on an existing site. When usteer/dawn is enabled the agent stays
-// out of the way entirely — two decision-makers fight over the same client.
-// nrsyncd only distributes 11k neighbour lists, so it does not conflict.
+// Best-effort hint: without a measurement of the candidate link this can only
+// advise. When usteer/dawn is enabled the agent stays out of the way entirely
+// — two decision-makers fight over the same client. nrsyncd only distributes
+// 11k neighbour lists, so it does not conflict. A device that has never been
+// adopted is left alone: its local wireless may not even be controller-shaped
+// yet, so it must not start steering clients on its own.
 func (a *Agent) maybeSteer(ctx context.Context, h proto.Hello) {
-	if !a.Config.PeerSteer || a.Config.DryRun || a.Applier == nil || len(h.Clients) == 0 {
+	if !a.Config.PeerSteer || a.Config.DryRun || a.Applier == nil || len(h.Clients) == 0 || a.state.AppliedRev == 0 {
 		return
 	}
 	if steeringTakesOver(a.steeringState(ctx)) {

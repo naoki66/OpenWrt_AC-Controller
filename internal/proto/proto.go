@@ -98,6 +98,10 @@ type Hello struct {
 	// landed on plus its airtime utilisation. No omitempty: nil means "this
 	// agent does not report radio telemetry".
 	Radios []RadioStat `json:"radios"`
+	// Ports is the physical switch/ethernet port state read from sysfs. No
+	// omitempty for the same reason as Radios: nil means this agent does not
+	// collect port data, while an empty list means it has none to report.
+	Ports []PortStat `json:"ports"`
 	// FirmwareState reports the outcome of the last firmware upgrade attempt
 	// (downloading/upgrading/applied/failed). Empty means nothing to report,
 	// which is the steady state for the vast majority of hellos.
@@ -160,6 +164,20 @@ type ActionResult struct {
 	State   string `json:"state"`
 	Message string `json:"message,omitempty"`
 	At      int64  `json:"at,omitempty"`
+}
+
+// PortStat is one physical wired port as measured on the AP.
+//
+// These values come from /sys/class/net, not from the controller's desired
+// configuration: Speed and Duplex are what the PHY negotiated, so the ports
+// page can show whether a 2.5G port actually linked at 2.5G.
+type PortStat struct {
+	Name      string `json:"name"`
+	MAC       string `json:"mac,omitempty"`
+	Up        bool   `json:"up"`
+	SpeedMbps int    `json:"speed_mbps,omitempty"`
+	Duplex    string `json:"duplex,omitempty"`
+	MTU       int    `json:"mtu,omitempty"`
 }
 
 // RadioStat is one radio's operating point as measured on the AP.
@@ -274,6 +292,10 @@ type HelloReply struct {
 	// No omitempty: the agent distinguishes "controller cleared the bindings"
 	// (empty array) from "controller does not support bindings" (absent field).
 	Bindings []ClientBinding `json:"bindings"`
+	// NTP is the controller-managed site time-source list. Absent means the
+	// controller does not manage NTP and the AP keeps its local configuration;
+	// a non-nil list is authoritative and survives an AC outage once applied.
+	NTP []string `json:"ntp,omitempty"`
 }
 
 // ClientBinding asks an AP's local steering loop to keep a station on one
