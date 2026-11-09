@@ -217,6 +217,16 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .form label > * { color: var(--text); }
   .form label.wide { flex: 1 1 320px; }
   .form label.wide input { width: 100%; }
+  /* 面板内的行内操作条：说明文字、下拉与按钮同一行垂直居中 */
+  .act-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 14px; }
+  .act-row .act-text { color: var(--muted); font-size: 12px; line-height: 1.4; }
+  .act-row .act-text small { display: block; color: var(--faint); font-size: 11.5px; }
+  .act-row select { min-width: 210px; }
+  /* AP 共享密钥：当前值与更换密钥上下分区，避免两组输入框并排引起误读 */
+  .sec-label { color: var(--muted); font-size: 12px; margin: 0 0 5px; }
+  .sec-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+  .sec-row input { flex: 1 1 300px; min-width: 0; }
+  .sec-row + .sec-label { margin-top: 4px; }
   /* flex 容器里的整行元素（如 NTP 行编辑器），避免被排到侧列 */
   .form .full { flex: 1 1 100%; }
   .radio-table input, .radio-table select { padding: 2px 6px; }
@@ -727,14 +737,6 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .card .v[data-loading] { position: relative; color: transparent; min-height: 27px; }
   .card .v[data-loading]::after { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 56%; height: 14px; border-radius: 4px; background: linear-gradient(90deg, #1D2836 25%, #2A3849 50%, #1D2836 75%); background-size: 200% 100%; animation: ui-sk 1.4s linear infinite; }
   @keyframes ui-sk { to { background-position: -200% 0; } }
-  /* 高级设置折叠 */
-  .ui-advanced-hint { font-size: 11px; letter-spacing: .1em; color: var(--faint); font-weight: 700; text-transform: uppercase; margin: 22px 2px 10px; }
-  #view-devices > .panel.ui-collapsible > h2, #view-apmgmt > .panel.ui-collapsible > h2 { cursor: pointer; user-select: none; }
-  #view-devices > .panel.ui-collapsible > h2::before, #view-apmgmt > .panel.ui-collapsible > h2::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast); }
-  #view-devices > .panel.ui-collapsed > h2::before, #view-apmgmt > .panel.ui-collapsed > h2::before { transform: rotate(45deg); }
-  #view-devices > .panel.ui-collapsed, #view-apmgmt > .panel.ui-collapsed { padding-bottom: 13px; }
-  #view-devices > .panel.ui-collapsed > *:not(h2), #view-apmgmt > .panel.ui-collapsed > *:not(h2) { display: none !important; }
-  #view-devices > .panel.ui-collapsible > h2:focus-visible, #view-apmgmt > .panel.ui-collapsible > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
   /* 空状态 */
   .ui-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; }
   .ui-empty-ic { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line); color: var(--faint); }
@@ -1125,15 +1127,17 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
           只需填这一个值：控制器与 agent 会各自用 HKDF 派生 AP 鉴权令牌和
           AP 间 HMAC 密钥，原始密钥不上线传输。
         </p>
-        <div class="form">
-          <label class="wide"><span>当前生效密钥（完整值，直接复制到各 AP 的 /etc/config/ac）</span>
-            <input id="sec-current" readonly spellcheck="false" autocomplete="off"></label>
-          <label class="wide"><span>新密钥（至少 12 字符；留空保存 = 恢复环境变量值）</span>
-            <input id="sec-new" type="password" placeholder="••••••••" autocomplete="new-password"></label>
+        <div class="sec-label">当前生效密钥（完整值，直接复制到各 AP 的 /etc/config/ac）</div>
+        <div class="sec-row">
+          <input id="sec-current" readonly spellcheck="false" autocomplete="off">
+          <button id="sec-copy" type="button">复制密钥</button>
+          <button id="sec-generate" type="button">生成随机密钥</button>
         </div>
-        <button id="sec-copy" type="button">复制密钥</button>
-        <button id="sec-generate" type="button">生成随机密钥</button>
-        <button id="sec-save" class="primary">保存密钥</button>
+        <div class="sec-label">更换密钥（可选，至少 12 字符；留空保存 = 恢复环境变量值）</div>
+        <div class="sec-row">
+          <input id="sec-new" type="password" placeholder="••••••••" autocomplete="new-password">
+          <button id="sec-save" class="primary">保存新密钥</button>
+        </div>
         <div class="msg" id="sec-msg"></div>
       </div>
 
@@ -1141,9 +1145,14 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <h2>周期重启</h2>
         <p class="note">
           到点后控制器通过动作队列下发一条重启命令，与手动重启走同一条路径；离线 AP 会跳过本次，
-          下一个周期再排。时间为控制器本地时区。所有已采纳设备都在表里：行内填写周期与时间后
-          「启用」，已启用的行可直接修改或删除。
+          下一个周期再排。时间为控制器本地时区。表格只显示已启用的设备：选择设备后「新增计划」
+          添加定时，已启用的行可直接修改或删除。
         </p>
+        <div class="act-row">
+          <div class="act-text">新增定时<small>选择设备后点击「新增计划」</small></div>
+          <select id="rb-new-device"><option value="">选择设备…</option></select>
+          <button id="rb-add" class="primary">新增计划</button>
+        </div>
         <table>
           <thead>
             <tr><th>设备</th><th>周期（天，0 关闭）</th><th>时间</th><th>下次执行</th><th>操作</th></tr>
@@ -1159,16 +1168,20 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <h2>状态 LED</h2>
         <p class="note">
           「开」只点亮绿色运行灯，避免 RGB 变白。定时按控制器本地时区下发，离线 AP 跳过本次。
-          所有已采纳设备都在表里：行内填写开/关时间后「启用」，已启用的行可直接修改或删除。
+          表格只显示已启用定时的设备：选择设备后「新增计划」添加定时，已启用的行可直接修改或删除。
         </p>
-        <div class="form">
-          <label>立即操作（选中设备后点击，等待 AP 下次心跳执行）
-            <select id="led-device"><option value="">选择设备…</option></select>
-          </label>
+        <div class="act-row">
+          <div class="act-text">立即操作<small>选中设备后点击，等待 AP 下次心跳执行</small></div>
+          <select id="led-device"><option value="">选择设备…</option></select>
           <button id="led-on-now" class="primary">立即开灯</button>
           <button id="led-off-now">立即关灯</button>
         </div>
         <div class="msg" id="led-msg"></div>
+        <div class="act-row">
+          <div class="act-text">新增定时<small>选择设备后点击「新增计划」</small></div>
+          <select id="led-new-device"><option value="">选择设备…</option></select>
+          <button id="led-add" class="primary">新增计划</button>
+        </div>
         <table>
           <thead>
             <tr><th>设备</th><th>定时开</th><th>定时关</th><th>下次切换</th><th>操作</th></tr>
@@ -2126,89 +2139,130 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !devActionsMask.classList.contains('hidden')) closeDevActions();
 });
 
-// 周期重启面板：一张全量可编辑表格就是全部交互——所有已采纳设备都在表里，
-// 未启用的行填好周期与时间点「启用」，已启用的行可直接修改或删除。
-// 5 秒轮询会重建行；正在编辑（焦点在表格输入框里）时本轮跳过，避免打断输入。
-function renderRebootStatus(list) {
-  const body = $('rb-status');
-  if (body.contains(document.activeElement)) return;
-  const adopted = list.filter(d => d.state === 'adopted');
-  body.textContent = '';
-  if (!adopted.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>';
+// 周期重启面板：表格只显示已启用的设备；「新增计划」从下拉选一台未启用的
+// 已采纳设备，在表里插一条草稿行，填好周期与时间保存即启用。5 秒轮询会
+// 重建行；正在编辑（焦点在表格输入框里）时本轮跳过，草稿值随 input 保留。
+let rbDraft = null; // { mac, days, at } 新增计划草稿
+
+function fillRebootPicker(list) {
+  const sel = $('rb-new-device');
+  const candidates = list.filter(d => d.state === 'adopted' && d.reboot_period_days <= 0);
+  if (!candidates.length) {
+    const any = list.some(d => d.state === 'adopted');
+    sel.innerHTML = '<option value="">' + (any ? '所有设备均已启用' : '等待 AP 上线…') + '</option>';
+    sel.disabled = true;
+    $('rb-add').disabled = true;
     return;
   }
-  for (const dev of adopted) {
-    const enabled = dev.reboot_period_days > 0;
-    const tr = document.createElement('tr');
-    const name = document.createElement('td');
-    name.textContent = dev.hostname || dev.mac;
-    name.title = dev.mac;
-    tr.appendChild(name);
-
-    const daysTd = document.createElement('td');
-    const days = document.createElement('input');
-    days.type = 'number';
-    days.min = '0'; days.max = '365';
-    days.value = enabled ? dev.reboot_period_days : '';
-    days.placeholder = '0';
-    days.style.width = '74px';
-    days.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的周期天数');
-    daysTd.appendChild(days);
-    tr.appendChild(daysTd);
-
-    const atTd = document.createElement('td');
-    const at = document.createElement('input');
-    at.type = 'time';
-    at.value = dev.reboot_at || '03:00';
-    at.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的重启时间');
-    atTd.appendChild(at);
-    tr.appendChild(atTd);
-
-    const next = document.createElement('td');
-    next.className = 'st-meta';
-    next.textContent = enabled && dev.reboot_next_at
-      ? new Date(dev.reboot_next_at * 1000).toLocaleString()
-      : '–';
-    next.style.whiteSpace = 'normal';
-    tr.appendChild(next);
-
-    const ops = document.createElement('td');
-    ops.className = 'actions';
-    const submit = document.createElement('button');
-    submit.textContent = enabled ? '保存' : '启用';
-    submit.className = 'primary';
-    submit.addEventListener('click', async () => {
-      const d = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0));
-      const t = at.value || '03:00';
-      if (d === 0) {
-        if (!enabled) { sayRB('周期天数需大于 0；0 表示关闭，未启用的行请先填写天数', 'err'); return; }
-        saveRebootRow(dev, 0, '');
-        return;
-      }
-      saveRebootRow(dev, d, t);
-    });
-    ops.appendChild(submit);
-    if (enabled) {
-      const del = document.createElement('button');
-      del.textContent = '删除';
-      del.className = 'ghost';
-      del.addEventListener('click', async () => {
-        if (!confirm('关闭 ' + (dev.hostname || dev.mac) + ' 的周期重启？')) return;
-        saveRebootRow(dev, 0, '');
-      });
-      ops.appendChild(del);
-    }
-    tr.appendChild(ops);
-
-    body.appendChild(tr);
+  const prev = sel.value;
+  sel.disabled = false;
+  $('rb-add').disabled = false;
+  sel.innerHTML = '<option value="">选择设备…</option>';
+  for (const dev of candidates) {
+    const o = document.createElement('option');
+    o.value = dev.mac;
+    o.textContent = dev.hostname || dev.mac;
+    sel.appendChild(o);
   }
+  if (candidates.some(x => x.mac === prev)) sel.value = prev;
+}
+
+function renderRebootStatus(list) {
+  const body = $('rb-status');
+  fillRebootPicker(list);
+  if (body.contains(document.activeElement)) return;
+  const adopted = list.filter(d => d.state === 'adopted');
+  const enabledList = adopted.filter(d => d.reboot_period_days > 0);
+  body.textContent = '';
+  if (!enabledList.length && !rbDraft) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">暂无已启用的周期重启；选择设备后点「新增计划」</td></tr>';
+    return;
+  }
+  for (const dev of enabledList) body.appendChild(rebootRow(dev, true));
+  if (rbDraft) {
+    const dev = adopted.find(d => d.mac === rbDraft.mac);
+    if (dev && dev.reboot_period_days <= 0) body.appendChild(rebootRow(dev, false));
+    else rbDraft = null; // 该设备已被启用或已下线，草稿作废
+  }
+}
+
+function rebootRow(dev, enabled) {
+  const tr = document.createElement('tr');
+  const name = document.createElement('td');
+  name.textContent = dev.hostname || dev.mac;
+  name.title = dev.mac;
+  tr.appendChild(name);
+
+  const draft = !enabled && rbDraft && rbDraft.mac === dev.mac;
+  const daysTd = document.createElement('td');
+  const days = document.createElement('input');
+  days.type = 'number';
+  days.min = '0'; days.max = '365';
+  days.value = enabled ? dev.reboot_period_days : (draft ? rbDraft.days : '');
+  days.placeholder = '如 7';
+  days.style.width = '74px';
+  days.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的周期天数');
+  days.addEventListener('input', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.days = days.value; });
+  daysTd.appendChild(days);
+  tr.appendChild(daysTd);
+
+  const atTd = document.createElement('td');
+  const at = document.createElement('input');
+  at.type = 'time';
+  at.value = enabled ? (dev.reboot_at || '03:00') : (draft ? (rbDraft.at || '03:00') : '03:00');
+  at.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的重启时间');
+  at.addEventListener('input', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.at = at.value; });
+  atTd.appendChild(at);
+  tr.appendChild(atTd);
+
+  const next = document.createElement('td');
+  next.className = 'st-meta';
+  next.textContent = enabled && dev.reboot_next_at
+    ? new Date(dev.reboot_next_at * 1000).toLocaleString()
+    : '–';
+  next.style.whiteSpace = 'normal';
+  tr.appendChild(next);
+
+  const ops = document.createElement('td');
+  ops.className = 'actions';
+  const submit = document.createElement('button');
+  submit.textContent = '保存';
+  submit.className = 'primary';
+  submit.addEventListener('click', async () => {
+    const d = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0));
+    const t = at.value || '03:00';
+    if (d === 0) {
+      sayRB('周期天数需大于 0；要关闭请用已启用行的「删除」', 'err');
+      return;
+    }
+    saveRebootRow(dev, d, t);
+  });
+  ops.appendChild(submit);
+  if (enabled) {
+    const del = document.createElement('button');
+    del.textContent = '删除';
+    del.className = 'ghost';
+    del.addEventListener('click', async () => {
+      if (!confirm('关闭 ' + (dev.hostname || dev.mac) + ' 的周期重启？')) return;
+      saveRebootRow(dev, 0, '');
+    });
+    ops.appendChild(del);
+  } else {
+    const cancel = document.createElement('button');
+    cancel.textContent = '取消';
+    cancel.className = 'ghost';
+    cancel.addEventListener('click', () => { rbDraft = null; renderRebootStatus(deviceCache); });
+    ops.appendChild(cancel);
+  }
+  tr.appendChild(ops);
+  return tr;
 }
 
 async function saveRebootRow(dev, days, at) {
   try {
     await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/reboot-schedule',
       { period_days: days, at: at });
+    rbDraft = null; // 保存成功后草稿行转正，不再保留
     sayRB(days > 0
       ? (dev.hostname || dev.mac) + ' 已更新为每 ' + days + ' 天 ' + at
       : (dev.hostname || dev.mac) + ' 的周期重启已关闭', 'ok');
@@ -2244,85 +2298,126 @@ function fillLEDPicker(list) {
   renderLEDStatus(list);
 }
 
-function renderLEDStatus(list) {
-  const body = $('led-status');
-  if (body.contains(document.activeElement)) return;
-  const adopted = list.filter(d => d.state === 'adopted');
-  body.textContent = '';
-  if (!adopted.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>';
+let ledDraft = null; // { mac, on, off } 新增 LED 定时草稿
+
+function fillLEDAddPicker(list) {
+  const sel = $('led-new-device');
+  const candidates = list.filter(d => d.state === 'adopted' && !(d.led_on_at || d.led_off_at));
+  if (!candidates.length) {
+    const any = list.some(d => d.state === 'adopted');
+    sel.innerHTML = '<option value="">' + (any ? '所有设备均已启用' : '等待 AP 上线…') + '</option>';
+    sel.disabled = true;
+    $('led-add').disabled = true;
     return;
   }
-  for (const dev of adopted) {
-    const enabled = !!(dev.led_on_at || dev.led_off_at);
-    const tr = document.createElement('tr');
-    const name = document.createElement('td');
-    name.textContent = dev.hostname || dev.mac;
-    name.title = dev.mac;
-    tr.appendChild(name);
-
-    const onTd = document.createElement('td');
-    const onInput = document.createElement('input');
-    onInput.type = 'time';
-    onInput.value = dev.led_on_at || '';
-    onInput.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的定时开灯');
-    onTd.appendChild(onInput);
-    tr.appendChild(onTd);
-
-    const offTd = document.createElement('td');
-    const offInput = document.createElement('input');
-    offInput.type = 'time';
-    offInput.value = dev.led_off_at || '';
-    offInput.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的定时关灯');
-    offTd.appendChild(offInput);
-    tr.appendChild(offTd);
-
-    const next = document.createElement('td');
-    next.className = 'st-meta';
-    const parts = [];
-    if (dev.led_on_next_at) parts.push('开 ' + new Date(dev.led_on_next_at * 1000).toLocaleString());
-    if (dev.led_off_next_at) parts.push('关 ' + new Date(dev.led_off_next_at * 1000).toLocaleString());
-    next.textContent = parts.length ? parts.join('，') : '–';
-    next.style.whiteSpace = 'normal';
-    tr.appendChild(next);
-
-    const ops = document.createElement('td');
-    ops.className = 'actions';
-    const submit = document.createElement('button');
-    submit.textContent = enabled ? '保存' : '启用';
-    submit.className = 'primary';
-    submit.addEventListener('click', async () => {
-      const onAt = onInput.value || '';
-      const offAt = offInput.value || '';
-      if (!onAt && !offAt) {
-        if (!enabled) { sayLED('请至少填写开灯或关灯时间中的一个', 'err'); return; }
-        saveLEDRow(dev, '', '');
-        return;
-      }
-      if (onAt && offAt && onAt === offAt) { sayLED('开灯与关灯时间不能相同', 'err'); return; }
-      saveLEDRow(dev, onAt, offAt);
-    });
-    ops.appendChild(submit);
-    if (enabled) {
-      const del = document.createElement('button');
-      del.textContent = '删除';
-      del.className = 'ghost';
-      del.addEventListener('click', async () => {
-        if (!confirm('清除 ' + (dev.hostname || dev.mac) + ' 的 LED 定时？')) return;
-        saveLEDRow(dev, '', '');
-      });
-      ops.appendChild(del);
-    }
-    tr.appendChild(ops);
-
-    body.appendChild(tr);
+  const prev = sel.value;
+  sel.disabled = false;
+  $('led-add').disabled = false;
+  sel.innerHTML = '<option value="">选择设备…</option>';
+  for (const dev of candidates) {
+    const o = document.createElement('option');
+    o.value = dev.mac;
+    o.textContent = dev.hostname || dev.mac;
+    sel.appendChild(o);
   }
+  if (candidates.some(x => x.mac === prev)) sel.value = prev;
+}
+
+function renderLEDStatus(list) {
+  const body = $('led-status');
+  fillLEDAddPicker(list);
+  if (body.contains(document.activeElement)) return;
+  const adopted = list.filter(d => d.state === 'adopted');
+  const enabledList = adopted.filter(d => d.led_on_at || d.led_off_at);
+  body.textContent = '';
+  if (!enabledList.length && !ledDraft) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">暂无已启用的 LED 定时；选择设备后点「新增计划」</td></tr>';
+    return;
+  }
+  for (const dev of enabledList) body.appendChild(ledRow(dev, true));
+  if (ledDraft) {
+    const dev = adopted.find(d => d.mac === ledDraft.mac);
+    if (dev && !(dev.led_on_at || dev.led_off_at)) body.appendChild(ledRow(dev, false));
+    else ledDraft = null; // 该设备已启用或已下线，草稿作废
+  }
+}
+
+function ledRow(dev, enabled) {
+  const tr = document.createElement('tr');
+  const name = document.createElement('td');
+  name.textContent = dev.hostname || dev.mac;
+  name.title = dev.mac;
+  tr.appendChild(name);
+
+  const draft = !enabled && ledDraft && ledDraft.mac === dev.mac;
+  const onTd = document.createElement('td');
+  const onInput = document.createElement('input');
+  onInput.type = 'time';
+  onInput.value = enabled ? (dev.led_on_at || '') : (draft ? (ledDraft.on || '') : '');
+  onInput.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的定时开灯');
+  onInput.addEventListener('input', () => { if (ledDraft && ledDraft.mac === dev.mac) ledDraft.on = onInput.value; });
+  onTd.appendChild(onInput);
+  tr.appendChild(onTd);
+
+  const offTd = document.createElement('td');
+  const offInput = document.createElement('input');
+  offInput.type = 'time';
+  offInput.value = enabled ? (dev.led_off_at || '') : (draft ? (ledDraft.off || '') : '');
+  offInput.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的定时关灯');
+  offInput.addEventListener('input', () => { if (ledDraft && ledDraft.mac === dev.mac) ledDraft.off = offInput.value; });
+  offTd.appendChild(offInput);
+  tr.appendChild(offTd);
+
+  const next = document.createElement('td');
+  next.className = 'st-meta';
+  const parts = [];
+  if (dev.led_on_next_at) parts.push('开 ' + new Date(dev.led_on_next_at * 1000).toLocaleString());
+  if (dev.led_off_next_at) parts.push('关 ' + new Date(dev.led_off_next_at * 1000).toLocaleString());
+  next.textContent = parts.length ? parts.join('，') : '–';
+  next.style.whiteSpace = 'normal';
+  tr.appendChild(next);
+
+  const ops = document.createElement('td');
+  ops.className = 'actions';
+  const submit = document.createElement('button');
+  submit.textContent = '保存';
+  submit.className = 'primary';
+  submit.addEventListener('click', async () => {
+    const onAt = onInput.value || '';
+    const offAt = offInput.value || '';
+    if (!onAt && !offAt) {
+      sayLED('请至少填写开灯或关灯时间中的一个；要清除请用已启用行的「删除」', 'err');
+      return;
+    }
+    if (onAt && offAt && onAt === offAt) { sayLED('开灯与关灯时间不能相同', 'err'); return; }
+    saveLEDRow(dev, onAt, offAt);
+  });
+  ops.appendChild(submit);
+  if (enabled) {
+    const del = document.createElement('button');
+    del.textContent = '删除';
+    del.className = 'ghost';
+    del.addEventListener('click', async () => {
+      if (!confirm('清除 ' + (dev.hostname || dev.mac) + ' 的 LED 定时？')) return;
+      saveLEDRow(dev, '', '');
+    });
+    ops.appendChild(del);
+  } else {
+    const cancel = document.createElement('button');
+    cancel.textContent = '取消';
+    cancel.className = 'ghost';
+    cancel.addEventListener('click', () => { ledDraft = null; renderLEDStatus(deviceCache); });
+    ops.appendChild(cancel);
+  }
+  tr.appendChild(ops);
+  return tr;
 }
 
 async function saveLEDRow(dev, onAt, offAt) {
   try {
     await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/led-schedule',
       { on_at: onAt, off_at: offAt });
+    ledDraft = null; // 保存成功后草稿行转正，不再保留
     sayLED((dev.hostname || dev.mac)
       + (onAt || offAt
         ? ' 的 LED 定时已更新：开 ' + (onAt || '—') + ' / 关 ' + (offAt || '—')
@@ -2357,6 +2452,20 @@ $('led-device').addEventListener('change', () => {
 });
 $('led-on-now').addEventListener('click', () => ledSwitch('on'));
 $('led-off-now').addEventListener('click', () => ledSwitch('off'));
+
+// 「新增计划」：把下拉里选中的设备作为草稿行插进定时表格，保存后才真正启用。
+$('rb-add').addEventListener('click', () => {
+  const mac = $('rb-new-device').value;
+  if (!mac) { sayRB('请先选择要新增周期重启的设备', 'err'); return; }
+  rbDraft = { mac, days: '', at: '03:00' };
+  renderRebootStatus(deviceCache);
+});
+$('led-add').addEventListener('click', () => {
+  const mac = $('led-new-device').value;
+  if (!mac) { sayLED('请先选择要新增 LED 定时的设备', 'err'); return; }
+  ledDraft = { mac, on: '', off: '' };
+  renderLEDStatus(deviceCache);
+});
 
 // --- AP 分组 ---------------------------------------------------------------
 // 分组只是控制器侧的归属关系：AP 的配置包里没有组的概念，改绑模板最终仍
@@ -6717,24 +6826,6 @@ function fillClientPicker(list) {
     });
     skObs.observe(deviceCards, { subtree: true, childList: true, characterData: true });
   }
-
-  /* ---------- 面板折叠（不移动任何 DOM，只加 class 与标题交互） ---------- */
-  // AP 管理页的面板默认全部展开、直接可用，仅保留点击标题收起的能力；
-  // 设备概览的引导面板不参与折叠，也不再插「高级设置」提示。
-  const panels = qa('#view-apmgmt > .panel');
-  panels.forEach((p) => {
-    const h = Array.prototype.slice.call(p.children).filter((c) => c.tagName === 'H2')[0];
-    if (!h) return;
-    p.classList.add('ui-collapsible');
-    h.setAttribute('role', 'button'); h.setAttribute('tabindex', '0'); h.setAttribute('aria-expanded', 'true');
-    const toggle = () => {
-      const open = p.classList.contains('ui-collapsed');
-      p.classList.toggle('ui-collapsed', !open);
-      h.setAttribute('aria-expanded', open ? 'true' : 'false');
-    };
-    h.addEventListener('click', toggle);
-    h.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
-  });
 
   /* ---------- 带动作的空状态 ---------- */
   const rowsEl = q('#rows');
