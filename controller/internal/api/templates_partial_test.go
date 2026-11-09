@@ -19,7 +19,7 @@ func TestTemplateSSIDsPartialUpdate(t *testing.T) {
 	newSSIDs := []model.SSID{{
 		SSID:     "Replaced",
 		Bands:    []string{model.Band2G},
-		Network:  "ac_vlan10",
+		Network:  "lan",
 		Security: model.SecWPA2,
 		PSK:      "12345678",
 	}}
@@ -31,7 +31,10 @@ func TestTemplateSSIDsPartialUpdate(t *testing.T) {
 	if len(saved.SSIDs) != 1 || saved.SSIDs[0].SSID != "Replaced" {
 		t.Fatalf("saved ssids = %+v", saved.SSIDs)
 	}
-	if saved.Bridge.Name != "br-lan" || len(saved.Bridge.VLANs) == 0 {
+	// The default template is wireless-only, so its zeroed bridge must survive
+	// an SSID-only save exactly as a declared one would.
+	if saved.Bridge.Name != "" || len(saved.Bridge.Ports) != 0 ||
+		len(saved.Bridge.VLANs) != 0 || len(saved.Bridge.Interfaces) != 0 {
 		t.Errorf("bridge was clobbered: %+v", saved.Bridge)
 	}
 	if len(saved.Radios) == 0 {

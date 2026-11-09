@@ -296,7 +296,8 @@ func TestAgentAppliesRevisionEndToEnd(t *testing.T) {
 		t.Errorf("controller sync_state = %q, want applied", d.SyncState)
 	}
 
-	// The device tree really changed, and kept the local uplink.
+	// The device tree really changed, and the wireless-only default left the
+	// network file alone: the local uplink is intact and no VLAN appeared.
 	network, err := os.ReadFile(filepath.Join(root, "etc", "config", "network"))
 	if err != nil {
 		t.Fatalf("read network: %v", err)
@@ -304,8 +305,8 @@ func TestAgentAppliesRevisionEndToEnd(t *testing.T) {
 	if !strings.Contains(string(network), "10.0.10.250") {
 		t.Errorf("local uplink lost\n%s", network)
 	}
-	if !strings.Contains(string(network), "ac_vlan10") {
-		t.Errorf("managed VLAN missing\n%s", network)
+	if strings.Contains(string(network), "ac_vlan") {
+		t.Errorf("wireless-only default touched the network file\n%s", network)
 	}
 
 	// One reload of each kind, no more: extra reloads flush the PPE table.

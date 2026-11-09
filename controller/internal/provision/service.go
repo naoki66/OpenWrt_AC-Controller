@@ -359,22 +359,19 @@ func addressOnly(addr string) string {
 }
 
 // DefaultTemplate is the placeholder seeded on first boot so that adopt can be
-// exercised before the real template exists. P1 replaces it with the golden
-// baseline derived from the deployed APs.
+// exercised before the real template exists.
+//
+// It is deliberately wireless-only: the Bridge stays zeroed, so adoption never
+// renders a network file and the AP keeps whatever layer-2 configuration it was
+// flashed with. A site that wants VLANs opts in through the ports page, which
+// is a deliberate act rather than a side effect of adopting. The SSID's
+// network names the device-local netifd interface ("lan"); Validate accepts an
+// arbitrary interface name when the template declares no bridge.
 func DefaultTemplate() model.Template {
 	enabled := true
 	return model.Template{
 		ID:   DefaultTemplateID,
-		Name: "示例模板（待用现网黄金基线替换）",
-		Bridge: model.Bridge{
-			Name:  "br-lan",
-			VLANs: []model.BridgeVLAN{{VLAN: 10, Ports: []string{"wan:t"}}},
-			Interfaces: []model.Interface{{
-				Name:   "ac_vlan10",
-				Device: "br-lan.10",
-				Proto:  "none",
-			}},
-		},
+		Name: "默认模板（仅接管无线）",
 		Radios: []model.Radio{
 			{Index: 0, Band: model.Band2G, Channel: "6", HTMode: "HE20", TxPower: 20},
 			{Index: 1, Band: model.Band5G, Channel: "36", HTMode: "EHT160", TxPower: 23},
@@ -383,7 +380,7 @@ func DefaultTemplate() model.Template {
 		SSIDs: []model.SSID{{
 			SSID:     "AC-Test",
 			Bands:    []string{model.Band2G, model.Band5G, model.Band6G},
-			Network:  "ac_vlan10",
+			Network:  "lan",
 			Security: model.SecWPA2WPA3,
 			PSK:      "change-this-passphrase",
 			ProxyARP: true,

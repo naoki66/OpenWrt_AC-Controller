@@ -275,16 +275,26 @@ func TestPackageFallsBackToTemplateWithoutOverride(t *testing.T) {
 // Release keeps the per-unit layer-2 override: it records how the box is wired,
 // which is a property of the unit and not of the last push. The consequence is
 // that a re-adopt has to use a template whose interface set matches the
-// override. Adopting the placeholder "default" template is refused instead of
-// rendered — a rendered package would drop the management address and lock the
-// operator out of the AP.
+// override; a managed template that does not define the overridden interface is
+// refused instead of rendered — a rendered package would drop the management
+// address and lock the operator out of the AP.
 //
-// This is the shape of the real failure: 解绑, then 采纳 from the UI, which used
-// to post template_id "default" unconditionally.
+// The wireless-only "default" is always safe here: it renders no network file,
+// so the override is neither used nor destroyed.
 func TestReadoptAfterReleaseRequiresMatchingTemplate(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	for _, tpl := range []model.Template{managedNetworkTemplate(), DefaultTemplate()} {
+	// A managed template whose interfaces do not cover the override. It must be
+	// refused at adopt, exactly like the pre-wireless-only default used to be.
+	noLan := managedNetworkTemplate()
+	noLan.ID = "vlan-only"
+	noLan.Name = "VLAN only"
+	noLan.Bridge.Interfaces = []model.Interface{{Name: "ac_vlan20", Device: "br-lan.20", Proto: "none"}}
+	noLan.SSIDs = []model.SSID{{
+		SSID: "Corp", Bands: []string{model.Band5G}, Network: "ac_vlan20",
+		Security: model.SecWPA3, PSK: "corp-passphrase",
+	}}
+	for _, tpl := range []model.Template{managedNetworkTemplate(), noLan, DefaultTemplate()} {
 		if err := svc.Store.UpsertTemplate(ctx, tpl); err != nil {
 			t.Fatalf("seed template %s: %v", tpl.ID, err)
 		}
@@ -315,12 +325,27 @@ func TestReadoptAfterReleaseRequiresMatchingTemplate(t *testing.T) {
 		t.Fatal("release dropped the layer-2 override; it describes the unit, not the push")
 	}
 
-	_, err = svc.Adopt(ctx, ap1, "default")
+	_, err = svc.Adopt(ctx, ap1, "vlan-only")
 	if err == nil {
-		t.Fatal("adopting a template that does not define 'lan' was allowed")
+		t.Fatal("adopting a managed template that does not define 'lan' was allowed")
 	}
-	if !strings.Contains(err.Error(), "no such interface") || !strings.Contains(err.Error(), "default") {
+	if !strings.Contains(err.Error(), "no such interface") || !strings.Contains(err.Error(), "vlan-only") {
 		t.Errorf("error should name the unmanaged interface and the template, got: %v", err)
+	}
+
+	// The wireless-only default renders no network file, so the fallback adopt
+	// succeeds no matter what the override says.
+	fallback, err := svc.Adopt(ctx, ap1, "default")
+	if err != nil {
+		t.Fatalf("adopt the wireless-only default: %v", err)
+	}
+	if network := extract(t, svc, fallback.MAC, fallback.Rev)[render.FileNetwork]; len(network) != 0 {
+		t.Errorf("wireless-only default rendered a network file:\n%s", network)
+	}
+	if d, err := svc.Store.GetDevice(ctx, ap1); err != nil {
+		t.Fatalf("get device: %v", err)
+	} else if d.NetworkParams == "" {
+		t.Error("the wireless-only adopt dropped the layer-2 override")
 	}
 
 	// The matching template still adopts, and the revision keeps climbing: a

@@ -226,8 +226,9 @@ func serve(log *slog.Logger) error {
 	return nil
 }
 
-// seedTemplates installs the placeholder template on a fresh database so that
-// adopt can be exercised before P1 replaces it with the golden baseline.
+// seedTemplates installs the default template on a fresh database. It is
+// wireless-only: adoption works immediately without touching layer 2, and a
+// site that wants VLANs opts in through the ports page.
 func seedTemplates(ctx context.Context, st *store.Store, log *slog.Logger) error {
 	n, err := st.CountTemplates(ctx)
 	if err != nil {

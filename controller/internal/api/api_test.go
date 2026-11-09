@@ -222,19 +222,17 @@ func TestAdoptGeneratesVerifiablePackage(t *testing.T) {
 		"config wifi-device 'radio0'",
 		"config wifi-device 'radio2'",
 		"config wifi-iface 'ac_ssid_ac_test_6g'",
-		"option network 'ac_vlan10'",
+		"option network 'lan'",
 		"option mobility_domain 'a1b2'",
 	} {
 		if !strings.Contains(wireless, want) {
 			t.Errorf("wireless missing %q\n%s", want, wireless)
 		}
 	}
-	network := string(files["network"])
-	if !strings.Contains(network, "option vlan '10'") {
-		t.Errorf("network missing bridge-vlan\n%s", network)
-	}
-	if !strings.Contains(network, "option device 'br-lan.10'") {
-		t.Errorf("network missing interface device\n%s", network)
+	// The default template is wireless-only: no network file in the package,
+	// so the AP keeps its own layer-2 configuration after adoption.
+	if network := string(files["network"]); network != "" {
+		t.Errorf("wireless-only default rendered a network file:\n%s", network)
 	}
 
 	// Device state must reflect the adoption.
