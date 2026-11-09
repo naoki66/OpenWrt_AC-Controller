@@ -497,6 +497,10 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .fw-log .bad { color: var(--danger); font-weight: 650; }
   .fw-log .run { color: var(--warn); }
 
+  /* 宽表格：在面板内横向滚动，而不是把面板撑破 */
+  .table-scroll { overflow-x: auto; }
+  .table-scroll td .fw-ver-sel { max-width: 190px; }
+
   /* 按钮：最小 32px 高、实心主按钮、完整状态 */
   button {
     display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -1112,60 +1116,40 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <h2>周期重启</h2>
         <p class="note">
           到点后控制器通过动作队列下发一条重启命令，与手动重启走同一条路径；离线 AP 会跳过本次，
-          下一个周期再排。时间为控制器本地时区。
+          下一个周期再排。时间为控制器本地时区。所有已采纳设备都在表里：行内填写周期与时间后
+          「启用」，已启用的行可直接修改或删除。
         </p>
-        <div class="form">
-          <label>设备
-            <select id="rb-device"><option value="">选择设备…</option></select>
-          </label>
-          <label>周期（天，0 关闭）
-            <input id="rb-days" type="number" min="0" max="365" placeholder="0" />
-          </label>
-          <label>时间（HH:MM）
-            <input id="rb-at" type="time" value="03:00" />
-          </label>
-        </div>
-        <button id="rb-save" class="primary">保存周期重启</button>
-        <button id="rb-off" class="ghost">关闭</button>
-        <div class="msg" id="rb-msg"></div>
-        <table style="margin-top:12px">
+        <table>
           <thead>
-            <tr><th>设备</th><th>周期（天）</th><th>时间</th><th>下次执行</th><th>操作</th></tr>
+            <tr><th>设备</th><th>周期（天，0 关闭）</th><th>时间</th><th>下次执行</th><th>操作</th></tr>
           </thead>
           <tbody id="rb-status">
-            <tr><td colspan="5" class="empty">尚未启用：所有设备都不会周期重启</td></tr>
+            <tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>
           </tbody>
         </table>
+        <div class="msg" id="rb-msg"></div>
       </div>
 
       <div class="panel">
         <h2>状态 LED</h2>
         <p class="note">
-          立即开/关 AP 的 status 灯；「开」只点亮绿色运行灯，避免 RGB 变白。
-          定时按控制器本地时区下发，离线 AP 跳过本次。
+          「开」只点亮绿色运行灯，避免 RGB 变白。定时按控制器本地时区下发，离线 AP 跳过本次。
+          所有已采纳设备都在表里：行内填写开/关时间后「启用」，已启用的行可直接修改或删除。
         </p>
         <div class="form">
-          <label>设备
+          <label>立即操作（选中设备后点击，等待 AP 下次心跳执行）
             <select id="led-device"><option value="">选择设备…</option></select>
           </label>
-          <label>定时开灯（HH:MM，留空=不定时）
-            <input id="led-on" type="time" />
-          </label>
-          <label>定时关灯（HH:MM，留空=不定时）
-            <input id="led-off" type="time" />
-          </label>
+          <button id="led-on-now" class="primary">立即开灯</button>
+          <button id="led-off-now">立即关灯</button>
         </div>
-        <button id="led-on-now" class="primary">立即开灯</button>
-        <button id="led-off-now">立即关灯</button>
-        <button id="led-save" class="primary">保存定时</button>
-        <button id="led-clear" class="ghost">关闭定时</button>
         <div class="msg" id="led-msg"></div>
-        <table style="margin-top:12px">
+        <table>
           <thead>
             <tr><th>设备</th><th>定时开</th><th>定时关</th><th>下次切换</th><th>操作</th></tr>
           </thead>
           <tbody id="led-status">
-            <tr><td colspan="5" class="empty">尚未启用：没有设备设置 LED 定时</td></tr>
+            <tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1476,6 +1460,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         </div>
         <div class="msg" id="fw-msg"></div>
 
+        <div class="table-scroll">
         <table style="margin-top:14px">
           <thead>
             <tr><th>型号</th><th>版本</th><th>大小</th><th>SHA-256</th><th>上传时间</th><th></th></tr>
@@ -1484,6 +1469,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
             <tr><td colspan="6" class="empty">仓库为空</td></tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <div class="panel">
@@ -1492,6 +1478,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
           目标只写库，随下一次 Hello 下发；AP 下载前先上报“下载中”，下载后校验大小与 SHA-256
           再调度 sysupgrade。失败后控制器不再重发，重试需要重新设定目标；选择“不升级”并应用会清除目标。
         </p>
+        <div class="table-scroll">
         <table>
           <thead>
             <tr>
@@ -1503,6 +1490,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
             <tr><td colspan="7" class="empty">暂无设备</td></tr>
           </tbody>
         </table>
+        </div>
         <div class="msg" id="fw-dev-msg"></div>
         <div id="fw-log-title" class="sub" style="margin-top:14px">升级日志</div>
         <div class="fw-log mono" id="fw-log">暂无升级记录</div>
@@ -2092,41 +2080,20 @@ document.addEventListener('keydown', (ev) => {
   if (ev.key === 'Escape' && !devActionsMask.classList.contains('hidden')) closeDevActions();
 });
 
-// 周期重启面板。下拉每轮重绘但保留选择；输入值只在切换设备或保存后回填，
-// 否则 5 秒轮询会把操作员正在输入的数字覆盖掉。
-let rbDeviceMac = '';
-let rbLoadedMac = '';
-
-function fillRebootPicker(list) {
-  const sel = $('rb-device');
-  const adopted = list.filter(d => d.state === 'adopted');
-  sel.innerHTML = '<option value="">选择设备…</option>';
-  for (const dev of adopted) {
-    const o = document.createElement('option');
-    o.value = dev.mac;
-    o.textContent = (dev.hostname || dev.mac)
-      + (dev.reboot_period_days > 0 ? '（每 ' + dev.reboot_period_days + ' 天 ' + dev.reboot_at + '）' : '');
-    sel.appendChild(o);
-  }
-  if (!adopted.some(x => x.mac === rbDeviceMac)) rbDeviceMac = adopted.length ? adopted[0].mac : '';
-  sel.value = rbDeviceMac;
-  loadRebootValues(list, false);
-  renderRebootStatus(list);
-}
-
-// 面板状态区：一张可编辑表格，多台设备对齐展示。每行的周期/时间可以直接改
-// 后保存，删除即关闭该设备的定时——不用先在上面的表单里选中设备。
+// 周期重启面板：一张全量可编辑表格就是全部交互——所有已采纳设备都在表里，
+// 未启用的行填好周期与时间点「启用」，已启用的行可直接修改或删除。
 // 5 秒轮询会重建行；正在编辑（焦点在表格输入框里）时本轮跳过，避免打断输入。
 function renderRebootStatus(list) {
   const body = $('rb-status');
   if (body.contains(document.activeElement)) return;
-  const on = list.filter(d => d.state === 'adopted' && d.reboot_period_days > 0);
+  const adopted = list.filter(d => d.state === 'adopted');
   body.textContent = '';
-  if (!on.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">尚未启用：所有设备都不会周期重启</td></tr>';
+  if (!adopted.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>';
     return;
   }
-  for (const dev of on) {
+  for (const dev of adopted) {
+    const enabled = dev.reboot_period_days > 0;
     const tr = document.createElement('tr');
     const name = document.createElement('td');
     name.textContent = dev.hostname || dev.mac;
@@ -2137,7 +2104,8 @@ function renderRebootStatus(list) {
     const days = document.createElement('input');
     days.type = 'number';
     days.min = '0'; days.max = '365';
-    days.value = dev.reboot_period_days;
+    days.value = enabled ? dev.reboot_period_days : '';
+    days.placeholder = '0';
     days.style.width = '74px';
     days.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的周期天数');
     daysTd.appendChild(days);
@@ -2153,7 +2121,7 @@ function renderRebootStatus(list) {
 
     const next = document.createElement('td');
     next.className = 'st-meta';
-    next.textContent = dev.reboot_next_at
+    next.textContent = enabled && dev.reboot_next_at
       ? new Date(dev.reboot_next_at * 1000).toLocaleString()
       : '–';
     next.style.whiteSpace = 'normal';
@@ -2161,24 +2129,30 @@ function renderRebootStatus(list) {
 
     const ops = document.createElement('td');
     ops.className = 'actions';
-    const save = document.createElement('button');
-    save.textContent = '保存';
-    save.className = 'primary';
-    save.addEventListener('click', async () => {
+    const submit = document.createElement('button');
+    submit.textContent = enabled ? '保存' : '启用';
+    submit.className = 'primary';
+    submit.addEventListener('click', async () => {
       const d = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0));
       const t = at.value || '03:00';
-      if (d === 0) { saveRebootRow(dev, 0, ''); return; }
+      if (d === 0) {
+        if (!enabled) { sayRB('周期天数需大于 0；0 表示关闭，未启用的行请先填写天数', 'err'); return; }
+        saveRebootRow(dev, 0, '');
+        return;
+      }
       saveRebootRow(dev, d, t);
     });
-    ops.appendChild(save);
-    const del = document.createElement('button');
-    del.textContent = '删除';
-    del.className = 'ghost';
-    del.addEventListener('click', async () => {
-      if (!confirm('关闭 ' + (dev.hostname || dev.mac) + ' 的周期重启？')) return;
-      saveRebootRow(dev, 0, '');
-    });
-    ops.appendChild(del);
+    ops.appendChild(submit);
+    if (enabled) {
+      const del = document.createElement('button');
+      del.textContent = '删除';
+      del.className = 'ghost';
+      del.addEventListener('click', async () => {
+        if (!confirm('关闭 ' + (dev.hostname || dev.mac) + ' 的周期重启？')) return;
+        saveRebootRow(dev, 0, '');
+      });
+      ops.appendChild(del);
+    }
     tr.appendChild(ops);
 
     body.appendChild(tr);
@@ -2189,7 +2163,6 @@ async function saveRebootRow(dev, days, at) {
   try {
     await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/reboot-schedule',
       { period_days: days, at: at });
-    rbLoadedMac = '';
     sayRB(days > 0
       ? (dev.hostname || dev.mac) + ' 已更新为每 ' + days + ' 天 ' + at
       : (dev.hostname || dev.mac) + ' 的周期重启已关闭', 'ok');
@@ -2199,54 +2172,16 @@ async function saveRebootRow(dev, days, at) {
   }
 }
 
-function loadRebootValues(list, force) {
-  if (!force && rbLoadedMac === rbDeviceMac) return;
-  const dev = list.find(x => x.mac === rbDeviceMac);
-  rbLoadedMac = rbDeviceMac;
-  if (!dev) { $('rb-days').value = ''; $('rb-at').value = '03:00'; return; }
-  $('rb-days').value = dev.reboot_period_days || '';
-  $('rb-at').value = dev.reboot_at || '03:00';
-}
-
 function sayRB(text, kind) {
   const el = $('rb-msg');
   el.textContent = text || '';
   el.className = 'msg' + (kind ? ' ' + kind : '');
 }
 
-async function saveRebootSchedule(days) {
-  if (!rbDeviceMac) { sayRB('请选择设备', 'err'); return; }
-  const at = $('rb-at').value || '03:00';
-  try {
-    const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(rbDeviceMac) + '/reboot-schedule',
-      { period_days: days, at: days > 0 ? at : '' });
-    rbLoadedMac = '';
-    if (days > 0)
-      sayRB('已设置每 ' + days + ' 天 ' + at + ' 重启；下次 '
-        + new Date(res.reboot_next_at * 1000).toLocaleString(), 'ok');
-    else
-      sayRB('已关闭周期重启', 'ok');
-    await refresh();
-  } catch (e) {
-    if (!noteUnauthorized(e)) sayRB('保存失败：' + e.message, 'err');
-  }
-}
-
-$('rb-device').addEventListener('change', () => {
-  rbDeviceMac = $('rb-device').value;
-  loadRebootValues(deviceCache, true);
-});
-$('rb-save').addEventListener('click', () => {
-  const days = Math.max(0, Math.min(365, parseInt($('rb-days').value, 10) || 0));
-  saveRebootSchedule(days);
-});
-$('rb-off').addEventListener('click', () => saveRebootSchedule(0));
-
 // --- 状态 LED ---------------------------------------------------------------
-// 与周期重启同一套交互：下拉每轮重建但保留选择，输入值只在切换设备或保存
-// 后回填，避免 5 秒轮询覆盖操作员正在输入的时间。
+// 立即开/关走设备下拉 + 按钮；定时与周期重启同一套表格交互：
+// 全量设备、行内启用/修改/删除，编辑中跳过轮询重建。
 let ledDeviceMac = '';
-let ledLoadedMac = '';
 
 function fillLEDPicker(list) {
   const sel = $('led-device');
@@ -2255,30 +2190,25 @@ function fillLEDPicker(list) {
   for (const dev of adopted) {
     const o = document.createElement('option');
     o.value = dev.mac;
-    o.textContent = (dev.hostname || dev.mac)
-      + (dev.led_on_at || dev.led_off_at
-        ? '（开 ' + (dev.led_on_at || '—') + ' / 关 ' + (dev.led_off_at || '—') + '）'
-        : '');
+    o.textContent = dev.hostname || dev.mac;
     sel.appendChild(o);
   }
   if (!adopted.some(x => x.mac === ledDeviceMac)) ledDeviceMac = adopted.length ? adopted[0].mac : '';
   sel.value = ledDeviceMac;
-  loadLEDValues(list, false);
   renderLEDStatus(list);
 }
 
-// 同周期重启面板：LED 定时用可编辑表格逐行管理——改开/关时间后保存，
-// 删除即清空该设备的定时。编辑中跳过轮询重建。
 function renderLEDStatus(list) {
   const body = $('led-status');
   if (body.contains(document.activeElement)) return;
-  const on = list.filter(d => d.state === 'adopted' && (d.led_on_at || d.led_off_at));
+  const adopted = list.filter(d => d.state === 'adopted');
   body.textContent = '';
-  if (!on.length) {
-    body.innerHTML = '<tr><td colspan="5" class="empty">尚未启用：没有设备设置 LED 定时</td></tr>';
+  if (!adopted.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>';
     return;
   }
-  for (const dev of on) {
+  for (const dev of adopted) {
+    const enabled = !!(dev.led_on_at || dev.led_off_at);
     const tr = document.createElement('tr');
     const name = document.createElement('td');
     name.textContent = dev.hostname || dev.mac;
@@ -2312,24 +2242,31 @@ function renderLEDStatus(list) {
 
     const ops = document.createElement('td');
     ops.className = 'actions';
-    const save = document.createElement('button');
-    save.textContent = '保存';
-    save.className = 'primary';
-    save.addEventListener('click', async () => {
+    const submit = document.createElement('button');
+    submit.textContent = enabled ? '保存' : '启用';
+    submit.className = 'primary';
+    submit.addEventListener('click', async () => {
       const onAt = onInput.value || '';
       const offAt = offInput.value || '';
+      if (!onAt && !offAt) {
+        if (!enabled) { sayLED('请至少填写开灯或关灯时间中的一个', 'err'); return; }
+        saveLEDRow(dev, '', '');
+        return;
+      }
       if (onAt && offAt && onAt === offAt) { sayLED('开灯与关灯时间不能相同', 'err'); return; }
       saveLEDRow(dev, onAt, offAt);
     });
-    ops.appendChild(save);
-    const del = document.createElement('button');
-    del.textContent = '删除';
-    del.className = 'ghost';
-    del.addEventListener('click', async () => {
-      if (!confirm('清除 ' + (dev.hostname || dev.mac) + ' 的 LED 定时？')) return;
-      saveLEDRow(dev, '', '');
-    });
-    ops.appendChild(del);
+    ops.appendChild(submit);
+    if (enabled) {
+      const del = document.createElement('button');
+      del.textContent = '删除';
+      del.className = 'ghost';
+      del.addEventListener('click', async () => {
+        if (!confirm('清除 ' + (dev.hostname || dev.mac) + ' 的 LED 定时？')) return;
+        saveLEDRow(dev, '', '');
+      });
+      ops.appendChild(del);
+    }
     tr.appendChild(ops);
 
     body.appendChild(tr);
@@ -2340,7 +2277,6 @@ async function saveLEDRow(dev, onAt, offAt) {
   try {
     await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/led-schedule',
       { on_at: onAt, off_at: offAt });
-    ledLoadedMac = '';
     sayLED((dev.hostname || dev.mac)
       + (onAt || offAt
         ? ' 的 LED 定时已更新：开 ' + (onAt || '—') + ' / 关 ' + (offAt || '—')
@@ -2349,14 +2285,6 @@ async function saveLEDRow(dev, onAt, offAt) {
   } catch (e) {
     if (!noteUnauthorized(e)) sayLED('保存失败：' + e.message, 'err');
   }
-}
-
-function loadLEDValues(list, force) {
-  if (!force && ledLoadedMac === ledDeviceMac) return;
-  const dev = list.find(x => x.mac === ledDeviceMac);
-  ledLoadedMac = ledDeviceMac;
-  $('led-on').value = dev ? (dev.led_on_at || '') : '';
-  $('led-off').value = dev ? (dev.led_off_at || '') : '';
 }
 
 function sayLED(text, kind) {
@@ -2378,37 +2306,11 @@ async function ledSwitch(state) {
   }
 }
 
-async function saveLEDSchedule(clear) {
-  if (!ledDeviceMac) { sayLED('请选择设备', 'err'); return; }
-  const on = clear ? '' : ($('led-on').value || '');
-  const off = clear ? '' : ($('led-off').value || '');
-  if (on && off && on === off) { sayLED('开灯与关灯时间不能相同', 'err'); return; }
-  try {
-    const res = await api('PUT', '/api/v1/devices/' + encodeURIComponent(ledDeviceMac) + '/led-schedule',
-      { on_at: on, off_at: off });
-    ledLoadedMac = '';
-    if (clear || (!on && !off)) {
-      sayLED('已关闭 LED 定时', 'ok');
-    } else {
-      const parts = [];
-      if (on) parts.push('开 ' + on);
-      if (off) parts.push('关 ' + off);
-      sayLED('已保存 LED 定时（' + parts.join(' / ') + '）', 'ok');
-    }
-    await refresh();
-  } catch (e) {
-    if (!noteUnauthorized(e)) sayLED('保存失败：' + e.message, 'err');
-  }
-}
-
 $('led-device').addEventListener('change', () => {
   ledDeviceMac = $('led-device').value;
-  loadLEDValues(deviceCache, true);
 });
 $('led-on-now').addEventListener('click', () => ledSwitch('on'));
 $('led-off-now').addEventListener('click', () => ledSwitch('off'));
-$('led-save').addEventListener('click', () => saveLEDSchedule(false));
-$('led-clear').addEventListener('click', () => saveLEDSchedule(true));
 
 // --- AP 分组 ---------------------------------------------------------------
 // 分组只是控制器侧的归属关系：AP 的配置包里没有组的概念，改绑模板最终仍
@@ -2696,9 +2598,8 @@ function renderDevices(list) {
   $('ap-online').textContent = list.filter(x => x.online).length;
   $('pending').textContent = list.filter(x => x.state === 'pending').length;
   $('adopted').textContent = list.filter(x => x.state === 'adopted').length;
-  fillRebootPicker(list);
+  renderRebootStatus(list);
   fillLEDPicker(list);
-
   if (!list.length) {
     rows.innerHTML = '<tr><td colspan="10" class="empty">等待 AP 上线…</td></tr>';
     return;
@@ -5976,6 +5877,7 @@ function renderFirmwareDevices() {
     ops.className = 'actions';
     const sel = document.createElement('select');
     sel.dataset.mac = dev.mac;
+    sel.className = 'fw-ver-sel';
     const none = document.createElement('option');
     none.value = '';
     none.textContent = '不升级';
