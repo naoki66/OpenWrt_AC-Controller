@@ -70,12 +70,17 @@ type Device struct {
 	// Uptime is seconds since the AP booted, as of its last hello. Zero means the
 	// agent did not report it, not "just booted".
 	Uptime int64 `json:"uptime"`
-	// RebootPeriodDays schedules a periodic reboot: every N days at RebootAt
-	// (controller-local "HH:MM"). Zero disables the schedule. RebootNextAt is the
-	// next due time and is advanced by the scheduler, not by the AP.
+	// RebootPeriodDays schedules a periodic reboot at RebootAt (controller-local
+	// "HH:MM"). The frequency is one of: every N days (default), a fixed weekday
+	// (RebootWeekday 0-6, time.Weekday) or a fixed month day (RebootMonthday
+	// 1-28); the -1/0 sentinels mean "not applicable". Zero days disables the
+	// schedule. RebootNextAt is the next due time and is advanced by the
+	// scheduler, not by the AP.
 	RebootPeriodDays int    `json:"reboot_period_days"`
 	RebootAt         string `json:"reboot_at,omitempty"`
 	RebootNextAt     int64  `json:"reboot_next_at,omitempty"`
+	RebootWeekday    int    `json:"reboot_weekday"`
+	RebootMonthday   int    `json:"reboot_monthday"`
 	// LEDOnAt/LEDOffAt schedule a daily status-LED switch (controller-local
 	// "HH:MM"); empty disables that edge. LEDOnNextAt/LEDOffNextAt are the next
 	// due times, advanced by the scheduler rather than by the AP.
@@ -408,6 +413,8 @@ CREATE TABLE IF NOT EXISTS settings (
 		{"reboot_period_days", `ALTER TABLE devices ADD COLUMN reboot_period_days INTEGER NOT NULL DEFAULT 0`},
 		{"reboot_at", `ALTER TABLE devices ADD COLUMN reboot_at TEXT NOT NULL DEFAULT ''`},
 		{"reboot_next_at", `ALTER TABLE devices ADD COLUMN reboot_next_at INTEGER NOT NULL DEFAULT 0`},
+		{"reboot_weekday", `ALTER TABLE devices ADD COLUMN reboot_weekday INTEGER NOT NULL DEFAULT -1`},
+		{"reboot_monthday", `ALTER TABLE devices ADD COLUMN reboot_monthday INTEGER NOT NULL DEFAULT 0`},
 		{"led_on_at", `ALTER TABLE devices ADD COLUMN led_on_at TEXT NOT NULL DEFAULT ''`},
 		{"led_off_at", `ALTER TABLE devices ADD COLUMN led_off_at TEXT NOT NULL DEFAULT ''`},
 		{"led_on_next_at", `ALTER TABLE devices ADD COLUMN led_on_next_at INTEGER NOT NULL DEFAULT 0`},
@@ -528,7 +535,7 @@ ON CONFLICT(mac) DO UPDATE SET
 }
 
 // deviceColumns keeps SELECT lists and Scan order in one place.
-const deviceColumns = `mac, model, firmware, ip, hostname, state, template_id, config_rev, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, radio_overrides, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id, wifi_caps, steer_stats`
+const deviceColumns = `mac, model, firmware, ip, hostname, state, template_id, config_rev, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, radio_overrides, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, reboot_weekday, reboot_monthday, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id, wifi_caps, steer_stats`
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
@@ -536,7 +543,7 @@ func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 		&d.State, &d.TemplateID, &d.ConfigRev, &d.AppliedRev,
 		&d.SyncState, &d.SyncMessage, &d.SyncAt, &d.Steering, &d.LastSeen, &d.CreatedAt,
 		&d.NetworkParams, &d.RadioOverrides, &d.FwTarget, &d.FWState, &d.FWMessage, &d.FWAt, &d.Uptime,
-		&d.RebootPeriodDays, &d.RebootAt, &d.RebootNextAt,
+		&d.RebootPeriodDays, &d.RebootAt, &d.RebootNextAt, &d.RebootWeekday, &d.RebootMonthday,
 		&d.LEDOnAt, &d.LEDOffAt, &d.LEDOnNextAt, &d.LEDOffNextAt, &d.GroupID,
 		&d.WifiCaps, &d.SteerStats)
 	return d, err

@@ -6,14 +6,16 @@ import (
 )
 
 // SetRebootSchedule stores a per-device periodic reboot policy. days == 0
-// disables it and clears the due time.
-func (s *Store) SetRebootSchedule(ctx context.Context, mac string, days int, at string, nextAt int64) error {
+// disables it and clears the due time; weekday (0-6) and monthday (1-28)
+// select the weekly/monthly frequency (sentinels -1/0 mean "not applicable").
+func (s *Store) SetRebootSchedule(ctx context.Context, mac string, days, weekday, monthday int, at string, nextAt int64) error {
 	if days <= 0 {
-		days, at, nextAt = 0, "", 0
+		days, weekday, monthday, at, nextAt = 0, -1, 0, "", 0
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE devices SET reboot_period_days = ?, reboot_at = ?, reboot_next_at = ? WHERE mac = ?`,
-		days, at, nextAt, mac)
+		`UPDATE devices SET reboot_period_days = ?, reboot_at = ?, reboot_next_at = ?,
+		   reboot_weekday = ?, reboot_monthday = ? WHERE mac = ?`,
+		days, at, nextAt, weekday, monthday, mac)
 	if err != nil {
 		return fmt.Errorf("set reboot schedule %s: %w", mac, err)
 	}

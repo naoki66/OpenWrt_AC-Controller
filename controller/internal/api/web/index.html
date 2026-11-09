@@ -1139,8 +1139,8 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <h2>周期重启</h2>
         <p class="note">
           到点后控制器通过动作队列下发一条重启命令，与手动重启走同一条路径；离线 AP 会跳过本次，
-          下一个周期再排。时间为控制器本地时区。表格只显示已启用的设备：选择设备后「新增计划」
-          添加定时，已启用的行可直接修改或删除。
+          下一个周期再排。时间为控制器本地时区。表格只显示已启用的设备，频率支持每天、每周几、
+          每月几号或每隔 N 天：选择设备后「新增计划」添加定时，已启用的行可直接修改或删除。
         </p>
         <div class="act-row">
           <div class="act-text">新增定时<small>选择设备后点击「新增计划」</small></div>
@@ -1149,7 +1149,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         </div>
         <table>
           <thead>
-            <tr><th>设备</th><th>周期（天，0 关闭）</th><th>时间</th><th>下次执行</th><th>操作</th></tr>
+            <tr><th>设备</th><th>频率</th><th>时间</th><th>下次执行</th><th>操作</th></tr>
           </thead>
           <tbody id="rb-status">
             <tr><td colspan="5" class="empty">等待 AP 上线…</td></tr>
@@ -2136,7 +2136,7 @@ document.addEventListener('keydown', (ev) => {
 // 周期重启面板：表格只显示已启用的设备；「新增计划」从下拉选一台未启用的
 // 已采纳设备，在表里插一条草稿行，填好周期与时间保存即启用。5 秒轮询会
 // 重建行；正在编辑（焦点在表格输入框里）时本轮跳过，草稿值随 input 保留。
-let rbDraft = null; // { mac, days, at } 新增计划草稿
+let rbDraft = null; // { mac, freq, weekday, monthday, days, at } 新增计划草稿
 
 function fillRebootPicker(list) {
   const sel = $('rb-new-device');
@@ -2180,31 +2180,98 @@ function renderRebootStatus(list) {
   }
 }
 
+const WEEKDAY_LABELS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+// 频率判读：weekday/monthday 有值即为周/月锚定，period_days===1 是每天，
+// 其余正数是旧的「每隔 N 天」间隔模式（保持兼容显示）。
+function rebootFreqOf(dev) {
+  if (dev.reboot_weekday >= 0) return 'weekly';
+  if (dev.reboot_monthday >= 1) return 'monthly';
+  if (dev.reboot_period_days === 1) return 'daily';
+  return 'interval';
+}
+
 function rebootRow(dev, enabled) {
+  const draft = !enabled && rbDraft && rbDraft.mac === dev.mac;
+  const nameStr = dev.hostname || dev.mac;
   const tr = document.createElement('tr');
   const name = document.createElement('td');
-  name.textContent = dev.hostname || dev.mac;
+  name.textContent = nameStr;
   name.title = dev.mac;
   tr.appendChild(name);
 
-  const draft = !enabled && rbDraft && rbDraft.mac === dev.mac;
-  const daysTd = document.createElement('td');
-  const days = document.createElement('input');
-  days.type = 'number';
-  days.min = '0'; days.max = '365';
-  days.value = enabled ? dev.reboot_period_days : (draft ? rbDraft.days : '');
-  days.placeholder = '如 7';
-  days.style.width = '74px';
-  days.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的周期天数');
-  days.addEventListener('input', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.days = days.value; });
-  daysTd.appendChild(days);
-  tr.appendChild(daysTd);
+  // 频率格：频率下拉 + 参数控件（周几 / 几号 / 间隔天数；每天无参数）
+  const freq = enabled ? rebootFreqOf(dev) : (draft ? rbDraft.freq : 'daily');
+  const freqTd = document.createElement('td');
+  const freqSel = document.createElement('select');
+  for (const [v, label] of [['daily', '每天'], ['weekly', '每周'], ['monthly', '每月'], ['interval', '每隔 N 天']]) {
+    const o = document.createElement('option');
+    o.value = v; o.textContent = label;
+    freqSel.appendChild(o);
+  }
+  freqSel.value = freq;
+  freqSel.setAttribute('aria-label', nameStr + ' 的重启频率');
+  freqTd.appendChild(freqSel);
+  const param = document.createElement('span');
+  param.style.marginLeft = '6px';
+  freqTd.appendChild(param);
+  let paramCur = null; // 当前参数控件（weekly/monthly 的下拉或 interval 的数字框）
+
+  const buildParam = () => {
+    param.textContent = '';
+    paramCur = null;
+    const f = freqSel.value;
+    if (f === 'weekly') {
+      const s = document.createElement('select');
+      for (const w of [1, 2, 3, 4, 5, 6, 0]) {
+        const o = document.createElement('option');
+        o.value = w; o.textContent = WEEKDAY_LABELS[w];
+        s.appendChild(o);
+      }
+      s.value = String(draft ? rbDraft.weekday : (enabled ? dev.reboot_weekday : 1));
+      s.setAttribute('aria-label', nameStr + ' 的星期');
+      s.addEventListener('change', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.weekday = +s.value; });
+      param.appendChild(s);
+      paramCur = s;
+    } else if (f === 'monthly') {
+      const s = document.createElement('select');
+      for (let d = 1; d <= 28; d++) {
+        const o = document.createElement('option');
+        o.value = d; o.textContent = d + ' 号';
+        s.appendChild(o);
+      }
+      s.value = String(draft ? rbDraft.monthday : (enabled ? dev.reboot_monthday : 1));
+      s.setAttribute('aria-label', nameStr + ' 的每月几号');
+      s.addEventListener('change', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.monthday = +s.value; });
+      param.appendChild(s);
+      paramCur = s;
+    } else if (f === 'interval') {
+      const n = document.createElement('input');
+      n.type = 'number';
+      n.min = '1'; n.max = '365';
+      n.value = draft ? rbDraft.days : (enabled ? dev.reboot_period_days : '');
+      n.placeholder = '如 7';
+      n.style.width = '74px';
+      n.setAttribute('aria-label', nameStr + ' 的间隔天数');
+      n.addEventListener('input', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.days = n.value; });
+      param.appendChild(n);
+      paramCur = n;
+    } else {
+      param.textContent = '—';
+    }
+  };
+  buildParam();
+  freqSel.addEventListener('change', () => {
+    if (rbDraft && rbDraft.mac === dev.mac) rbDraft.freq = freqSel.value;
+    buildParam();
+  });
+  tr.appendChild(freqTd);
 
   const atTd = document.createElement('td');
   const at = document.createElement('input');
   at.type = 'time';
   at.value = enabled ? (dev.reboot_at || '03:00') : (draft ? (rbDraft.at || '03:00') : '03:00');
-  at.setAttribute('aria-label', (dev.hostname || dev.mac) + ' 的重启时间');
+  at.setAttribute('aria-label', nameStr + ' 的重启时间');
   at.addEventListener('input', () => { if (rbDraft && rbDraft.mac === dev.mac) rbDraft.at = at.value; });
   atTd.appendChild(at);
   tr.appendChild(atTd);
@@ -2223,13 +2290,24 @@ function rebootRow(dev, enabled) {
   submit.textContent = '保存';
   submit.className = 'primary';
   submit.addEventListener('click', async () => {
-    const d = Math.max(0, Math.min(365, parseInt(days.value, 10) || 0));
     const t = at.value || '03:00';
-    if (d === 0) {
-      sayRB('周期天数需大于 0；要关闭请用已启用行的「删除」', 'err');
-      return;
+    const f = freqSel.value;
+    if (f === 'weekly') {
+      const w = paramCur ? +paramCur.value : 1;
+      saveRebootRow(dev, { period: 'weekly', weekday: w, at: t },
+        nameStr + ' 已设为' + WEEKDAY_LABELS[w] + ' ' + t + ' 重启');
+    } else if (f === 'monthly') {
+      const md = paramCur ? +paramCur.value : 1;
+      saveRebootRow(dev, { period: 'monthly', monthday: md, at: t },
+        nameStr + ' 已设为每月 ' + md + ' 号 ' + t + ' 重启');
+    } else if (f === 'daily') {
+      saveRebootRow(dev, { period: 'daily', at: t },
+        nameStr + ' 已设为每天 ' + t + ' 重启');
+    } else {
+      const d = Math.max(1, Math.min(365, parseInt(paramCur ? paramCur.value : '', 10) || 0));
+      saveRebootRow(dev, { period_days: d, at: t },
+        nameStr + ' 已设为每隔 ' + d + ' 天 ' + t + ' 重启');
     }
-    saveRebootRow(dev, d, t);
   });
   ops.appendChild(submit);
   if (enabled) {
@@ -2237,8 +2315,8 @@ function rebootRow(dev, enabled) {
     del.textContent = '删除';
     del.className = 'ghost';
     del.addEventListener('click', async () => {
-      if (!confirm('关闭 ' + (dev.hostname || dev.mac) + ' 的周期重启？')) return;
-      saveRebootRow(dev, 0, '');
+      if (!confirm('关闭 ' + nameStr + ' 的周期重启？')) return;
+      saveRebootRow(dev, { period_days: 0 }, nameStr + ' 的周期重启已关闭');
     });
     ops.appendChild(del);
   } else {
@@ -2252,14 +2330,11 @@ function rebootRow(dev, enabled) {
   return tr;
 }
 
-async function saveRebootRow(dev, days, at) {
+async function saveRebootRow(dev, payload, desc) {
   try {
-    await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/reboot-schedule',
-      { period_days: days, at: at });
+    await api('PUT', '/api/v1/devices/' + encodeURIComponent(dev.mac) + '/reboot-schedule', payload);
     rbDraft = null; // 保存成功后草稿行转正，不再保留
-    sayRB(days > 0
-      ? (dev.hostname || dev.mac) + ' 已更新为每 ' + days + ' 天 ' + at
-      : (dev.hostname || dev.mac) + ' 的周期重启已关闭', 'ok');
+    sayRB(desc, 'ok');
     await refresh();
   } catch (e) {
     if (!noteUnauthorized(e)) sayRB('保存失败：' + e.message, 'err');
@@ -2451,7 +2526,7 @@ $('led-off-now').addEventListener('click', () => ledSwitch('off'));
 $('rb-add').addEventListener('click', () => {
   const mac = $('rb-new-device').value;
   if (!mac) { sayRB('请先选择要新增周期重启的设备', 'err'); return; }
-  rbDraft = { mac, days: '', at: '03:00' };
+  rbDraft = { mac, freq: 'daily', weekday: 1, monthday: 1, days: '', at: '03:00' };
   renderRebootStatus(deviceCache);
 });
 $('led-add').addEventListener('click', () => {

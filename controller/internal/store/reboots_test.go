@@ -21,7 +21,7 @@ func TestDueRebootsRequiresOnlineDevice(t *testing.T) {
 		StateAdopted, now, mac); err != nil {
 		t.Fatalf("adopt device: %v", err)
 	}
-	if err := st.SetRebootSchedule(ctx, mac, 1, "03:00", now-60); err != nil {
+	if err := st.SetRebootSchedule(ctx, mac, 1, -1, 0, "03:00", now-60); err != nil {
 		t.Fatalf("set schedule: %v", err)
 	}
 
@@ -43,7 +43,7 @@ func TestDueRebootsRequiresOnlineDevice(t *testing.T) {
 	}
 
 	// Disabling the policy clears the due time.
-	if err := st.SetRebootSchedule(ctx, mac, 0, "", 0); err != nil {
+	if err := st.SetRebootSchedule(ctx, mac, 0, -1, 0, "", 0); err != nil {
 		t.Fatalf("disable schedule: %v", err)
 	}
 	if due, _ := st.DueReboots(ctx, now, 90, 10); len(due) != 0 {

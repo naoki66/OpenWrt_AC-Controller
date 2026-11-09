@@ -41,21 +41,49 @@ func (s *Server) handleSetRebootSchedule(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		PeriodDays int    `json:"period_days"`
+		PeriodDays int    `json:"period_days"` // legacy "every N days" interval
+		Period     string `json:"period"`      // "", "daily", "weekly", "monthly"
+		Weekday    int    `json:"weekday"`     // 0-6 (time.Weekday), period=weekly
+		Monthday   int    `json:"monthday"`    // 1-28, period=monthly
 		At         string `json:"at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.PeriodDays < 0 || req.PeriodDays > maxRebootPeriodDays {
+
+	// Normalize the request into (days, weekday, monthday). An explicit period
+	// wins; the bare period_days form stays working for older clients.
+	days, weekday, monthday := req.PeriodDays, -1, 0
+	switch req.Period {
+	case "":
+		// legacy interval mode, unchanged
+	case "daily":
+		days, weekday, monthday = 1, -1, 0
+	case "weekly":
+		if req.Weekday < 0 || req.Weekday > 6 {
+			writeError(w, http.StatusBadRequest, errors.New("weekday must be 0-6"))
+			return
+		}
+		days, weekday, monthday = 7, req.Weekday, 0
+	case "monthly":
+		if req.Monthday < 1 || req.Monthday > 28 {
+			writeError(w, http.StatusBadRequest, errors.New("monthday must be 1-28"))
+			return
+		}
+		days, weekday, monthday = 30, -1, req.Monthday
+	default:
+		writeError(w, http.StatusBadRequest, errors.New("period must be daily, weekly or monthly"))
+		return
+	}
+	if days < 0 || days > maxRebootPeriodDays {
 		writeError(w, http.StatusBadRequest, errors.New("period_days must be 0-365"))
 		return
 	}
 
 	next := int64(0)
-	if req.PeriodDays > 0 {
-		when, err := nextClockOccurrence(s.now(), req.At)
+	if days > 0 {
+		when, err := nextRebootOccurrence(s.now(), days, weekday, monthday, req.At)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err)
 			return
@@ -65,12 +93,12 @@ func (s *Server) handleSetRebootSchedule(w http.ResponseWriter, r *http.Request)
 		req.At = ""
 	}
 
-	if err := s.Store.SetRebootSchedule(r.Context(), mac, req.PeriodDays, req.At, next); err != nil {
+	if err := s.Store.SetRebootSchedule(r.Context(), mac, days, weekday, monthday, req.At, next); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	s.Store.LogEvent(r.Context(), "reboot_schedule", mac,
-		formatSchedule(req.PeriodDays, req.At))
+		formatSchedule(days, weekday, monthday, req.At))
 
 	device, err = s.Store.GetDevice(r.Context(), mac)
 	if err != nil {
@@ -108,7 +136,7 @@ func (s *Server) runDueReboots(ctx context.Context) {
 		// Move the due time first. Whether the reboot is issued or deliberately
 		// skipped, the next occurrence must be in the future or every tick would
 		// re-queue the same schedule.
-		next := advanceReboot(time.Unix(d.RebootNextAt, 0), d.RebootPeriodDays, now)
+		next := advanceReboot(time.Unix(d.RebootNextAt, 0), d.RebootPeriodDays, d.RebootWeekday, d.RebootMonthday, now)
 		if err := s.Store.AdvanceRebootSchedule(ctx, d.MAC, next.Unix()); err != nil {
 			s.Log.Warn("reboot schedule not advanced", "mac", d.MAC, "err", err)
 			continue
@@ -151,9 +179,43 @@ func nextClockOccurrence(from time.Time, at string) (time.Time, error) {
 	return t, nil
 }
 
-// advanceReboot moves a due time past now by whole periods. AddDate keeps the
-// wall-clock hour across daylight-saving changes.
-func advanceReboot(due time.Time, days int, now time.Time) time.Time {
+// nextRebootOccurrence returns the first due time after from for the given
+// frequency: a fixed weekday, a fixed month day, or (default) the legacy
+// every-N-days clock occurrence.
+func nextRebootOccurrence(from time.Time, days, weekday, monthday int, at string) (time.Time, error) {
+	h, m, err := parseClock(at)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if weekday >= 0 {
+		t := time.Date(from.Year(), from.Month(), from.Day(), h, m, 0, 0, from.Location())
+		t = t.AddDate(0, 0, (int(weekday)-int(t.Weekday())+7)%7)
+		if !t.After(from) {
+			t = t.AddDate(0, 0, 7)
+		}
+		return t, nil
+	}
+	if monthday >= 1 {
+		t := time.Date(from.Year(), from.Month(), monthday, h, m, 0, 0, from.Location())
+		if !t.After(from) {
+			t = t.AddDate(0, 1, 0)
+		}
+		return t, nil
+	}
+	return nextClockOccurrence(from, at)
+}
+
+// advanceReboot moves a due time past now. Weekly and monthly schedules jump
+// to the next matching calendar day; interval schedules move in whole periods.
+// AddDate keeps the wall-clock hour across daylight-saving changes.
+func advanceReboot(due time.Time, days, weekday, monthday int, now time.Time) time.Time {
+	if weekday >= 0 || monthday >= 1 {
+		t, err := nextRebootOccurrence(now, days, weekday, monthday, due.Format("15:04"))
+		if err != nil { // unreachable for schedules already validated at save time
+			t = due.AddDate(0, 0, 7)
+		}
+		return t
+	}
 	if days < 1 {
 		days = 1
 	}
@@ -171,9 +233,18 @@ func parseClock(at string) (hour, minute int, err error) {
 	return t.Hour(), t.Minute(), nil
 }
 
-func formatSchedule(days int, at string) string {
+var weekdayNames = [...]string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+
+func formatSchedule(days, weekday, monthday int, at string) string {
 	if days <= 0 {
 		return "disabled"
 	}
-	return "every " + strconv.Itoa(days) + "d at " + at
+	switch {
+	case weekday >= 0:
+		return "weekly on " + weekdayNames[weekday%7] + " at " + at
+	case monthday >= 1:
+		return "monthly on day " + strconv.Itoa(monthday) + " at " + at
+	default:
+		return "every " + strconv.Itoa(days) + "d at " + at
+	}
 }
