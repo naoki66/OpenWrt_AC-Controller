@@ -19,17 +19,25 @@ type Event struct {
 // ListEvents returns the newest events, newest first. Offset exists so the
 // system page can walk further back than the first page without loading the
 // whole audit trail into memory; ordering is stable enough to page on because
-// the sort key ends with the autoincrement id.
-func (s *Store) ListEvents(ctx context.Context, limit, offset int) ([]Event, error) {
+// the sort key ends with the autoincrement id. A non-empty kind filters by
+// prefix (e.g. "fw_" for the firmware upgrade log); prefix matching uses
+// substr instead of LIKE so underscores in kind names stay literal.
+func (s *Store) ListEvents(ctx context.Context, limit, offset int, kind string) ([]Event, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, ts, kind, mac, message FROM events ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`,
-		limit, offset)
+	q := `SELECT id, ts, kind, mac, message FROM events`
+	args := []any{}
+	if kind != "" {
+		q += ` WHERE substr(kind, 1, length(?)) = ?`
+		args = append(args, kind, kind)
+	}
+	q += ` ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list events: %w", err)
 	}

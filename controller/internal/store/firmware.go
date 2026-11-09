@@ -129,7 +129,18 @@ func (s *Store) SetFirmwareTarget(ctx context.Context, mac, version string) erro
 // RecordFirmware stores the agent's report. A terminal state is also the end of
 // the instruction: once applied, the controller must not keep handing the same
 // image to a device that is already running it.
+//
+// A state change is also written to the audit trail (kind fw_<state>): the
+// firmware page's upgrade log is built from these rows. The agent repeats the
+// same state in every hello during a phase, so only transitions are logged —
+// a three-minute download must not produce a hundred identical rows.
 func (s *Store) RecordFirmware(ctx context.Context, mac, state, message string) error {
+	var old string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT fw_state FROM devices WHERE mac = ?`, mac).Scan(&old); err != nil &&
+		!errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read firmware state %s: %w", mac, err)
+	}
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE devices SET fw_state = ?, fw_message = ?, fw_at = strftime('%s','now') WHERE mac = ?`,
 		state, message, mac)
@@ -138,6 +149,20 @@ func (s *Store) RecordFirmware(ctx context.Context, mac, state, message string) 
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	if state != old {
+		var target string
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT fw_target FROM devices WHERE mac = ?`, mac).Scan(&target)
+		detail := strings.TrimSpace(message)
+		switch {
+		case target != "" && detail != "":
+			s.LogEvent(ctx, "fw_"+state, mac, "version "+target+": "+detail)
+		case target != "":
+			s.LogEvent(ctx, "fw_"+state, mac, "version "+target)
+		default:
+			s.LogEvent(ctx, "fw_"+state, mac, detail)
+		}
 	}
 	return nil
 }

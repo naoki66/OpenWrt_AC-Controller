@@ -131,7 +131,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = n
 	}
-	list, err := s.Store.ListEvents(r.Context(), limit, offset)
+	list, err := s.Store.ListEvents(r.Context(), limit, offset, r.URL.Query().Get("kind"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

@@ -484,6 +484,18 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .st-stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .st-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
   .st-meta { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* 固件升级日志：等宽时间轴，最近 5 条，成功/失败用语义色 */
+  .fw-log {
+    margin-top: 8px; padding: 10px 14px; line-height: 2;
+    background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12.5px; color: var(--muted); overflow-x: auto;
+  }
+  .fw-log:empty::after, .fw-log.single-empty { color: var(--muted); }
+  .fw-log b { color: var(--text); font-weight: 600; }
+  .fw-log .ok { color: var(--ok); font-weight: 650; }
+  .fw-log .bad { color: var(--danger); font-weight: 650; }
+  .fw-log .run { color: var(--warn); }
 
   /* 按钮：最小 32px 高、实心主按钮、完整状态 */
   button {
@@ -1116,6 +1128,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <button id="rb-save" class="primary">保存周期重启</button>
         <button id="rb-off" class="ghost">关闭</button>
         <div class="msg" id="rb-msg"></div>
+        <div class="hint" id="rb-status" style="margin-top:10px"></div>
       </div>
 
       <div class="panel">
@@ -1140,6 +1153,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <button id="led-save" class="primary">保存定时</button>
         <button id="led-clear" class="ghost">关闭定时</button>
         <div class="msg" id="led-msg"></div>
+        <div class="hint" id="led-status" style="margin-top:10px"></div>
       </div>
 
       <div class="panel">
@@ -1476,6 +1490,8 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
           </tbody>
         </table>
         <div class="msg" id="fw-dev-msg"></div>
+        <div id="fw-log-title" class="sub" style="margin-top:14px">升级日志</div>
+        <div class="fw-log mono" id="fw-log">暂无升级记录</div>
       </div>
     </section>
 
@@ -2081,6 +2097,32 @@ function fillRebootPicker(list) {
   if (!adopted.some(x => x.mac === rbDeviceMac)) rbDeviceMac = adopted.length ? adopted[0].mac : '';
   sel.value = rbDeviceMac;
   loadRebootValues(list, false);
+  renderRebootStatus(list);
+}
+
+// 面板状态区：谁启用了什么、下次何时执行，独立展示在这里——
+// 设备表的状态列只保留一眼要读的内容，不再重复这些计划任务。
+function renderRebootStatus(list) {
+  const el = $('rb-status');
+  const on = list.filter(d => d.state === 'adopted' && d.reboot_period_days > 0);
+  if (!on.length) {
+    el.textContent = '尚未启用：所有设备都不会周期重启。';
+    return;
+  }
+  el.textContent = '';
+  for (const dev of on) {
+    const line = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = '已启用，' + (dev.hostname || dev.mac);
+    line.appendChild(b);
+    line.appendChild(document.createTextNode(
+      ' 每 ' + dev.reboot_period_days + ' 天 ' + dev.reboot_at
+      + (dev.reboot_next_at
+        ? ' —— 下次 ' + new Date(dev.reboot_next_at * 1000).toLocaleString()
+        : '')));
+    line.title = '到点通过动作队列下发重启命令；离线 AP 跳过本次，下一周期再排';
+    el.appendChild(line);
+  }
 }
 
 function loadRebootValues(list, force) {
@@ -2148,6 +2190,32 @@ function fillLEDPicker(list) {
   if (!adopted.some(x => x.mac === ledDeviceMac)) ledDeviceMac = adopted.length ? adopted[0].mac : '';
   sel.value = ledDeviceMac;
   loadLEDValues(list, false);
+  renderLEDStatus(list);
+}
+
+// 同周期重启面板：LED 定时的启用状态独立展示，不在设备表里重复。
+function renderLEDStatus(list) {
+  const el = $('led-status');
+  const on = list.filter(d => d.state === 'adopted' && (d.led_on_at || d.led_off_at));
+  if (!on.length) {
+    el.textContent = '尚未启用：没有设备设置 LED 定时。';
+    return;
+  }
+  el.textContent = '';
+  for (const dev of on) {
+    const line = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = '已启用，' + (dev.hostname || dev.mac);
+    line.appendChild(b);
+    line.appendChild(document.createTextNode(
+      ' 开 ' + (dev.led_on_at || '—') + ' —— 关 ' + (dev.led_off_at || '—')));
+    const next = [];
+    if (dev.led_on_next_at) next.push('开 ' + new Date(dev.led_on_next_at * 1000).toLocaleString());
+    if (dev.led_off_next_at) next.push('关 ' + new Date(dev.led_off_next_at * 1000).toLocaleString());
+    if (next.length) line.appendChild(document.createTextNode(' —— 下次 ' + next.join('，下次')));
+    line.title = '定时按控制器本地时区下发；离线 AP 跳过本次';
+    el.appendChild(line);
+  }
 }
 
 function loadLEDValues(list, force) {
@@ -2571,28 +2639,8 @@ function renderDevices(list) {
       }
       stack.appendChild(row2);
     }
-
-    // 第三行：计划任务与固件，出现频率低，有才显示。
-    const tasks = [];
-    if (dev.reboot_period_days > 0)
-      tasks.push('周期重启 ' + dev.reboot_period_days + '天 ' + dev.reboot_at);
-    if (dev.led_on_at || dev.led_off_at)
-      tasks.push('LED 定时 开' + (dev.led_on_at || '—') + ' / 关' + (dev.led_off_at || '—'));
-    if (dev.fw_target && (!features || features.firmware)) {
-      const label = FW_STATE_LABELS[dev.fw_state];
-      tasks.push('固件 ' + dev.fw_target + (label ? ' · ' + label[0] : ''));
-    }
-    if (tasks.length) {
-      const row3 = document.createElement('div');
-      row3.className = 'st-row';
-      for (const item of tasks) {
-        const s = document.createElement('span');
-        s.className = 'st-meta';
-        s.textContent = item;
-        row3.appendChild(s);
-      }
-      stack.appendChild(row3);
-    }
+    // 计划任务（周期重启 / LED 定时）与固件进度不再挤在状态列：
+    // 各自的板块下方独立展示，行内只保留一眼要读的状态与配置归属。
     tr.appendChild(st);
 
     // 这是 AP 自己探测后上报的实际状态，不是控制器下发的期望值。
@@ -2972,7 +3020,7 @@ async function refresh() {
     deviceCache = devices;
     // 固件页的状态（下载中/升级中/失败）在设备行上，复用这次轮询的结果重绘，
     // 不必再单独请求；下拉选择在 renderFirmwareDevices 内部保留。
-    if (currentView === 'firmware') renderFirmwareDevices();
+    if (currentView === 'firmware') { renderFirmwareDevices(); loadFwLog(); }
     // 射频页的实时状态随同一轮轮询刷新；renderRadioTable 只重绘状态表，
     // 模板工作频率编辑器留在 loadRF 里，避免轮询重置未保存的编辑。
     if (currentView === 'rf') refreshRFStatus();
@@ -5712,6 +5760,51 @@ function renderFirmwareList() {
   }
 }
 
+// 升级日志：审计事件里 fw_ 前缀的行（RecordFirmware 在状态转折时写入：
+// downloading/upgrading/applied/failed）。固定最近 5 条，等宽时间轴，
+// 成功标绿、失败标红、进行中标黄——操作员扫一眼就知道上一次升级的结局。
+let fwLogCache = [];
+
+async function loadFwLog() {
+  try {
+    const ev = await api('GET', '/api/v1/events?kind=fw_&limit=5');
+    fwLogCache = ev.events || [];
+    renderFwLog();
+  } catch (e) {
+    noteUnauthorized(e);
+  }
+}
+
+function renderFwLog() {
+  const el = $('fw-log');
+  el.textContent = '';
+  if (!fwLogCache.length) {
+    el.textContent = '暂无升级记录';
+    return;
+  }
+  for (const ev of fwLogCache) {
+    const line = document.createElement('div');
+    const m = /^version\s+(\S+?)(?::\s*(.*))?$/.exec(ev.message || '');
+    const version = m ? m[1] : '';
+    const detail = (m && m[2]) || '';
+    const label = (FW_STATE_LABELS[ev.kind.slice(3)] || [ev.kind])[0];
+    const time = document.createElement('b');
+    time.textContent = when(ev.ts);
+    line.appendChild(time);
+    line.appendChild(document.createTextNode(
+      '  ' + (apNames[ev.mac] || ev.mac)
+      + (version ? '  升级 ' + version : '')
+      + '  '));
+    const verdict = document.createElement('span');
+    const cls = (FW_STATE_LABELS[ev.kind.slice(3)] || [])[1];
+    verdict.textContent = label;
+    verdict.className = cls === 'adopted' ? 'ok' : cls === 'failed' ? 'bad' : 'run';
+    line.appendChild(verdict);
+    if (detail) line.title = detail;
+    el.appendChild(line);
+  }
+}
+
 function renderFirmwareDevices() {
   const body = $('fw-dev-rows');
   if (!deviceCache.length) {
@@ -5800,6 +5893,7 @@ async function loadFirmware() {
     }
     renderFirmwareList();
     renderFirmwareDevices();
+    loadFwLog();
   } catch (e) {
     if (!noteUnauthorized(e)) sayFW(e.message, 'err');
   }
