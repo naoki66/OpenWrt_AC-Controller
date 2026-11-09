@@ -92,15 +92,15 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .msg { min-height: 20px; font-size: 12.5px; margin-top: 12px; color: var(--muted); }
   .msg.err { color: #f2a0a0; }
   .msg.ok { color: #86e0a5; }
-  #auth-bar {
+  #auth-bar, #auth-secret-bar {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     margin-bottom: 18px; padding: 10px 12px;
     border: 1px solid var(--warn); border-radius: 8px;
     background: rgba(245, 158, 11, 0.08);
     font-size: 12.5px; color: var(--muted);
   }
-  #auth-bar[hidden] { display: none; }
-  #auth-bar button {
+  #auth-bar[hidden], #auth-secret-bar[hidden] { display: none; }
+  #auth-bar button, #auth-secret-bar button {
     background: var(--accent); color: #fff; border: 0; border-radius: 6px;
     padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer;
   }
@@ -511,7 +511,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   }
   button:hover:not(:disabled) { border-color: #3A4A61; background: #1E2A39; }
   button:active:not(:disabled) { transform: translateY(1px); }
-  button.primary, #auth-bar button.primary {
+  button.primary, #auth-bar button.primary, #auth-secret-bar button.primary {
     background: var(--accent-600); border-color: var(--accent-600); color: #fff;
   }
   button.primary:hover:not(:disabled) { background: #3C7CEC; border-color: #3C7CEC; box-shadow: 0 5px 16px rgba(47, 111, 224, .28); }
@@ -524,7 +524,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   button:disabled { opacity: .45; cursor: not-allowed; }
   button + button { margin-left: 6px; }
   /* 恢复专用按钮的自适应尺寸，避免被通用 height 拉伸 */
-  .dev-ops button, .mx-del, #auth-bar button, #login-submit, .seg button,
+  .dev-ops button, .mx-del, #auth-bar button, #auth-secret-bar button, #login-submit, .seg button,
   .mx-fold button, .mx-off button { height: auto; }
   .dev-ops button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 13px; font-size: 13px; }
   .mx-del { padding: 0 2px; border: 0; background: transparent; }
@@ -532,7 +532,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .seg button { padding: 5px 12px; border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 12.5px; }
   .seg button:hover:not(:disabled) { background: transparent; color: var(--text); }
   .seg button.on { background: var(--panel-2); color: var(--accent); }
-  #auth-bar button { background: var(--accent-600); color: #fff; border: 0; border-radius: var(--r-sm); padding: 7px 13px; font-size: 13px; }
+  #auth-bar button, #auth-secret-bar button { background: var(--accent-600); color: #fff; border: 0; border-radius: var(--r-sm); padding: 7px 13px; font-size: 13px; }
   #login-submit { width: 100%; height: 38px; font-size: 14px; }
 
   /* 表单 */
@@ -575,12 +575,12 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .msg.err { color: var(--danger); }
   .msg.ok { color: var(--ok); }
   .legend { color: var(--muted); font-size: 12.5px; }
-  #auth-bar {
+  #auth-bar, #auth-secret-bar {
     margin-bottom: 18px; padding: 12px 14px; border-radius: var(--r-md);
     border: 1px solid rgba(245, 181, 68, .42); background: rgba(245, 181, 68, .08);
     font-size: 13px; color: var(--text);
   }
-  #auth-bar::before {
+  #auth-bar::before, #auth-secret-bar::before {
     content: "!"; display: grid; place-items: center; width: 18px; height: 18px;
     border-radius: 50%; background: var(--warn); color: #0B1017; font-weight: 700; font-size: 12px; flex: none;
   }
@@ -801,7 +801,8 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   html[data-theme="light"] code { color: #1F4E8C; }
   html[data-theme="light"] button:hover:not(:disabled) { border-color: #AFC2DA; background: #E9F0F8; }
   html[data-theme="light"] button.primary:hover:not(:disabled),
-  html[data-theme="light"] #auth-bar button.primary:hover:not(:disabled) { background: #255FC7; border-color: #255FC7; box-shadow: 0 5px 16px rgba(47, 111, 224, .24); }
+  html[data-theme="light"] #auth-bar button.primary:hover:not(:disabled),
+  html[data-theme="light"] #auth-secret-bar button.primary:hover:not(:disabled) { background: #255FC7; border-color: #255FC7; box-shadow: 0 5px 16px rgba(47, 111, 224, .24); }
   html[data-theme="light"] button.danger,
   html[data-theme="light"] .dev-ops button.danger { border-color: rgba(192, 57, 43, .42); }
   html[data-theme="light"] button.danger:hover:not(:disabled) { background: rgba(192, 57, 43, .08); }
@@ -812,8 +813,8 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   html[data-theme="light"] input[type="time"]:focus,
   html[data-theme="light"] input[type="password"]:focus,
   html[data-theme="light"] textarea:focus { box-shadow: 0 0 0 3px rgba(47, 111, 224, .16); }
-  html[data-theme="light"] #auth-bar { border-color: rgba(154, 91, 0, .36); background: rgba(245, 181, 68, .10); }
-  html[data-theme="light"] #auth-bar::before { color: #fff; }
+  html[data-theme="light"] #auth-bar, html[data-theme="light"] #auth-secret-bar { border-color: rgba(154, 91, 0, .36); background: rgba(245, 181, 68, .10); }
+  html[data-theme="light"] #auth-bar::before, html[data-theme="light"] #auth-secret-bar::before { color: #fff; }
   html[data-theme="light"] #login-overlay { background: rgba(243, 246, 251, .90); }
   html[data-theme="light"] .modal-mask,
   html[data-theme="light"] .ui-confirm-mask { background: rgba(20, 36, 60, .42); }
@@ -1052,8 +1053,11 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   <main class="main">
     <div id="auth-bar" hidden>
       <span id="auth-why">当前仍在使用默认密码（123456），请尽快修改。</span>
-      <button id="auth-goto-secret" hidden>去配置密钥</button>
       <button id="auth-goto">去修改账户</button>
+    </div>
+    <div id="auth-secret-bar" hidden>
+      <span id="auth-secret-why">AP 接入前还需先在「AP 管理」里配置共享密钥。</span>
+      <button id="auth-goto-secret">去配置密钥</button>
     </div>
 
     <section id="view-devices">
@@ -1811,17 +1815,14 @@ const authBar = $('auth-bar');
 
 let secretConfigured = null; // null=未知，true/false=「AP 共享密钥」是否已配置
 
-// 顶栏提醒：默认密码未改、或 AP 共享密钥还没配置（AP 会因鉴权失败无法接入），
-// 两个条件任一成立就显示，文案按实际缺项拼装，按钮只放行到对应页面。
+// 顶栏提醒拆成两条，各自独立显隐：
+// 1) 默认密码提醒：密码没改过就一直显示，按钮直达账户页；
+// 2) 共享密钥提醒：密钥未配置（AP 会因鉴权失败无法接入）时显示，按钮直达 AP 管理页。
 function updateAuthWhy() {
-  const needSecret = secretConfigured === false;
-  authBar.hidden = !(authDefaultPassword || needSecret);
-  const parts = [];
-  if (authDefaultPassword) parts.push('当前仍在使用默认密码（123456），请尽快修改');
-  if (needSecret) parts.push('AP 接入前还需先在「AP 管理」里配置共享密钥');
-  $('auth-why').textContent = parts.length ? parts.join('；') + '。' : '';
-  const g = $('auth-goto-secret');
-  if (g) g.hidden = !needSecret;
+  authBar.hidden = !authDefaultPassword;
+  $('auth-why').textContent = '当前仍在使用默认密码（123456），请尽快修改。';
+  const secretBar = $('auth-secret-bar');
+  if (secretBar) secretBar.hidden = secretConfigured !== false;
 }
 
 function showLogin(why) {
@@ -6717,21 +6718,15 @@ function fillClientPicker(list) {
     skObs.observe(deviceCards, { subtree: true, childList: true, characterData: true });
   }
 
-  /* ---------- 高级设置折叠（不移动任何 DOM，只加 class 与标题交互） ---------- */
-  const panels = qa('#view-devices > .panel:not(#ap-guide), #view-apmgmt > .panel');
-  const hinted = new Set();
-  panels.forEach((p) => {
-    // 每个容器（设备概览 / AP 管理）只在首个可折叠面板前插一次提示
-    if (p.parentNode && !hinted.has(p.parentNode)) {
-      hinted.add(p.parentNode);
-      p.parentNode.insertBefore(mk('div', 'ui-advanced-hint', '高级设置 · 点击标题展开'), p);
-    }
-  });
+  /* ---------- 面板折叠（不移动任何 DOM，只加 class 与标题交互） ---------- */
+  // AP 管理页的面板默认全部展开、直接可用，仅保留点击标题收起的能力；
+  // 设备概览的引导面板不参与折叠，也不再插「高级设置」提示。
+  const panels = qa('#view-apmgmt > .panel');
   panels.forEach((p) => {
     const h = Array.prototype.slice.call(p.children).filter((c) => c.tagName === 'H2')[0];
     if (!h) return;
-    p.classList.add('ui-collapsible', 'ui-collapsed');
-    h.setAttribute('role', 'button'); h.setAttribute('tabindex', '0'); h.setAttribute('aria-expanded', 'false');
+    p.classList.add('ui-collapsible');
+    h.setAttribute('role', 'button'); h.setAttribute('tabindex', '0'); h.setAttribute('aria-expanded', 'true');
     const toggle = () => {
       const open = p.classList.contains('ui-collapsed');
       p.classList.toggle('ui-collapsed', !open);
