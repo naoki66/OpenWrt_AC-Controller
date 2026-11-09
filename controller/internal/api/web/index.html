@@ -1118,15 +1118,12 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
           <span class="badge offline" id="sec-source" hidden></span>
         </h2>
         <p class="note">
-          AP 上报与拉取配置包时使用的凭据。这里设置的是对环境变量
-          AC_SHARED_SECRET 的运行时覆盖，立即生效并持久化（重启不丢）；
-          留空保存即恢复使用环境变量。下方直接显示当前生效的完整密钥，
-          复制到每台 AP 的 /etc/config/ac 即可；轮换后 AP 必须写入新密钥
-          才能继续上报，已采纳设备的配置包不受影响。
-          只需填这一个值：控制器与 agent 会各自用 HKDF 派生 AP 鉴权令牌和
-          AP 间 HMAC 密钥，原始密钥不上线传输。
+          AP 上报与拉取配置包的凭据。保存后立即生效并持久化（重启不丢），
+          留空保存即恢复使用环境变量值。下方为当前生效的完整密钥，填写到
+          每台 AP 的 luci-app-agent 界面即可；轮换后各 AP 需同步更新，
+          否则无法继续上报；已采纳设备的配置包不受影响。
         </p>
-        <div class="sec-label">当前生效密钥（完整值，直接复制到各 AP 的 /etc/config/ac）</div>
+        <div class="sec-label">当前生效密钥（完整值，填写到各 AP 的 luci-app-agent 界面）</div>
         <div class="sec-row">
           <input id="sec-current" readonly spellcheck="false" autocomplete="off">
           <button id="sec-copy" type="button">复制密钥</button>
@@ -3226,7 +3223,7 @@ async function refresh() {
 
 // --- AP 共享密钥 -------------------------------------------------------------
 // 运行时覆盖环境变量 AC_SHARED_SECRET：写入 settings 表并立即生效，
-// 重启不丢。放设备页是因为轮换密钥紧接着就要去改 AP 的 /etc/config/ac。
+// 重启不丢。放设备页是因为轮换密钥紧接着就要把新值填到各 AP 的 luci-app-agent 界面。
 
 function saySec(text, kind) { const m = $('sec-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
 
@@ -3246,7 +3243,7 @@ async function loadSecretPanel() {
   try {
     const cfg = await api('GET', '/api/v1/settings');
     const ss = cfg.shared_secret || {};
-    // 完整值直接显示：这个值要手抄到每台 AP 的 /etc/config/ac，脱敏就没法用了。
+    // 完整值直接显示：这个值要填到每台 AP 的 luci-app-agent 界面，脱敏就没法用了。
     $('sec-current').value = ss.set ? ss.value : '（未设置——AP 上报不做认证）';
     const badge = $('sec-source');
     badge.hidden = false;
@@ -3278,7 +3275,7 @@ $('sec-copy').addEventListener('click', async () => {
       return;
     }
   }
-  saySec('已复制当前生效密钥，粘贴到各 AP 的 /etc/config/ac 即可', 'ok');
+  saySec('已复制当前生效密钥，粘贴到各 AP 的 luci-app-agent 界面即可', 'ok');
 });
 
 // 生成 24 位 base64url 随机密钥：控制器和 agent 会各自用 HKDF 派生出真正的
@@ -3298,7 +3295,7 @@ $('sec-generate').addEventListener('click', () => {
     setSecButtons(true);
   }
   input.value = secret;
-  saySec('已生成 24 位随机密钥：点「保存密钥」生效，然后请把它写入每台 AP 的 /etc/config/ac', 'ok');
+  saySec('已生成 24 位随机密钥：点「保存密钥」生效，然后请填写到每台 AP 的 luci-app-agent 界面', 'ok');
 });
 
 // 「更换密钥」：就地清空输入框进入编辑态。
@@ -3339,7 +3336,7 @@ $('sec-save').addEventListener('click', async () => {
     input.placeholder = '';
     setSecButtons(false);
     if (secret.trim()) {
-      saySec('共享密钥已更新并立即生效；请尽快把新密钥写入每台 AP 的 /etc/config/ac，否则它们将无法上报', 'ok');
+      saySec('共享密钥已更新并立即生效；请尽快把新密钥填写到每台 AP 的 luci-app-agent 界面，否则它们将无法上报', 'ok');
     } else {
       saySec('已清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET', 'ok');
     }
