@@ -222,11 +222,10 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   .act-row .act-text { color: var(--muted); font-size: 12px; line-height: 1.4; }
   .act-row .act-text small { display: block; color: var(--faint); font-size: 11.5px; }
   .act-row select { min-width: 210px; }
-  /* AP 共享密钥：当前值与更换密钥上下分区，避免两组输入框并排引起误读 */
+  /* AP 共享密钥：单框只读展示当前值，「更换密钥」就地切换为编辑态 */
   .sec-label { color: var(--muted); font-size: 12px; margin: 0 0 5px; }
   .sec-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
   .sec-row input { flex: 1 1 300px; min-width: 0; }
-  .sec-row + .sec-label { margin-top: 4px; }
   /* flex 容器里的整行元素（如 NTP 行编辑器），避免被排到侧列 */
   .form .full { flex: 1 1 100%; }
   .radio-table input, .radio-table select { padding: 2px 6px; }
@@ -1132,11 +1131,9 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
           <input id="sec-current" readonly spellcheck="false" autocomplete="off">
           <button id="sec-copy" type="button">复制密钥</button>
           <button id="sec-generate" type="button">生成随机密钥</button>
-        </div>
-        <div class="sec-label">更换密钥（可选，至少 12 字符；留空保存 = 恢复环境变量值）</div>
-        <div class="sec-row">
-          <input id="sec-new" type="password" placeholder="••••••••" autocomplete="new-password">
-          <button id="sec-save" class="primary">保存新密钥</button>
+          <button id="sec-edit" type="button">更换密钥</button>
+          <button id="sec-save" class="primary" hidden>保存密钥</button>
+          <button id="sec-cancel" type="button" hidden>取消</button>
         </div>
         <div class="msg" id="sec-msg"></div>
       </div>
@@ -3233,7 +3230,19 @@ async function refresh() {
 
 function saySec(text, kind) { const m = $('sec-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
 
+// 单框交互：只读展示当前生效密钥；「更换密钥」就地切成编辑态（同一输入框），
+// 轮询刷新在编辑期间跳过，避免覆盖未保存的输入。
+let secEditing = false;
+
+function setSecButtons(editing) {
+  $('sec-copy').hidden = editing;
+  $('sec-edit').hidden = editing;
+  $('sec-save').hidden = !editing;
+  $('sec-cancel').hidden = !editing;
+}
+
 async function loadSecretPanel() {
+  if (secEditing) return; // 编辑中：不要用服务端值覆盖输入框
   try {
     const cfg = await api('GET', '/api/v1/settings');
     const ss = cfg.shared_secret || {};
@@ -3274,27 +3283,61 @@ $('sec-copy').addEventListener('click', async () => {
 
 // 生成 24 位 base64url 随机密钥：控制器和 agent 会各自用 HKDF 派生出真正的
 // 鉴权令牌与 AP 间 HMAC 密钥，所以这里只需一个便于复制到各 AP 的可见值。
+// 只读态下点生成会自动进入编辑态并填入，避免误导以为已生效。
 $('sec-generate').addEventListener('click', () => {
   const raw = new Uint8Array(18);
   crypto.getRandomValues(raw);
   let bin = '';
   raw.forEach(b => { bin += String.fromCharCode(b); });
   const secret = btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  const input = $('sec-new');
-  input.type = 'text';
+  const input = $('sec-current');
+  if (!secEditing) {
+    secEditing = true;
+    input.readOnly = false;
+    input.placeholder = '输入新密钥（至少 12 字符）；留空保存 = 恢复环境变量值';
+    setSecButtons(true);
+  }
   input.value = secret;
-  saySec('已生成 24 位随机密钥：保存后请把它写入每台 AP 的 /etc/config/ac', 'ok');
+  saySec('已生成 24 位随机密钥：点「保存密钥」生效，然后请把它写入每台 AP 的 /etc/config/ac', 'ok');
+});
+
+// 「更换密钥」：就地清空输入框进入编辑态。
+$('sec-edit').addEventListener('click', () => {
+  secEditing = true;
+  const input = $('sec-current');
+  input.readOnly = false;
+  input.value = '';
+  input.placeholder = '输入新密钥（至少 12 字符）；留空保存 = 恢复环境变量值';
+  setSecButtons(true);
+  saySec('输入新密钥后点「保存密钥」；留空保存将恢复使用环境变量值', '');
+  input.focus();
+});
+
+// 「取消」：丢弃未保存的输入，恢复只读展示。
+$('sec-cancel').addEventListener('click', () => {
+  secEditing = false;
+  const input = $('sec-current');
+  input.readOnly = true;
+  input.value = '';
+  input.placeholder = '';
+  setSecButtons(false);
+  saySec('', '');
+  loadSecretPanel();
 });
 
 $('sec-save').addEventListener('click', async () => {
   try {
-    const secret = $('sec-new').value;
+    const secret = $('sec-current').value;
     if (!secret.trim()) {
-      if (!confirm('新密钥为空：保存将清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET。继续？')) return;
+      if (!confirm('密钥为空：保存将清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET。继续？')) return;
     }
     await api('PUT', '/api/v1/settings/shared-secret', { secret: secret.trim() });
-    $('sec-new').value = '';
-    $('sec-new').type = 'password';
+    secEditing = false;
+    const input = $('sec-current');
+    input.readOnly = true;
+    input.value = '';
+    input.placeholder = '';
+    setSecButtons(false);
     if (secret.trim()) {
       saySec('共享密钥已更新并立即生效；请尽快把新密钥写入每台 AP 的 /etc/config/ac，否则它们将无法上报', 'ok');
     } else {
