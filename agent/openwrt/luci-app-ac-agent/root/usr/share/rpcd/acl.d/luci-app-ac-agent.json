@@ -1,0 +1,23 @@
+{
+	"luci-app-ac-agent": {
+		"description": "Grant access to AC agent status and settings",
+		"read": {
+			"ubus": {
+				"luci.ac_agent": [ "status" ]
+			},
+			"uci": {
+				"ac": [ "read" ],
+				"luci": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.ac_agent": [ "restart", "applyEnabled" ],
+				"uci": [ "apply" ]
+			},
+			"uci": {
+				"ac": [ "write" ]
+			}
+		}
+	}
+}

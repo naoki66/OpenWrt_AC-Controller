@@ -1,0 +1,196 @@
+#!/bin/sh
+# AC agent status RPC backend for LuCI.
+#
+# The page needs three things: the agent's own view of the control relationship,
+# whether the process is alive, and whether it starts at boot. Two of them are
+# one-liners over the process table and rc.common; the third is the status file
+# the agent rewrites on every heartbeat.
+#
+# Why a backend instead of fs.read/fs.exec in the view:
+#   - the ACL then grants specific ubus methods instead of "execute this binary
+#     with any arguments", which is the difference between a read-only status
+#     page and a root shell;
+#   - the merge of "process alive" and "file fresh" happens once, here, instead
+#     of being re-derived in JavaScript where a clock skew silently changes the
+#     answer.
+
+. /lib/functions.sh
+
+STATUS_FILE=/var/run/ac-agent/status.json
+INIT_SCRIPT=/etc/init.d/ac-agent
+
+# Escape a value before embedding it in a JSON string literal. Everything that
+# reaches printf is either agent output or an error message quoting caller
+# input; without this a quote in an error message produces an unparseable reply.
+_json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\r\n\t' '   '
+}
+
+# The status file is already JSON, so it is inlined verbatim rather than parsed
+# and rebuilt: re-serialising it here would mean this script has to know every
+# field, and it would silently drop anything a newer agent adds.
+#
+# A missing or truncated file inlines `null`, which the view renders as "agent
+# starting" rather than as a parse error.
+_status_body() {
+	local body
+
+	body=$(cat "$STATUS_FILE" 2>/dev/null)
+	case "$body" in
+		\{*\}) printf '%s' "$body" ;;
+		*)     printf 'null' ;;
+	esac
+}
+
+_process_running() {
+	# ubus pretty-prints its reply, so the separator between key and value is
+	# ": " rather than ":". Matching the compact form silently reported every
+	# running agent as stopped.
+	ubus call service list '{"name":"ac-agent"}' 2>/dev/null | grep -q '"running":[[:space:]]*true'
+}
+
+_autostart_enabled() {
+	"$INIT_SCRIPT" enabled >/dev/null 2>&1
+}
+
+# The exec bit is the only thing that makes rc.common start the service at
+# boot; the agent itself also refuses to start when the switch is off.
+_set_autostart() {
+	"$INIT_SCRIPT" "$1" >/dev/null 2>&1
+}
+
+# One switch opens the WAN zone for the ports an AC needs. Named sections keep
+# the rules idempotent: re-running only rewrites values that differ, so no
+# firewall reload happens on an ordinary page visit.
+#
+# Returns non-zero when the firewall was modified, which the caller counts.
+_wan_rule() {
+	local sec="$1" proto="$2" port="$3" enabled="$4"
+	local cur_proto cur_port cur_target cur_src
+
+	if [ "$enabled" != "1" ]; then
+		if [ "$(uci -q get "firewall.$sec")" = "rule" ]; then
+			uci -q delete "firewall.$sec"
+			return 1
+		fi
+		return 0
+	fi
+
+	cur_proto=$(uci -q get "firewall.$sec.proto")
+	cur_port=$(uci -q get "firewall.$sec.dest_port")
+	cur_target=$(uci -q get "firewall.$sec.target")
+	cur_src=$(uci -q get "firewall.$sec.src")
+
+	if [ "$cur_proto" = "$proto" ] && [ "$cur_port" = "$port" ] &&
+	   [ "$cur_target" = "ACCEPT" ] && [ "$cur_src" = "wan" ]; then
+		return 0
+	fi
+
+	uci -q set "firewall.$sec=rule"
+	uci -q set "firewall.$sec.name=ac-agent-$proto-$port"
+	uci -q set "firewall.$sec.src=wan"
+	uci -q set "firewall.$sec.proto=$proto"
+	uci -q set "firewall.$sec.dest_port=$port"
+	uci -q set "firewall.$sec.target=ACCEPT"
+	return 1
+}
+
+_sync_wan_rules() {
+	local enabled="$1" changed=0
+
+	_wan_rule ac_agent_wan_tcp_8090  tcp 8090  "$enabled" || changed=1
+	_wan_rule ac_agent_wan_udp_29820 udp 29820 "$enabled" || changed=1
+	_wan_rule ac_agent_wan_udp_29821 udp 29821 "$enabled" || changed=1
+
+	if [ "$changed" = "1" ]; then
+		uci -q commit firewall
+		/etc/init.d/firewall reload >/dev/null 2>&1 || true
+	fi
+}
+
+# The page calls this on open and after Save, so the switch is also the thing
+# that starts a factory-fresh agent. Reading the value back from uci rather
+# than taking it as an argument keeps one source of truth: /etc/config/ac.
+apply_enabled() {
+	local enabled running=false need_start=false output rc
+
+	enabled=$(uci -q get ac.agent.enabled)
+	[ -n "$enabled" ] || enabled=1
+
+	_sync_wan_rules "$enabled"
+
+	if [ "$enabled" = "1" ]; then
+		_autostart_enabled || _set_autostart enable
+		_process_running || need_start=true
+		if [ "$need_start" = "true" ]; then
+			output=$("$INIT_SCRIPT" start 2>&1)
+			rc=$?
+			if [ "$rc" -ne 0 ]; then
+				printf '{"ok":false,"message":"%s"}\n' \
+					"$(_json_escape "start failed (rc=$rc): $output")"
+				return
+			fi
+		fi
+	else
+		_process_running && "$INIT_SCRIPT" stop >/dev/null 2>&1
+		_autostart_enabled && _set_autostart disable
+	fi
+
+	_process_running && running=true
+	printf '{"ok":true,"enabled":%s,"running":%s}\n' \
+		"$([ "$enabled" = "1" ] && echo true || echo false)" "$running"
+}
+
+get_status() {
+	local running=false autostart=false
+
+	_process_running && running=true
+	_autostart_enabled && autostart=true
+
+	printf '{"status":%s,"running":%s,"autostart":%s}\n' \
+		"$(_status_body)" "$running" "$autostart"
+}
+
+# Restarting is how an operator forces one sync cycle: the agent runs Step()
+# immediately on start. A one-shot `ac-agent once` would do the same but races
+# the resident process for /etc/ac/state.json, and its apply path can outlast
+# the RPC timeout.
+restart_agent() {
+	if "$INIT_SCRIPT" restart >/dev/null 2>&1; then
+		printf '{"ok":true,"status":%s,"running":true,"autostart":%s}\n' \
+			"$(_status_body)" "$(_autostart_enabled && echo true || echo false)"
+	else
+		printf '{"ok":false,"message":"%s"}\n' \
+			"$(_json_escape "restart of $INIT_SCRIPT failed")"
+	fi
+}
+
+# rpcd invokes the script as `script list` for the method table and as
+# `script call <method>` with the JSON arguments on stdin. Matching on $1 alone
+# answers "Invalid method" to every call — the outer level is the verb, the
+# inner one is the method name.
+case "$1" in
+	list)
+		# Describe the write methods' parameters so LuCI can type-check calls.
+		printf '%s\n' '{"status":{},"restart":{},"applyEnabled":{}}'
+		;;
+	call)
+		case "$2" in
+			status)
+				get_status
+				;;
+			restart)
+				restart_agent
+				;;
+			applyEnabled)
+				apply_enabled
+				;;
+			*)
+				printf '{"error":"Invalid method"}\n'
+				;;
+		esac
+		;;
+	*)
+		printf '{"error":"Invalid command"}\n'
+		;;
+esac

@@ -1,0 +1,262 @@
+name: OpenWrt Packages (apk to Releases)
+
+# Builds the AP-side packages (ac-agent, luci-app-ac-agent and the generated
+# zh-cn i18n package) with the official OpenWrt SDK containers, then attaches
+# them to a GitHub Release. This is what README section 8 "option C" downloads.
+#
+# Triggers:
+#   push tag v*        -> build and publish to that tag's Release
+#   workflow_dispatch  -> publish=none only builds and keeps the artifacts;
+#                         publish=release also needs release_tag
+#
+# SDK tags are "<arch>-<release>" from ghcr.io/openwrt/sdk (full tag list at
+# https://github.com/openwrt/docker/pkgs/container/sdk). OpenWrt 24.10 and
+# older produce .ipk (opkg); 25.12 and snapshots produce .apk.
+#
+# The default matrix builds only 25.12.6 .apk for aarch64_cortex-a53.
+# x86_64, mipsel_24kc and all .ipk targets were dropped: the 24.10 SDKs cannot
+# clone the source from inside the container, and mipsel_24kc fails with MIPS
+# assembly errors in the CGO build. All of them remain supported by
+# gen-matrix.py: run manually with a custom `targets` input.
+#
+# The Go sources are pre-seeded into the SDK's dl/ cache from this run's own
+# commit (see the "Seed source tarballs" step), so the SDK never has to git
+# clone the repository from inside the container.
+#
+# NOTE: go.mod declares a newer Go than most SDKs ship, and OpenWrt's
+# golang-package.mk forces GOTOOLCHAIN=local. The build script relaxes that
+# override inside the container, so the runner needs access to proxy.golang.org.
+#
+# Runner and action runtimes are pinned: ubuntu-24.04 (ubuntu-latest is
+# migrating to Ubuntu 26) and Node 24 runtimes for every action. Note that
+# upload-artifact only moved to Node 24 at v6 and download-artifact at v7;
+# v5 of both still declares node20.
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: 'SDK tags, comma separated (<arch>-<release>)'
+        required: true
+        default: 'aarch64_cortex-a53-25.12.6'
+        type: string
+      publish:
+        description: 'Attach assets to a Release (none = build only)'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - release
+      release_tag:
+        description: 'Target Release tag when publish=release (e.g. v0.5.2)'
+        required: false
+        default: ''
+        type: string
+      build_controller:
+        description: 'Also build the experimental ac-controller package'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: openwrt-packages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      release_tag: ${{ steps.gen.outputs.release_tag }}
+      publish: ${{ steps.gen.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Generate build matrix
+        id: gen
+        env:
+          INPUT_TARGETS: ${{ inputs.targets }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          DEFAULT_TARGETS: 'aarch64_cortex-a53-25.12.6'
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_TARGETS" ]; then
+            targets="$INPUT_TARGETS"
+          else
+            targets="$DEFAULT_TARGETS"
+          fi
+          matrix=$(TARGETS="$targets" python3 .github/scripts/gen-matrix.py)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Targets: $targets"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            echo "release_tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=$INPUT_RELEASE_TAG" >> "$GITHUB_OUTPUT"
+            if [ "$INPUT_PUBLISH" = "release" ] && [ -n "$INPUT_RELEASE_TAG" ]; then
+              echo "publish=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "publish=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    name: ${{ matrix.sdk }} (${{ matrix.format }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Read the Go version required by go.mod
+        id: go
+        run: echo "version=$(sed -n 's/^go //p' go.mod | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Pull OpenWrt SDK
+        run: docker pull "ghcr.io/openwrt/sdk:${{ matrix.sdk }}"
+
+      - name: Seed source tarballs
+        # The feed Makefiles download their Go sources via git. That clone is
+        # unreliable from inside the SDK container, so create the exact
+        # <name>-<version>.tar.zst files OpenWrt expects from this run's commit.
+        # The build script drops them into the SDK's dl/ cache; download.pl
+        # then reuses them verbatim (PKG_MIRROR_HASH=skip) without touching git.
+        run: |
+          if ! command -v zstd >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq zstd
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/dl-seed"
+          agent_ver=$(sed -n 's/^PKG_VERSION:=//p' agent/openwrt/ac-agent/Makefile | head -n 1)
+          ctrl_ver=$(sed -n 's/^PKG_VERSION:=//p' agent/openwrt/ac-controller/Makefile | head -n 1)
+          git archive --format=tar --prefix="ac-agent-${agent_ver}/" HEAD \
+            | zstd -T0 -q -f -o "$GITHUB_WORKSPACE/dl-seed/ac-agent-${agent_ver}.tar.zst"
+          if [ "${{ inputs.build_controller }}" = "true" ]; then
+            git archive --format=tar --prefix="ac-controller-${ctrl_ver}/" HEAD \
+              | zstd -T0 -q -f -o "$GITHUB_WORKSPACE/dl-seed/ac-controller-${ctrl_ver}.tar.zst"
+          fi
+          ls -lh "$GITHUB_WORKSPACE/dl-seed"
+
+      - name: Prepare artifact directory
+        # The official SDK container runs as uid 1000. Without this chown the
+        # /artifacts bind mount is not writable inside the container and the
+        # build script's `cp` fails with "Permission denied" even though the
+        # .apk files were produced successfully.
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/out/${{ matrix.sdk }}"
+          sudo chown -R 1000:1000 "$GITHUB_WORKSPACE/out/${{ matrix.sdk }}"
+
+      - name: Build packages in the SDK container
+        env:
+          SDK_TAG: ${{ matrix.sdk }}
+          REQUIRED_GO: ${{ steps.go.outputs.version }}
+          BUILD_CONTROLLER: ${{ inputs.build_controller }}
+        run: |
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -e SDK_TAG -e REQUIRED_GO -e BUILD_CONTROLLER \
+            -v "$GITHUB_WORKSPACE/agent/openwrt:/feed:ro" \
+            -v "$GITHUB_WORKSPACE/.github/scripts:/scripts:ro" \
+            -v "$GITHUB_WORKSPACE/dl-seed:/dl:ro" \
+            -v "$GITHUB_WORKSPACE/out/${{ matrix.sdk }}:/artifacts" \
+            "ghcr.io/openwrt/sdk:${{ matrix.sdk }}" \
+            /scripts/build-openwrt-packages.sh
+
+      - name: Verify package format
+        run: |
+          case "${{ matrix.format }}" in
+            ipk) ext=ipk ;;
+            apk) ext=apk ;;
+            *) echo "::error::Unknown format ${{ matrix.format }}"; exit 1 ;;
+          esac
+          shopt -s nullglob
+          files=("$GITHUB_WORKSPACE/out/${{ matrix.sdk }}"/*."$ext")
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::Expected .$ext packages from ${{ matrix.sdk }}"
+            exit 1
+          fi
+          ls -lh "${files[@]}"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: packages-${{ matrix.sdk }}
+          path: out/${{ matrix.sdk }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: packages-*
+          path: artifacts
+
+      - name: Flatten assets and write build metadata
+        run: |
+          mkdir -p dist
+          # Architecture-independent packages (luci-app-ac-agent_..._all.ipk)
+          # are produced by every target; cp -n keeps the first one. Their
+          # origin is recorded in build-info.txt below.
+          find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \) -print0 \
+            | while IFS= read -r -d '' f; do cp -n "$f" dist/ || true; done
+          {
+            echo "repository:   $GITHUB_REPOSITORY"
+            echo "release:      ${{ needs.prepare.outputs.release_tag }}"
+            echo "source_ref:   CI commit (pre-seeded tarball; feed follows main)"
+            echo "source_commit: $GITHUB_SHA"
+            echo "required_go:  $(sed -n 's/^go //p' go.mod | head -n 1)"
+            echo "built_at:     $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "SDK targets:"
+            find artifacts -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+              | sort | sed 's/^packages-/  /'
+            echo
+            echo "Assets (name <- origin target):"
+            find artifacts -type f \( -name '*.ipk' -o -name '*.apk' \) \
+              -printf '%f  <- %h\n' | sed 's|<- artifacts/packages-|<- |' | sort
+            echo
+            echo "package format: .apk (apk, OpenWrt 25.12 / snapshots)"
+          } > dist/build-info.txt
+          (cd dist && find . -maxdepth 1 -type f \( -name '*.ipk' -o -name '*.apk' \) \
+            -printf '%f\n' | sort | xargs -r sha256sum > SHA256SUMS)
+          ls -lh dist
+          {
+            echo "### OpenWrt AP packages"
+            echo
+            echo '```'
+            cat dist/build-info.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach assets to the Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          files: |
+            dist/*.ipk
+            dist/*.apk
+            dist/SHA256SUMS
+            dist/build-info.txt
+          fail_on_unmatched_files: false
+          draft: false

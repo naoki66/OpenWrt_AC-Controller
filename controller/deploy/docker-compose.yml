@@ -1,0 +1,25 @@
+# AC 控制器部署编排（amd64 / arm64 通用，镜像来自 Docker Hub）。
+# 用法：把 AC_SHARED_SECRET 换成随机值 → mkdir -p data && chown 1000:1000 data → docker compose up -d
+# 只保留部署必需项；其余变量用内置默认值，NTP / 共享密钥可在「系统配置」页修改。
+# network_mode: host 为必需：AP 发现是 UDP 广播，bridge 网络收不到。
+# 升级：docker compose pull && docker compose up -d
+services:
+  ac:
+    image: naoki66/openwrt_ac-controller:latest
+    container_name: ac-controller
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    environment:
+      TZ: Asia/Shanghai
+      # 共享密钥（可选，留空可在 Web 内设置）
+      AC_SHARED_SECRET: ""
+      AC_ADMIN_USER: "admin"
+      AC_ADMIN_PASSWORD: "123456"
+    volumes:
+      - ./data:/var/lib/ac
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

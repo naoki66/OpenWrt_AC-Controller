@@ -1,0 +1,24 @@
+# Build artifacts and runtime state never belong in the build context.
+bin/
+dist/
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Local overrides
+.env
+.env.local
+
+# VCS / editor
+.git/
+.gitignore
+.idea/
+.vscode/
+.workbuddy/
+*.swp
+.DS_Store
+
+# Docs are not needed to compile the binary.
+README.md
+LICENSE

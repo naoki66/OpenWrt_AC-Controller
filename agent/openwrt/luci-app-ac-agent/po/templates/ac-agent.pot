@@ -1,0 +1,216 @@
+# Translation template for luci-app-ac-agent.
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-ac-agent 1.0.0\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "AC Agent"
+msgstr ""
+
+msgid "Control"
+msgstr ""
+
+msgid "Shows whether this access point is under controller management, and how it reaches the controller."
+msgstr ""
+
+msgid "Control status"
+msgstr ""
+
+msgid "Managed"
+msgstr ""
+
+msgid "Connected, awaiting adoption"
+msgstr ""
+
+msgid "Controller unreachable"
+msgstr ""
+
+msgid "No controller found"
+msgstr ""
+
+msgid "Starting"
+msgstr ""
+
+msgid "Agent not responding"
+msgstr ""
+
+msgid "Agent stopped"
+msgstr ""
+
+msgid "This access point is running a revision issued by controller %s."
+msgstr ""
+
+msgid "This access point is running a revision issued by the controller."
+msgstr ""
+
+msgid "The controller answers but has not adopted this access point yet. Adopt it in the controller interface; until then no configuration is pushed."
+msgstr ""
+
+msgid "Last error: %s"
+msgstr ""
+
+msgid "The configured address does not answer."
+msgstr ""
+
+msgid "No controller address is configured and no UDP answer arrived on the local segment. A controller behind a router never sees the broadcast, so enter its address above."
+msgstr ""
+
+msgid "The agent has not updated its status for more than three heartbeats. Check the process; a restart usually recovers it."
+msgstr ""
+
+msgid "The agent process is not running, so this access point is not under any controller."
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Controller"
+msgstr ""
+
+msgid "Open controller"
+msgstr ""
+
+msgid "Open the controller web interface in a new tab"
+msgstr ""
+
+msgid "configured address"
+msgstr ""
+
+msgid "discovered by broadcast"
+msgstr ""
+
+msgid "Controller ID"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "nothing applied yet"
+msgstr ""
+
+msgid "rev %d applied, rev %d pending"
+msgstr ""
+
+msgid "rev %d"
+msgstr ""
+
+msgid "Last heartbeat"
+msgstr ""
+
+msgid "(accepted)"
+msgstr ""
+
+msgid "(failed)"
+msgstr ""
+
+msgid "Access point"
+msgstr ""
+
+msgid "BSS reported"
+msgstr ""
+
+msgid "Agent"
+msgstr ""
+
+msgid "since"
+msgstr ""
+
+msgid "Last apply error: %s"
+msgstr ""
+
+msgid "Restart agent"
+msgstr ""
+
+msgid "Agent restarted."
+msgstr ""
+
+msgid "Could not restart the agent: %s"
+msgstr ""
+
+msgid "One cycle finished (exit code %d)."
+msgstr ""
+
+msgid "Could not run the agent: %s"
+msgstr ""
+
+msgid "Controller connection"
+msgstr ""
+
+msgid "Enable"
+msgstr ""
+
+msgid "Starts the agent, enables it at boot, and opens TCP 8090 plus UDP 29820/29821 on the WAN zone, so an AC on the upstream or LAN side can discover and manage this access point during initial setup. On by default."
+msgstr ""
+
+msgid "Controller address"
+msgstr ""
+
+msgid "host:port of the controller. Leave empty to find the controller by UDP broadcast on the local segment; once it answers, the discovered address is filled in here and can be saved to pin it. A controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgstr ""
+
+msgid "Shared secret"
+msgstr ""
+
+msgid "Must match AC_SHARED_SECRET on the controller and use at least 12 characters. It also authenticates AP-to-AP messages with HMAC-SHA256. Leave empty when the controller does not check one."
+msgstr ""
+
+msgid "Heartbeat interval"
+msgstr ""
+
+msgid "Seconds between two polls. The default is 20."
+msgstr ""
+
+msgid "Peer coordination port"
+msgstr ""
+
+msgid "UDP port used to exchange 802.11k data between access points directly. 0 disables it."
+msgstr ""
+
+msgid "Peer announcement interval"
+msgstr ""
+
+msgid "How often this access point announces its BSS and client state to its peers, for example 30s."
+msgstr ""
+
+msgid "Peer coordination network"
+msgstr ""
+
+msgid "Logical OpenWrt network, for example lan, that carries AP-to-AP traffic. The agent resolves its l3_device and joins IPv6 link-local multicast on it; when IPv6 is unavailable it falls back to IPv4 broadcast."
+msgstr ""
+
+msgid "Local roam suggestion"
+msgstr ""
+
+msgid "Let the agent itself send one 802.11v transition suggestion (BTM) when a client is very weak and a peer serves the same SSID. This is built into the agent, needs no steering daemon, and is on by default so roaming keeps working across any number of access points after the controller is lost. It stays silent whenever usteer or dawn is enabled; nrsyncd only distributes 11k neighbour lists and does not compete."
+msgstr ""
+
+msgid "Settings saved. The agent and the WAN rules now follow the switch."
+msgstr ""
+
+msgid "Settings saved. The agent restarts to pick them up."
+msgstr ""
+
+msgid "Could not save the settings: %s"
+msgstr ""
+
+msgid "Save & apply"
+msgstr ""
+
+msgid "Reset"
+msgstr ""
+
+msgid "The controller no longer knows this access point, but rev %d is still running here. Adopt it again to resume management."
+msgstr ""
+
+msgid "Roaming steering"
+msgstr ""
+
+msgid "agent"
+msgstr ""
+
+msgid "running %s"
+msgstr ""

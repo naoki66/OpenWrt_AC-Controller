@@ -1,0 +1,91 @@
+#!/bin/sh /etc/rc.common
+# ac-controller: OpenWrt 管理端的 procd 启动脚本。
+#
+# 配置在 /etc/config/ac-controller，可用 uci 或 LuCI 修改。网页界面由控制器
+# 自己提供（内嵌在二进制里），不需要额外的 LuCI 页面。
+#
+# 本服务不修改防火墙。默认情况下 AP 与浏览器都应从 LAN 侧访问 8090 和
+# 29820；如果管理网跨 zone，请自行添加放行规则，不要把 8090 开到 WAN。
+
+START=99
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/sbin/ac-controller
+
+start_service() {
+	enabled=$(uci -q get ac-controller.controller.enabled)
+	[ -n "$enabled" ] || enabled=1
+	if [ "$enabled" != "1" ]; then
+		logger -t ac-controller "disabled by /etc/config/ac-controller"
+		return 0
+	fi
+
+	profile=$(uci -q get ac-controller.controller.profile)
+	[ -n "$profile" ] || profile=openwrt
+
+	http_addr=$(uci -q get ac-controller.controller.http_addr)
+	[ -n "$http_addr" ] || http_addr=':8090'
+
+	discover_addr=$(uci -q get ac-controller.controller.discover_addr)
+	[ -n "$discover_addr" ] || discover_addr='0.0.0.0:29820'
+
+	secret=$(uci -q get ac-controller.controller.shared_secret)
+
+	admin_user=$(uci -q get ac-controller.controller.admin_user)
+	[ -n "$admin_user" ] || admin_user=admin
+	admin_password=$(uci -q get ac-controller.controller.admin_password)
+
+	# 状态库必须可持久化：换目录前先确认它不会在重启时被清空。
+	data_dir=$(uci -q get ac-controller.controller.data_dir)
+	[ -n "$data_dir" ] || data_dir=/etc/ac-controller
+
+	sample_interval=$(uci -q get ac-controller.controller.sample_interval)
+	[ -n "$sample_interval" ] || sample_interval=120s
+
+	sample_retention=$(uci -q get ac-controller.controller.sample_retention)
+	[ -n "$sample_retention" ] || sample_retention=24h
+
+	package_history=$(uci -q get ac-controller.controller.package_history)
+	events_max=$(uci -q get ac-controller.controller.events_max)
+
+	go_memlimit=$(uci -q get ac-controller.controller.go_memlimit)
+	go_gc=$(uci -q get ac-controller.controller.go_gc)
+
+	[ -x "$PROG" ] || {
+		logger -t ac-controller "binary missing at $PROG"
+		return 1
+	}
+
+	mkdir -p "$data_dir" || {
+		logger -t ac-controller "cannot create data dir"
+		return 1
+	}
+	# 私钥在状态目录里，别让同机其他用户读到。
+	chmod 700 "$data_dir"
+
+	# procd_set_param env 第二个参数会整体替换而不追加，所以一次拼完。
+	env_set="AC_PROFILE=$profile AC_DATA_DIR=$data_dir"
+	env_set="$env_set AC_HTTP_ADDR=$http_addr AC_DISCOVER_ADDR=$discover_addr"
+	env_set="$env_set AC_ADMIN_USER=$admin_user"
+	env_set="$env_set AC_SAMPLE_INTERVAL=$sample_interval AC_SAMPLE_RETENTION=$sample_retention"
+	[ -n "$secret" ] && env_set="$env_set AC_SHARED_SECRET=$secret"
+	[ -n "$admin_password" ] && env_set="$env_set AC_ADMIN_PASSWORD=$admin_password"
+	[ -n "$package_history" ] && env_set="$env_set AC_PACKAGE_HISTORY=$package_history"
+	[ -n "$events_max" ] && env_set="$env_set AC_EVENTS_MAX=$events_max"
+	[ -n "$go_memlimit" ] && env_set="$env_set GOMEMLIMIT=$go_memlimit"
+	[ -n "$go_gc" ] && env_set="$env_set GOGC=$go_gc"
+
+	procd_open_instance
+	procd_set_param command "$PROG"
+	procd_set_param env $env_set
+	# 控制器可能因为数据库被占用等原因短时退出，持续重试比放弃更合适。
+	procd_set_param respawn 3600 5 10
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+service_triggers() {
+	procd_add_reload_trigger ac-controller
+}
