@@ -464,16 +464,33 @@ func (b *PeerBus) Announce(state proto.PeerState) {
 	b.sendState(conn, transport, group, state)
 }
 
+// nrBase builds the header shared by every neighbour-report frame: the sender
+// identity, nothing else.
+//
+// Everything except the BSS list that the NR receiver consumes is stripped
+// here. applyNR reads only MAC/Model/Hostname and BSS; clients, radios and NTP
+// belong to the AP_PEER_STATE message that follows, and duplicating them in
+// every NR frame once made the header so heavy that a single BSS entry no
+// longer fit the MTU budget and was dropped (observed as three consecutive
+// "peer report dropped, it does not fit one frame" warnings per interval).
+func nrBase(state proto.PeerState) proto.PeerState {
+	state.Type = proto.MsgPeerNR
+	state.BSS = nil
+	state.Clients = nil
+	state.Radios = nil
+	state.NTP = nil
+	return state
+}
+
 // sendNR splits the neighbour reports into frames that fit the IPv6 minimum
 // MTU. A busy AP with many BSSes then sends a few small frames instead of one
 // fragmented datagram, and the receiver reassembles by Gen/Part/Parts.
-func (b *PeerBus) sendNR(conn *net.UDPConn, transport string, group net.IP, base proto.PeerState, gen uint64) {
-	reports := base.BSS
+func (b *PeerBus) sendNR(conn *net.UDPConn, transport string, group net.IP, state proto.PeerState, gen uint64) {
+	reports := state.BSS
 	if len(reports) > proto.PeerMaxReports {
 		reports = reports[:proto.PeerMaxReports]
 	}
-	base.Type = proto.MsgPeerNR
-	base.BSS = nil
+	base := nrBase(state)
 
 	if len(reports) == 0 {
 		msg := base

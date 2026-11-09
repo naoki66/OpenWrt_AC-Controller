@@ -165,6 +165,60 @@ func TestPeerNRChunksStayWithinFrameBudget(t *testing.T) {
 	}
 }
 
+// NR frames must not duplicate the state payload. applyNR consumes only the
+// BSS list plus Model/Hostname; clients, radios and NTP ride the separate
+// AP_PEER_STATE message. When they were duplicated into every NR frame, a busy
+// AP's header alone could crowd a single BSS entry out of the MTU budget, and
+// every report of that interval was dropped.
+func TestPeerNRFrameDropsStatePayload(t *testing.T) {
+	bus := NewPeerBusWithOptions(PeerOptions{
+		Port: 0, Interval: time.Minute, SelfMAC: testSelfMAC, Log: testLog(),
+	})
+	reports := []proto.NeighborBSS{
+		peerBSS("00:11:22:33:44:55", "SSID-A"),
+		peerBSS("00:11:22:33:44:56", "SSID-A"),
+	}
+	heavy := proto.PeerState{
+		Type: proto.MsgPeerNR, V: proto.PeerVersion, MAC: testPeerMAC,
+		Model: "XR1710G", Hostname: "ap1",
+	}
+	for i := 0; i < 24; i++ {
+		heavy.Clients = append(heavy.Clients, proto.PeerClient{
+			MAC:              fmt.Sprintf("aa:bb:cc:00:00:%02x", i),
+			Ifname:           "phy0.0-ap0",
+			SSID:             "Corporate-Wireless",
+			Band:             "5g",
+			Signal:           -60,
+			ConnectedSeconds: 3600 * i,
+		})
+	}
+	heavy.Radios = []proto.PeerRadio{{Band: "5g", Channel: 36, Utilization: 12, Clients: 24}}
+	heavy.NTP = []string{"10.0.10.1", "ntp.aliyun.com", "time.windows.com"}
+
+	// The old behaviour, pinned as a bug: with the payload still in the base,
+	// every entry is dropped and nothing goes out.
+	if chunks := bus.nrChunks(heavy, 1, reports); len(chunks) != 0 {
+		t.Errorf("heavy base unexpectedly produced %d chunk(s); budget grew?", len(chunks))
+	}
+
+	// What sendNR now sends: the stripped header carries every report.
+	light := nrBase(heavy)
+	if light.Clients != nil || light.Radios != nil || light.NTP != nil || light.BSS != nil {
+		t.Fatalf("nrBase left state payload behind: %+v", light)
+	}
+	if light.Model != heavy.Model || light.Hostname != heavy.Hostname || light.MAC != heavy.MAC {
+		t.Errorf("nrBase dropped sender identity: %+v", light)
+	}
+	chunks := bus.nrChunks(light, 1, reports)
+	total := 0
+	for _, chunk := range chunks {
+		total += len(chunk)
+	}
+	if total != len(reports) {
+		t.Errorf("stripped header lost reports: %d of %d", total, len(reports))
+	}
+}
+
 func TestPeerSnapshotCarriesNTPServers(t *testing.T) {
 	bus := NewPeerBusWithOptions(PeerOptions{
 		Port: 0, Interval: time.Minute, SelfMAC: testSelfMAC, Log: testLog(),
