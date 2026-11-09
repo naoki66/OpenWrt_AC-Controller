@@ -1,15 +1,28 @@
 name: Docker Image (Docker Hub + GHCR)
 
-# 仅手动触发，防止误推镜像。
-# 用法：Actions → Docker Image (Docker Hub + GHCR) → Run workflow
-#   publish = none：只构建验证（amd64），不登录、不推送
-#   publish = push：构建 linux/amd64 + linux/arm64 并同时推送到 Docker Hub 与 GHCR
+# 构建服务端镜像（AC 管理面）并按条件推送。仓库公开后 CI 接管了原先本地的
+# 多架构构建，推到 main 即出镜像，不再依赖某台开发机在线。
+#
+# 触发：
+#   push 到 main       -> 自动构建 linux/amd64 + linux/arm64 并推送
+#                         GHCR（GITHUB_TOKEN 内置凭据，恒可用）与 Docker Hub
+#                         （需仓库 Secrets 配置 DOCKERHUB_USERNAME/DOCKERHUB_TOKEN，
+#                         未配置时自动跳过 Docker Hub，只推 GHCR）
+#   workflow_dispatch  -> 手动构建
+#     publish = none：只构建验证（amd64），不登录、不推送
+#     publish = push：按 tag 输入构建双架构并推送到 Docker Hub 与 GHCR
 #
 # 凭据：
 #   Docker Hub：仓库 Settings → Secrets 配置 DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
 #   GHCR：自动使用 GITHUB_TOKEN（无需额外 Secret；本工作流已申请 packages: write 权限）
 
 on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'agent/openwrt/**'
   workflow_dispatch:
     inputs:
       publish:
@@ -30,6 +43,11 @@ permissions:
   contents: read
   packages: write
 
+# 同一分支的连续推送只保留最后一次构建，避免排队堆积。
+concurrency:
+  group: docker-hub-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   IMAGE: naoki66/openwrt_ac-controller
   GHCR_IMAGE: ghcr.io/naoki66/openwrt_ac-controller
@@ -42,35 +60,74 @@ jobs:
 
       - name: Build metadata
         id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
         run: |
           echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
           echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          # 写入二进制的版本号：发布类标签（v1.2.3）直接用；
-          # latest 等滚动标签没有版本含义，改用 日期-短sha，
-          # 否则系统页会一直显示 "latest"，看不出实际是哪次构建。
-          tag='${{ inputs.tag }}'
-          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-            echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+          # 滚动标签：push 到 main 的自动构建，或手动输入留空/latest。
+          # 发布类标签（v1.2.3）直接作为写入二进制的版本号；latest 等滚动
+          # 标签没有版本含义，改用 日期-短sha，否则系统页会一直显示
+          # "latest"，看不出实际是哪次构建。
+          base="$INPUT_TAG"
+          if [ -z "$base" ]; then
+            base=latest
+          fi
+          if [[ "$base" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            version="$base"
           else
-            echo "version=$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            version="$(date -u +%Y%m%d)-${GITHUB_SHA::7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+          # 发布判定：push 到 main 自动发布；手动触发按 publish 输入。
+          if [ "$GITHUB_EVENT_NAME" = "push" ] || [ "$INPUT_PUBLISH" = "push" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
           fi
 
+          # GHCR 用内置 GITHUB_TOKEN 恒可用；Docker Hub 需要显式 Secret。
+          # secrets 不能直接在 step 的 if 里判空，所以先落到 env 再判。
+          if [ -n "$DOCKERHUB_USERNAME" ]; then
+            echo "push_dockerhub=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "docker_tags<<EOF"
+              echo "${{ env.IMAGE }}:$base"
+              echo "${{ env.IMAGE }}:sha-${GITHUB_SHA::7}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            echo "push_dockerhub=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "ghcr_tags<<EOF"
+            echo "${{ env.GHCR_IMAGE }}:$base"
+            echo "${{ env.GHCR_IMAGE }}:sha-${GITHUB_SHA::7}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
-        if: inputs.publish == 'push'
+        if: steps.meta.outputs.publish == 'true'
         uses: docker/setup-qemu-action@v4
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v4
 
       - name: Login to Docker Hub
-        if: inputs.publish == 'push'
+        if: steps.meta.outputs.push_dockerhub == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Login to GitHub Container Registry
-        if: inputs.publish == 'push'
+        if: steps.meta.outputs.publish == 'true'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -78,7 +135,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build only (dry run, amd64)
-        if: inputs.publish != 'push'
+        if: steps.meta.outputs.publish != 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -91,7 +148,7 @@ jobs:
             DATE=${{ steps.meta.outputs.date }}
 
       - name: Build and push (amd64 + arm64)
-        if: inputs.publish == 'push'
+        if: steps.meta.outputs.publish == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -99,10 +156,8 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ inputs.tag }}
-            ${{ env.IMAGE }}:sha-${{ steps.meta.outputs.short }}
-            ${{ env.GHCR_IMAGE }}:${{ inputs.tag }}
-            ${{ env.GHCR_IMAGE }}:sha-${{ steps.meta.outputs.short }}
+            ${{ steps.meta.outputs.ghcr_tags }}
+            ${{ steps.meta.outputs.docker_tags }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
             COMMIT=${{ steps.meta.outputs.short }}
