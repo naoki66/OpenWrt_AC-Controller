@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,10 @@ const capsCacheTTL = 5 * time.Minute
 type capsCollector struct {
 	Runner Runner
 	Log    *slog.Logger
+	// ConfDir overrides the directory holding netifd's generated hostapd
+	// configs (/var/run on OpenWrt). Empty means the standard location;
+	// tests inject a temporary directory.
+	ConfDir string
 	// now is overridable for tests.
 	now func() time.Time
 
@@ -73,7 +79,9 @@ func (c *capsCollector) Collect(ctx context.Context) *proto.WifiCaps {
 //
 // A method name appearing in `ubus -v list` is the whole test: it is the same
 // surface the agent calls, so a method listed there is one that would answer.
-// K needs both the read and the write side; V needs the BTM entry point.
+// K needs both the read and the write side; V needs the BTM entry point; R
+// (802.11r/FT) has no ubus method at all and is read from netifd's generated
+// hostapd configs instead (ftScan).
 func (c *capsCollector) probe(ctx context.Context) *proto.WifiCaps {
 	out, err := c.Runner.Run(ctx, "ubus", "list")
 	if err != nil {
@@ -94,7 +102,8 @@ func (c *capsCollector) probe(ctx context.Context) *proto.WifiCaps {
 		return nil
 	}
 
-	caps := &proto.WifiCaps{BSS: len(names), K: true, V: true}
+	caps := &proto.WifiCaps{BSS: len(names), K: true, V: true, R: true}
+	ft, md := c.ftScan()
 	for _, ifname := range names {
 		// The verbose listing is the only cheap way to see the method set. One
 		// failed BSS means "not every BSS supports it", which is exactly how the
@@ -112,6 +121,88 @@ func (c *capsCollector) probe(ctx context.Context) *proto.WifiCaps {
 		if !strings.Contains(methods, "bss_transition_request") {
 			caps.V = false
 		}
+		// Same all-BSS semantics as K/V: one BSS without FT means the AP as a
+		// whole does not do 11r, since a roaming client may land on any BSS.
+		enabled, seen := ft[ifname]
+		if !seen || !enabled {
+			caps.R = false
+		}
+	}
+	if caps.R {
+		caps.MD = md
 	}
 	return caps
+}
+
+// ftScan reads the hostapd config files netifd generated for the running
+// daemon (/var/run/hostapd-<phy>.conf on OpenWrt) and maps every BSS to its
+// 802.11r setting. FT has no ubus method to probe — nothing in the ubus
+// surface changes with ieee80211r — so the generated config, the exact input
+// the running daemon was started with, is the closest thing to runtime truth.
+// The files change only when wifi is (re)configured, and the caller caches the
+// whole probe, so the read cost is amortised. An empty map means the configs
+// could not be read and 11r stays "not verified" (false).
+//
+// A BSS section is introduced by "interface=" (first BSS of the phy) or
+// "bss=" (every following one); the FT options live inside that section.
+func (c *capsCollector) ftScan() (map[string]bool, string) {
+	patterns := []string{
+		filepath.Join(c.confDir(), "hostapd-*.conf"),
+		filepath.Join(c.confDir(), "hostapd", "*.conf"),
+	}
+	ft := map[string]bool{}
+	md := ""
+	var files []string
+	for _, p := range patterns {
+		matches, err := filepath.Glob(p)
+		if err != nil {
+			c.Log.Debug("caps: bad glob", "pattern", p, "err", err)
+			continue
+		}
+		files = append(files, matches...)
+	}
+	if len(files) == 0 {
+		c.Log.Debug("caps: no hostapd config files, 11r not verified")
+		return ft, md
+	}
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			c.Log.Debug("caps: read hostapd config failed", "file", file, "err", err)
+			continue
+		}
+		cur := ""
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if name, ok := strings.CutPrefix(line, "interface="); ok {
+				cur = strings.TrimSpace(name)
+				continue
+			}
+			if name, ok := strings.CutPrefix(line, "bss="); ok {
+				cur = strings.TrimSpace(name)
+				continue
+			}
+			if cur == "" {
+				continue
+			}
+			if val, ok := strings.CutPrefix(line, "ieee80211r="); ok {
+				ft[cur] = strings.TrimSpace(val) == "1"
+				continue
+			}
+			if val, ok := strings.CutPrefix(line, "mobility_domain="); ok {
+				if md == "" {
+					md = strings.TrimSpace(val)
+				}
+			}
+		}
+	}
+	return ft, md
+}
+
+// confDir returns the directory holding netifd's generated hostapd configs.
+func (c *capsCollector) confDir() string {
+	if c.ConfDir != "" {
+		return c.ConfDir
+	}
+	return "/var/run"
 }

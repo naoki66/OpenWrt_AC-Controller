@@ -27,7 +27,7 @@ It **does not forward user traffic** and does not implement CAPWAP. It does exac
 **Before you try it:**
 
 - This is an **early v0.5.x** project. Features, API and config formats may still change; do not put it on a critical production network.
-- **Verified AP hardware** is the Brightspeed/Gemtek **XR1710G** only (airoha/an7581, arm64, DSA), using the companion [ImmortalWrt firmware](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases). Other OpenWrt-family devices are unverified and need a DSA network model plus `procd`/`ubus`/`uci`/`hostapd`; 11k/11v additionally requires hostapd to expose `rrm_nr_get_own`, `rrm_nr_set` and `bss_transition_request`.
+- **Verified AP hardware** is the Brightspeed/Gemtek **XR1710G** only (airoha/an7581, arm64, DSA), using the companion [ImmortalWrt firmware](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases). Other OpenWrt-family devices are unverified and need a DSA network model plus `procd`/`ubus`/`uci`/`hostapd`; 11k/11v additionally requires hostapd to expose `rrm_nr_get_own`, `rrm_nr_set` and `bss_transition_request`. The capability badges on the devices page are **measured at runtime**: 11k/11v probe the ubus method surface, while 11r (FT) is read from the netifd-generated hostapd configs (`/var/run/hostapd-*.conf`) together with the mobility domain (MDID); a badge only lights when every BSS satisfies it.
 - Auto-discovery requires the AP and AC to share a **broadcast domain**; across L3, fill in "Controller address" on the AP's LuCI page (see section 8).
 - The image is a `linux/amd64` + `linux/arm64` multi-arch manifest; Docker picks the right platform automatically.
 
@@ -301,6 +301,7 @@ See [`controller/internal/api/server.go`](controller/internal/api/server.go) for
 | `sync_state=rollback` | `sync_message`, `/etc/ac/backup/`, `logread` — usually a BSS or management-address self-check failed |
 | SSH drops after a push | Was the address move checked by `preflight`; firewall zone / dropbear binding (newer versions repair these automatically) |
 | Apply succeeded but 11k is empty | Did you repush a second time |
+| 11r enabled in the template but the badge stays grey | Badges are measured at runtime: wait for the next heartbeat (the probe is cached for 5 minutes); if still grey, `cat /var/run/hostapd-*.conf` and check that every BSS section has `ieee80211r=1`; roaming across APs additionally requires the same `mobility_domain` on all of them |
 | UI reports the AP offline | Is `last_seen_age` > 90s; is the AP clock drifting (signature checks depend on time) |
 
 </details>

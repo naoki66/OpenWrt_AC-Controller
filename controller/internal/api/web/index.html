@@ -471,12 +471,19 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
     display: inline-flex; align-items: center; gap: 6px;
     height: 23px; padding: 0 9px; border-radius: 7px;
     font-size: 12px; font-weight: 650; border: 1px solid transparent;
+    white-space: nowrap;
   }
   .badge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
   .badge.pending { color: var(--warn); border-color: rgba(245, 181, 68, .30); background: rgba(245, 181, 68, .10); }
   .badge.adopted { color: var(--ok); border-color: rgba(61, 220, 151, .28); background: rgba(61, 220, 151, .09); }
   .badge.failed  { color: var(--danger); border-color: rgba(255, 122, 122, .30); background: rgba(255, 122, 122, .09); }
   .badge.offline { color: var(--muted); border-color: var(--line); background: var(--panel-2); }
+
+  /* 状态列分层：第一行只放主状态徽章，下面是配置归属与计划任务的灰色元信息。
+     条目按整词换行（nowrap），不会再把「模板」折成「模/板」。 */
+  .st-stack { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .st-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+  .st-meta { color: var(--muted); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
   /* 按钮：最小 32px 高、实心主按钮、完整状态 */
   button {
@@ -2400,18 +2407,26 @@ function adoptTemplatePicker(devices) {
 }
 
 // wifi_caps 是 AP 侧 hostapd 实际暴露的能力，不是模板里的期望值。解析失败或
-// 为空说明这台 AP 还没上报，显示"未上报"而不是假定它支持，否则操作员会把
-// 模板配置当成真机能力。
-function capsBadges(dev) {
-  let caps = null;
-  if (dev.wifi_caps) {
-    try { caps = JSON.parse(dev.wifi_caps); } catch (e) { caps = null; }
+// 为空返回 null，由调用方决定展示方式。
+function wifiCaps(dev) {
+  if (!dev.wifi_caps) return null;
+  try {
+    const caps = JSON.parse(dev.wifi_caps);
+    return (caps && typeof caps === 'object') ? caps : null;
+  } catch (e) {
+    return null;
   }
-  if (!caps || typeof caps !== 'object') {
+}
+
+// 漫游能力徽章：只放真正的「是/否」能力。BSS 数量是心跳上报的拓扑事实，
+// 不在这里挤占能力位，改挂在「最后心跳」列。
+function capsBadges(dev) {
+  const caps = wifiCaps(dev);
+  if (!caps) {
     const none = document.createElement('span');
     none.className = 'badge offline';
     none.textContent = '未上报';
-    none.title = 'AP 未上报 hostapd 的 11k/11v 能力';
+    none.title = 'AP 未上报 hostapd 的 11k/11v/11r 能力';
     return [none];
   }
   const out = [];
@@ -2420,12 +2435,14 @@ function capsBadges(dev) {
     el.className = 'badge ' + (ok ? 'adopted' : 'offline');
     el.textContent = text;
     el.title = title;
-    el.style.marginLeft = '6px';
     out.push(el);
   };
   tag('11k', !!caps.k, caps.k ? 'hostapd 提供 rrm_nr_get_own/rrm_nr_set' : 'hostapd 未提供完整的 11k 邻居报告方法');
   tag('11v', !!caps.v, caps.v ? 'hostapd 提供 bss_transition_request' : 'hostapd 未提供 bss_transition_request');
-  tag('BSS ' + (caps.bss || 0), (caps.bss || 0) > 0, 'hostapd 暴露的 BSS 数量');
+  tag('11r', !!caps.r, caps.r
+    ? 'hostapd 已启用 802.11r（FT）快速漫游' + (caps.md ? '，移动域 ' + caps.md : '')
+    : 'hostapd 未报告 802.11r（FT）：未启用，或运行配置不可读。' +
+      'FT 没有 ubus 方法可探测，此标志来自运行中的 hostapd 配置文件');
   return out;
 }
 
@@ -2494,60 +2511,87 @@ function renderDevices(list) {
     addrCell(tr, dev);
     cell(tr, dev.firmware);
 
+    // 状态列三层结构：第一行只放一个合并的主状态徽章（采纳 × 在线），
+    // 第二行是配置归属（rev / 模板 / 分组），第三行是计划任务与固件进度。
+    // 之前这五类信息全部内联堆叠、任意折行，连「模板」都会被切成「模/板」，
+    // 操作员得在一团徽章和灰色小字里翻找设备是否正常。
+    // data-adopt / data-offline 供底部筛选条读取，不再依赖徽章结构推断。
     const st = document.createElement('td');
+    st.dataset.adopt = dev.state === 'adopted' ? 'adopted' : 'pending';
+    st.dataset.offline = dev.online ? '0' : '1';
+
+    const stack = document.createElement('div');
+    stack.className = 'st-stack';
+    st.appendChild(stack);
+
+    const stRow1 = document.createElement('div');
+    stRow1.className = 'st-row';
     const b = document.createElement('span');
-    b.className = 'badge ' + (dev.state === 'adopted' ? 'adopted' : 'pending');
-    b.textContent = dev.state === 'adopted' ? '已采纳' : '待采纳';
-    st.appendChild(b);
-
-    // Presence is a separate axis from adoption: a reflashed AP keeps its
-    // adopted state forever, so without this badge the controller claimed to be
-    // managing a box that no longer runs an agent.
-    const online = document.createElement('span');
-    online.className = 'badge ' + (dev.online ? 'adopted' : 'offline');
-    online.textContent = dev.online ? '在线' : '离线';
-    online.style.marginLeft = '6px';
-    if (dev.last_seen_age != null)
-      online.title = '最后的网关心跳：' + ago(dev.last_seen)
-        + '（' + Math.round(dev.last_seen_age / 60) + ' 分钟前）';
-    st.appendChild(online);
-
-    for (const badge of capsBadges(dev)) st.appendChild(badge);
-
-    if (dev.config_rev > 0) {
-      const rev = document.createElement('span');
-      rev.className = 'rev';
-      rev.textContent = 'rev ' + dev.config_rev + (dev.applied_rev ? '/' + dev.applied_rev : '');
-      st.appendChild(rev);
+    if (dev.state === 'adopted') {
+      // Presence is a separate axis from adoption: a reflashed AP keeps its
+      // adopted state forever. 合并后语义一眼可读：绿点=在线已采纳，
+      // 灰点=已采纳但失联，琥珀=待采纳；完整语义放 tooltip，
+      // 「最后心跳」列另有人类可读的时间。
+      b.className = 'badge ' + (dev.online ? 'adopted' : 'offline');
+      b.textContent = dev.online ? '在线' : '离线';
+      b.title = '已采纳 · ' + (dev.online ? '在线' : '失联')
+        + (dev.last_seen_age != null
+          ? '，最后心跳 ' + ago(dev.last_seen)
+            + '（' + Math.round(dev.last_seen_age / 60) + ' 分钟前）'
+          : '');
+    } else {
+      b.className = 'badge pending';
+      b.textContent = '待采纳';
+      b.title = '尚未采纳 · 当前' + (dev.online ? '在线' : '离线');
     }
+    stRow1.appendChild(b);
+    stack.appendChild(stRow1);
+
+    // 第二行：配置归属。每个条目是一个整词 span，换行时整体下移不切断。
+    const cfg = [];
+    if (dev.config_rev > 0)
+      cfg.push('rev ' + dev.config_rev + (dev.applied_rev ? '/' + dev.applied_rev : ''));
     // 采纳状态不显示模板时，操作员无法看出这台机器跑的是哪套配置，
     // 解绑重采纳时就容易选错（曾因此拿占位 default 模板去采纳真机）。
-    if (dev.template_id) {
-      const tpl = document.createElement('span');
-      tpl.className = 'rev';
-      tpl.textContent = '模板 ' + dev.template_id;
-      st.appendChild(tpl);
-    }
-    if (dev.reboot_period_days > 0) {
-      const rb = document.createElement('span');
-      rb.className = 'rev';
-      rb.textContent = '周期重启 ' + dev.reboot_period_days + '天 ' + dev.reboot_at;
-      st.appendChild(rb);
-    }
-    if (dev.led_on_at || dev.led_off_at) {
-      const led = document.createElement('span');
-      led.className = 'rev';
-      led.textContent = 'LED 定时 开' + (dev.led_on_at || '—') + ' / 关' + (dev.led_off_at || '—');
-      st.appendChild(led);
-    }
+    if (dev.template_id) cfg.push('模板 ' + dev.template_id);
     // 分组名来自本轮同时拉取的分组列表；匹配不到时显示原始 ID，
     // 至少能让操作员看出这台机器还挂在已被删除的组上。
     if (dev.group_id) {
       const g = groupsCache.find(x => x.id === dev.group_id);
-      const grp = document.createElement('span');
-      grp.className = 'rev';
-      grp.textContent = '分组 ' + (g ? g.name : dev.group_id);
-      st.appendChild(grp);
+      cfg.push('分组 ' + (g ? g.name : dev.group_id));
+    }
+    if (cfg.length) {
+      const row2 = document.createElement('div');
+      row2.className = 'st-row';
+      for (const item of cfg) {
+        const s = document.createElement('span');
+        s.className = 'st-meta';
+        s.textContent = item;
+        row2.appendChild(s);
+      }
+      stack.appendChild(row2);
+    }
+
+    // 第三行：计划任务与固件，出现频率低，有才显示。
+    const tasks = [];
+    if (dev.reboot_period_days > 0)
+      tasks.push('周期重启 ' + dev.reboot_period_days + '天 ' + dev.reboot_at);
+    if (dev.led_on_at || dev.led_off_at)
+      tasks.push('LED 定时 开' + (dev.led_on_at || '—') + ' / 关' + (dev.led_off_at || '—'));
+    if (dev.fw_target && (!features || features.firmware)) {
+      const label = FW_STATE_LABELS[dev.fw_state];
+      tasks.push('固件 ' + dev.fw_target + (label ? ' · ' + label[0] : ''));
+    }
+    if (tasks.length) {
+      const row3 = document.createElement('div');
+      row3.className = 'st-row';
+      for (const item of tasks) {
+        const s = document.createElement('span');
+        s.className = 'st-meta';
+        s.textContent = item;
+        row3.appendChild(s);
+      }
+      stack.appendChild(row3);
     }
     tr.appendChild(st);
 
@@ -2560,30 +2604,52 @@ function renderDevices(list) {
     // 真实 BTM 结果比"客户端有没有动"更可信；这里展示 agent 自启动以来的
     // 累计计数，没有上报时显示破折号，避免把"没数据"误读成"全是 0"。
     const ss = steerStats(dev);
-    const steerLine = document.createElement('div');
-    steerLine.className = 'rev';
-    steerLine.textContent = ss
-      ? '引导：发送 ' + (ss.sent || 0) + ' / 接受 ' + (ss.accepted || 0)
-        + ' / 拒绝 ' + (ss.rejected || 0) + ' / 静默 ' + (ss.suppressed || 0)
-      : '引导：—';
-    steerLine.title = ss
+    const steerRow = document.createElement('div');
+    steerRow.className = 'st-row';
+    steerRow.title = ss
       ? 'agent 自启动以来的累计值，重启后归零'
       : 'AP 未上报引导统计';
-    steeringTd.appendChild(steerLine);
-    cell(tr, ago(dev.last_seen));
+    if (ss) {
+      for (const [label, val] of [['发送', ss.sent], ['接受', ss.accepted],
+        ['拒绝', ss.rejected], ['静默', ss.suppressed]]) {
+        const s = document.createElement('span');
+        s.className = 'st-meta';
+        s.textContent = label + ' ' + (val || 0);
+        steerRow.appendChild(s);
+      }
+    } else {
+      const s = document.createElement('span');
+      s.className = 'st-meta';
+      s.textContent = '引导 —';
+      steerRow.appendChild(s);
+    }
+    steeringTd.appendChild(steerRow);
+    // 11k/11v/11r 是漫游能力，跟引导统计放同一列才有语义关联；
+    // 之前挤在状态列里用绿色徽章和「在线」抢注意力。
+    const capsRow = document.createElement('div');
+    capsRow.className = 'st-row';
+    for (const badge of capsBadges(dev)) capsRow.appendChild(badge);
+    steeringTd.appendChild(capsRow);
+    // 最后心跳列：主文本是心跳时间；BSS 数量来自同一次心跳上报的 hostapd
+    // 枚举，是拓扑事实而非漫游能力，挂在这里正好回答「这份能力报告里
+    // 说了几个 BSS」，也给了能力徽章的判定范围。没有上报就不显示。
+    const hbTd = document.createElement('td');
+    hbTd.textContent = ago(dev.last_seen);
+    const caps = wifiCaps(dev);
+    if (caps && typeof caps.bss === 'number') {
+      const bssLine = document.createElement('div');
+      bssLine.className = 'st-meta';
+      bssLine.textContent = 'BSS ' + caps.bss;
+      bssLine.title = '最近心跳上报的 hostapd BSS 数量；11k/11v/11r 徽章要求全部 BSS 满足'
+        + (caps.bss === 0 ? '（0 个说明 AP 当前没有暴露任何 BSS）' : '');
+      hbTd.appendChild(bssLine);
+    }
+    tr.appendChild(hbTd);
     // uptime 来自上一次心跳，在线时叠加心跳间隔才能显示"现在"的时长；
     // 离线 AP 只保留最后一次上报值，别把陈旧数据伪装成实时。
     const upSec = (dev.uptime || 0) + (dev.online ? (dev.last_seen_age || 0) : 0);
     const upTd = cell(tr, dev.uptime ? duration(upSec) : '');
     upTd.title = dev.uptime ? '上次心跳上报：' + duration(dev.uptime) : 'AP 未上报运行时长';
-
-    if (dev.fw_target && (!features || features.firmware)) {
-      const fw = document.createElement('span');
-      fw.className = 'rev';
-      const label = FW_STATE_LABELS[dev.fw_state];
-      fw.textContent = '固件 ' + dev.fw_target + (label ? ' · ' + label[0] : '');
-      st.appendChild(fw);
-    }
 
     const ops = document.createElement('td');
     ops.className = 'actions';
@@ -6683,10 +6749,13 @@ function fillClientPicker(list) {
     table.parentNode.insertBefore(bar, table);
   }
 
-  /* 第 6 列的前两个徽章分别是「采纳状态」与「在线状态」，其余 .rev 是补充说明 */
+  /* 状态列：renderDevices 在 td 上直接写了 data-adopt / data-offline，
+     读属性即可；徽章推断只作为旧结构的兜底 */
   function stateOf(tr) {
     const st = tr.children[5];
     if (!st) return { adopt: '', offline: false };
+    if (st.dataset && st.dataset.adopt)
+      return { adopt: st.dataset.adopt, offline: st.dataset.offline === '1' };
     const badges = qa('.badge', st), first = badges[0];
     return {
       adopt: first ? (first.classList.contains('pending') ? 'pending' : first.classList.contains('adopted') ? 'adopted' : '') : '',

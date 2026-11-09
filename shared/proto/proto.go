@@ -184,6 +184,16 @@ type WifiCaps struct {
 	BSS int  `json:"bss"`
 	K   bool `json:"k"`
 	V   bool `json:"v"`
+	// R reports 802.11r (FT) fast roaming. Unlike 11k/11v, FT has no ubus
+	// method to probe, so the agent reads the hostapd config files netifd
+	// generated for the running daemon: R is true only when every BSS's
+	// section sets ieee80211r=1. Unreadable config means false — "not
+	// verified", matching the philosophy of K/V.
+	R bool `json:"r"`
+	// MD is the mobility domain (MDID) shared by the FT-enabled BSSs, shown
+	// so operators can compare it across APs: FT only works when every AP
+	// in the roaming set uses the same MDID. Empty when 11r is off.
+	MD string `json:"md,omitempty"`
 }
 
 // SteeringStat is the agent's running count of BTM attempts and outcomes.

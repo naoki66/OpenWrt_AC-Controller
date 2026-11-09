@@ -27,7 +27,7 @@
 **动手前请先看这里：**
 
 - 项目处于 **v0.5.x 早期阶段**，功能、API 与配置格式仍可能变化，不建议直接用于关键生产网络。
-- AP 侧**已验证的硬件**只有 Brightspeed/Gemtek **XR1710G**（airoha/an7581、arm64、DSA），配套 [ImmortalWrt 固件](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)。其他 OpenWrt 系设备需自行验证：要求 DSA 网络模型、`procd`/`ubus`/`uci`/`hostapd` 可用，11k/11v 还要求 hostapd 暴露 `rrm_nr_get_own`、`rrm_nr_set`、`bss_transition_request`。
+- AP 侧**已验证的硬件**只有 Brightspeed/Gemtek **XR1710G**（airoha/an7581、arm64、DSA），配套 [ImmortalWrt 固件](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)。其他 OpenWrt 系设备需自行验证：要求 DSA 网络模型、`procd`/`ubus`/`uci`/`hostapd` 可用，11k/11v 还要求 hostapd 暴露 `rrm_nr_get_own`、`rrm_nr_set`、`bss_transition_request`。设备页的能力徽章是**运行时实测**：11k/11v 探测 ubus 方法面，11r（FT）读取 netifd 生成的 hostapd 运行配置（`/var/run/hostapd-*.conf`）并附带移动域（MDID），全部 BSS 满足才亮。
 - 自动发现要求 AP 与 AC 在**同一广播域**；跨三层需在 AP 的 LuCI 页面填「控制器地址」（见第 8 节）。
 - 镜像为 `linux/amd64` + `linux/arm64` 多架构清单，`docker pull` 会自动选择。
 
@@ -300,6 +300,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `sync_state=rollback` | `sync_message`、`/etc/ac/backup/`、`logread`；多半是 BSS 或管理地址自检失败 |
 | 下发后 SSH 断开 | 管理地址迁移是否经过 `preflight`；防火墙 zone / dropbear 绑定（新版会自动修复） |
 | apply 成功但 11k 为空 | 是否做过第二次 repush |
+| 模板开了 11r 但徽章是灰的 | 能力徽章是运行时实测：等 agent 下一次心跳（探针缓存 5 分钟）；仍灰则 `cat /var/run/hostapd-*.conf` 确认每个 BSS 段都有 `ieee80211r=1`；跨 AP 漫游还要求各 AP 的 `mobility_domain` 一致 |
 | 页面显示离线 | `last_seen_age` 是否超 90s；AP 系统时间是否漂移（签名校验依赖时间） |
 
 </details>

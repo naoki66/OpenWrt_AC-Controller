@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -154,5 +156,118 @@ func TestCapsCollectMethodCallFailure(t *testing.T) {
 	}
 	if caps.K || caps.V {
 		t.Fatalf("caps = %+v, want K/V false when a BSS cannot be inspected", *caps)
+	}
+}
+
+// ftConf writes a netifd-style hostapd config: the first BSS of a phy uses
+// "interface=", later BSSs use "bss=", exactly like /lib/netifd/hostapd.sh.
+func ftConf(t *testing.T, dir, name, body string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const ftConfTwoBSS = `driver=nl80211
+channel=36
+# Setup interface: phy0-ap0
+interface=phy0-ap0
+ssid2="Main"
+ieee80211r=1
+mobility_domain=ab12
+wpa_key_mgmt=FT-PSK
+# Setup interface: phy0-ap1
+bss=phy0-ap1
+ssid2="Guest"
+ieee80211r=1
+wpa_key_mgmt=FT-PSK
+`
+
+func TestCapsFTEnabledEveryBSS(t *testing.T) {
+	c, _, _ := capsFixture("hostapd.phy0-ap0\nhostapd.phy0-ap1\n", map[string]string{
+		"phy0-ap0": fullMethods,
+		"phy0-ap1": fullMethods,
+	})
+	c.ConfDir = t.TempDir()
+	ftConf(t, c.ConfDir, "hostapd-phy0.conf", ftConfTwoBSS)
+
+	caps := c.Collect(context.Background())
+	if caps == nil {
+		t.Fatal("caps = nil, want a report")
+	}
+	if !caps.R {
+		t.Fatal("R must be true when every BSS sets ieee80211r=1")
+	}
+	if caps.MD != "ab12" {
+		t.Fatalf("MD = %q, want the mobility domain from the config", caps.MD)
+	}
+}
+
+func TestCapsFTPartialBSS(t *testing.T) {
+	c, _, _ := capsFixture("hostapd.phy0-ap0\nhostapd.phy0-ap1\n", map[string]string{
+		"phy0-ap0": fullMethods,
+		"phy0-ap1": fullMethods,
+	})
+	c.ConfDir = t.TempDir()
+	ftConf(t, c.ConfDir, "hostapd-phy0.conf", `driver=nl80211
+interface=phy0-ap0
+ieee80211r=1
+bss=phy0-ap1
+ieee80211r=0
+`)
+
+	caps := c.Collect(context.Background())
+	if caps == nil {
+		t.Fatal("caps = nil, want a report")
+	}
+	if caps.R {
+		t.Fatal("R must be false when one BSS disables 11r")
+	}
+	if caps.MD != "" {
+		t.Fatalf("MD = %q, want empty when 11r is not verified", caps.MD)
+	}
+}
+
+func TestCapsFTNoConfigFiles(t *testing.T) {
+	c, _, _ := capsFixture("hostapd.phy0-ap0\n", map[string]string{
+		"phy0-ap0": fullMethods,
+	})
+	// Empty ConfDir points at a directory with no hostapd configs: 11r must
+	// degrade to "not verified" instead of claiming support.
+	c.ConfDir = t.TempDir()
+
+	caps := c.Collect(context.Background())
+	if caps == nil {
+		t.Fatal("caps = nil, want a report")
+	}
+	if caps.R || caps.MD != "" {
+		t.Fatalf("caps = %+v, want R false without readable configs", *caps)
+	}
+	if !caps.K || !caps.V {
+		t.Fatalf("caps = %+v, K/V probing must be unaffected", *caps)
+	}
+}
+
+func TestCapsFTBSSMissingFromConfig(t *testing.T) {
+	c, _, _ := capsFixture("hostapd.phy0-ap0\nhostapd.phy0-ap1\n", map[string]string{
+		"phy0-ap0": fullMethods,
+		"phy0-ap1": fullMethods,
+	})
+	c.ConfDir = t.TempDir()
+	// phy1's config is missing: ap1 cannot be verified, so the AP as a whole
+	// must not claim 11r even though ap0's section enables it.
+	ftConf(t, c.ConfDir, "hostapd-phy0.conf", `interface=phy0-ap0
+ieee80211r=1
+`)
+
+	caps := c.Collect(context.Background())
+	if caps == nil {
+		t.Fatal("caps = nil, want a report")
+	}
+	if caps.R {
+		t.Fatal("R must be false when a BSS cannot be found in any config")
 	}
 }

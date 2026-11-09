@@ -254,8 +254,9 @@ type Agent struct {
 	Clients   *ClientCollector
 	Neighbors *NeighborCollector
 	Radios    *RadioCollector
-	// caps probes what hostapd exposes for 11k/11v. Cached inside the collector:
-	// the probe costs one ubus fork per BSS.
+	// caps probes what hostapd exposes for 11k/11v, plus the 802.11r (FT)
+	// setting read from netifd's generated configs. Cached inside the
+	// collector: the probe costs one ubus fork per BSS.
 	caps *capsCollector
 	// Runner executes the one command that is not part of the apply pipeline:
 	// the detached sysupgrade used by a firmware upgrade.
