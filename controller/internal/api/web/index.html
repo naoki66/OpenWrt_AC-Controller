@@ -405,12 +405,12 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
     content: ""; width: 6px; height: 6px; border-radius: 2px; flex: none;
     margin-right: 10px; background: currentColor; opacity: .42;
   }
-  .nav a[data-view="wireless"], .nav a[data-view="system"] { margin-top: 20px; }
-  .nav a[data-view="wireless"]::after, .nav a[data-view="system"]::after {
+  .nav a[data-view="apmgmt"], .nav a[data-view="system"] { margin-top: 20px; }
+  .nav a[data-view="apmgmt"]::after, .nav a[data-view="system"]::after {
     position: absolute; top: -17px; left: 12px; pointer-events: none;
     font-size: 10.5px; font-weight: 700; letter-spacing: .14em; color: var(--muted);
   }
-  .nav a[data-view="wireless"]::after { content: "配置"; }
+  .nav a[data-view="apmgmt"]::after { content: "配置"; }
   .nav a[data-view="system"]::after { content: "维护"; }
   .nav a:hover { background: var(--panel-2); color: var(--text); }
   .nav a.active {
@@ -631,7 +631,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
     .nav a { justify-content: center; padding: 0; font-size: 0; border-color: transparent; }
     .nav a::before { margin: 0; width: 9px; height: 9px; border-radius: 3px; }
     .nav a::after { content: none !important; }
-    .nav a[data-view="wireless"], .nav a[data-view="system"] { margin-top: 10px; }
+    .nav a[data-view="apmgmt"], .nav a[data-view="system"] { margin-top: 10px; }
     .side-user .who { display: none; }
     .side-user { padding: 12px 0 0; }
     .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -652,7 +652,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
       white-space: nowrap; font-size: 13px; margin: 0;
     }
     .nav a::before { display: none; }
-    .nav a[data-view="wireless"], .nav a[data-view="system"] { margin-top: 0; }
+    .nav a[data-view="apmgmt"], .nav a[data-view="system"] { margin-top: 0; }
     .side-user { display: none; }
     .main { padding: 16px; max-width: 100%; }
     h1 { font-size: 20px; }
@@ -729,12 +729,12 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   @keyframes ui-sk { to { background-position: -200% 0; } }
   /* 高级设置折叠 */
   .ui-advanced-hint { font-size: 11px; letter-spacing: .1em; color: var(--faint); font-weight: 700; text-transform: uppercase; margin: 22px 2px 10px; }
-  #view-devices > .panel.ui-collapsible > h2 { cursor: pointer; user-select: none; }
-  #view-devices > .panel.ui-collapsible > h2::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast); }
-  #view-devices > .panel.ui-collapsed > h2::before { transform: rotate(45deg); }
-  #view-devices > .panel.ui-collapsed { padding-bottom: 13px; }
-  #view-devices > .panel.ui-collapsed > *:not(h2) { display: none !important; }
-  #view-devices > .panel.ui-collapsible > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  #view-devices > .panel.ui-collapsible > h2, #view-apmgmt > .panel.ui-collapsible > h2 { cursor: pointer; user-select: none; }
+  #view-devices > .panel.ui-collapsible > h2::before, #view-apmgmt > .panel.ui-collapsible > h2::before { content: ""; width: 7px; height: 7px; flex: none; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform var(--t-fast); }
+  #view-devices > .panel.ui-collapsed > h2::before, #view-apmgmt > .panel.ui-collapsed > h2::before { transform: rotate(45deg); }
+  #view-devices > .panel.ui-collapsed, #view-apmgmt > .panel.ui-collapsed { padding-bottom: 13px; }
+  #view-devices > .panel.ui-collapsed > *:not(h2), #view-apmgmt > .panel.ui-collapsed > *:not(h2) { display: none !important; }
+  #view-devices > .panel.ui-collapsible > h2:focus-visible, #view-apmgmt > .panel.ui-collapsible > h2:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
   /* 空状态 */
   .ui-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; }
   .ui-empty-ic { width: 44px; height: 44px; border-radius: 13px; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line); color: var(--faint); }
@@ -1036,6 +1036,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
       <a href="#" data-view="devices" class="active">设备概览</a>
       <a href="#" data-view="clients">无线终端</a>
       <a href="#" data-view="telemetry">运行情况</a>
+      <a href="#" data-view="apmgmt">AP管理</a>
       <a href="#" data-view="wireless">无线服务</a>
       <a href="#" data-view="rf">射频管理</a>
       <a href="#" data-view="ports">设备端口</a>
@@ -1051,6 +1052,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
   <main class="main">
     <div id="auth-bar" hidden>
       <span id="auth-why">当前仍在使用默认密码（123456），请尽快修改。</span>
+      <button id="auth-goto-secret" hidden>去配置密钥</button>
       <button id="auth-goto">去修改账户</button>
     </div>
 
@@ -1066,6 +1068,44 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <div class="card"><div class="k">在线客户端</div><div class="v" id="clients-online">–</div></div>
         <div class="card"><div class="k">控制器 ID</div><div class="v mono" id="acid">–</div></div>
       </div>
+
+      <div class="panel" id="ap-guide">
+        <h2>AP 接入引导</h2>
+        <p class="note">
+          AP 接入控制器需要先配置「AP 共享密钥」：AP 上报与拉取配置包时都用它做鉴权，
+          未配置密钥的 AP 无法完成接入。密钥的查看、生成与轮换，以及周期重启、状态 LED、
+          AP 分组的日常管理，已统一收进「AP 管理」页面。
+        </p>
+        <button class="primary" id="go-apmgmt" type="button">前往 AP 管理</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>主机名</th><th>型号</th><th>MAC</th><th>地址</th><th>固件</th>
+            <th>状态</th><th>漫游引导</th><th>最后心跳</th><th>运行时长</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="10" class="empty">等待 AP 上线…</td></tr>
+        </tbody>
+      </table>
+
+      <!-- 设备操作弹窗：表格行内只留一个入口按钮，具体动作在这里给出 -->
+      <div id="dev-actions-mask" class="modal-mask hidden">
+        <div class="wl-editor modal-card" id="dev-actions"></div>
+      </div>
+
+      <div class="msg" id="msg"></div>
+
+      <p class="hint">
+        采纳后控制器按模板渲染并签名配置包，AP 拉取时验签。AC 公钥（ed25519）：<code id="pubkey">–</code>
+      </p>
+    </section>
+
+    <section id="view-apmgmt" class="hidden">
+      <h1>AP 管理</h1>
+      <div class="sub">AP 共享密钥、周期重启、状态 LED 与 AP 分组的集中管理</div>
 
       <div class="panel">
         <h2>
@@ -1092,25 +1132,6 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <button id="sec-save" class="primary">保存密钥</button>
         <div class="msg" id="sec-msg"></div>
       </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>主机名</th><th>型号</th><th>MAC</th><th>地址</th><th>固件</th>
-            <th>状态</th><th>漫游引导</th><th>最后心跳</th><th>运行时长</th><th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="rows">
-          <tr><td colspan="10" class="empty">等待 AP 上线…</td></tr>
-        </tbody>
-      </table>
-
-      <!-- 设备操作弹窗：表格行内只留一个入口按钮，具体动作在这里给出 -->
-      <div id="dev-actions-mask" class="modal-mask hidden">
-        <div class="wl-editor modal-card" id="dev-actions"></div>
-      </div>
-
-      <div class="msg" id="msg"></div>
 
       <div class="panel">
         <h2>周期重启</h2>
@@ -1190,10 +1211,6 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
         <button id="grp-unbind" class="ghost">移出分组</button>
         <div class="msg" id="grp-bind-msg"></div>
       </div>
-
-      <p class="hint">
-        采纳后控制器按模板渲染并签名配置包，AP 拉取时验签。AC 公钥（ed25519）：<code id="pubkey">–</code>
-      </p>
     </section>
 
     <section id="view-clients" class="hidden">
@@ -1545,7 +1562,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
 
       <div class="panel">
         <h2>控制器诊断</h2>
-        <p class="note">这里只报告是否要求鉴权；密钥值本身在设备页的「AP 共享密钥」面板里</p>
+        <p class="note">这里只报告是否要求鉴权；密钥值本身在「AP 管理」页的「AP 共享密钥」面板里</p>
         <table style="margin-top:12px"><tbody id="sys-rows"></tbody></table>
       </div>
 
@@ -1792,6 +1809,21 @@ const loginUser = $('login-user');
 const loginPass = $('login-pass');
 const authBar = $('auth-bar');
 
+let secretConfigured = null; // null=未知，true/false=「AP 共享密钥」是否已配置
+
+// 顶栏提醒：默认密码未改、或 AP 共享密钥还没配置（AP 会因鉴权失败无法接入），
+// 两个条件任一成立就显示，文案按实际缺项拼装，按钮只放行到对应页面。
+function updateAuthWhy() {
+  const needSecret = secretConfigured === false;
+  authBar.hidden = !(authDefaultPassword || needSecret);
+  const parts = [];
+  if (authDefaultPassword) parts.push('当前仍在使用默认密码（123456），请尽快修改');
+  if (needSecret) parts.push('AP 接入前还需先在「AP 管理」里配置共享密钥');
+  $('auth-why').textContent = parts.length ? parts.join('；') + '。' : '';
+  const g = $('auth-goto-secret');
+  if (g) g.hidden = !needSecret;
+}
+
 function showLogin(why) {
   loggedIn = false;
   loginOverlay.hidden = false;
@@ -1820,8 +1852,8 @@ function applySession(s) {
   $('acct-name').value = currentUser;
   // 改名后重新登录时，登录框不应再默认填旧名。
   loginUser.value = currentUser;
-  // 默认密码没改过就一直提醒，但只是提醒，不阻挡使用。
-  authBar.hidden = !authDefaultPassword;
+  // 默认密码没改过就一直提醒，但只是提醒，不阻挡使用；共享密钥缺配置时一并提示。
+  updateAuthWhy();
   hideLogin();
   return true;
 }
@@ -1895,6 +1927,19 @@ $('logout-btn').addEventListener('click', logout);
 
 $('auth-goto').addEventListener('click', () => {
   const link = document.querySelector('.nav a[data-view="system"]');
+  if (link) link.click();
+});
+
+// 顶栏「去配置密钥」：直达 AP 管理页的共享密钥面板。
+$('auth-goto-secret').addEventListener('click', () => {
+  const link = document.querySelector('.nav a[data-view="apmgmt"]');
+  if (link) link.click();
+});
+
+// 设备概览引导面板：跳到 AP 管理页。
+const goApmgmt = $('go-apmgmt');
+if (goApmgmt) goApmgmt.addEventListener('click', () => {
+  const link = document.querySelector('.nav a[data-view="apmgmt"]');
   if (link) link.click();
 });
 
@@ -3088,6 +3133,9 @@ async function loadSecretPanel() {
     badge.hidden = false;
     badge.textContent = ss.source === 'settings' ? '页面设置' : '来自环境变量';
     badge.className = 'badge ' + (ss.set ? 'adopted' : 'offline');
+    // 同步顶栏提醒：密钥是否已配置决定了「去配置密钥」按钮与文案。
+    secretConfigured = !!ss.set;
+    updateAuthWhy();
   } catch (e) {
     if (!noteUnauthorized(e)) saySec(e.message, 'err');
   }
@@ -6475,7 +6523,7 @@ $('acct-save').addEventListener('click', async () => {
     $('acct-old').value = '';
     $('acct-new').value = '';
     $('acct-new2').value = '';
-    authBar.hidden = !authDefaultPassword;
+    updateAuthWhy();
     sayAcct('账户已更新，其他设备上的登录会话已失效', 'ok');
   } catch (e) {
     // 当前密码错误返回 401，但不是会话失效，不能触发登录层。
@@ -6495,6 +6543,7 @@ document.querySelectorAll('.nav a[data-view]').forEach(a => {
     currentView = view;
     const panels = {
       devices: 'view-devices',
+      apmgmt: 'view-apmgmt',
       clients: 'view-clients',
       telemetry: 'view-telemetry',
       wireless: 'view-wireless',
@@ -6512,6 +6561,7 @@ document.querySelectorAll('.nav a[data-view]').forEach(a => {
     if (view === 'ports') loadPorts();
     if (view === 'firmware') loadFirmware();
     if (view === 'system') loadSystem();
+    if (view === 'apmgmt') loadSecretPanel();
   });
 });
 
@@ -6668,10 +6718,15 @@ function fillClientPicker(list) {
   }
 
   /* ---------- 高级设置折叠（不移动任何 DOM，只加 class 与标题交互） ---------- */
-  const panels = qa('#view-devices > .panel');
-  if (panels.length && panels[0].parentNode) {
-    panels[0].parentNode.insertBefore(mk('div', 'ui-advanced-hint', '高级设置 · 点击标题展开'), panels[0]);
-  }
+  const panels = qa('#view-devices > .panel:not(#ap-guide), #view-apmgmt > .panel');
+  const hinted = new Set();
+  panels.forEach((p) => {
+    // 每个容器（设备概览 / AP 管理）只在首个可折叠面板前插一次提示
+    if (p.parentNode && !hinted.has(p.parentNode)) {
+      hinted.add(p.parentNode);
+      p.parentNode.insertBefore(mk('div', 'ui-advanced-hint', '高级设置 · 点击标题展开'), p);
+    }
+  });
   panels.forEach((p) => {
     const h = Array.prototype.slice.call(p.children).filter((c) => c.tagName === 'H2')[0];
     if (!h) return;
