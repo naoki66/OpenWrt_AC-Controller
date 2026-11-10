@@ -344,6 +344,12 @@ CREATE TABLE IF NOT EXISTS port_state (
 );
 CREATE INDEX IF NOT EXISTS idx_port_state_ap ON port_state(ap_mac);
 
+CREATE TABLE IF NOT EXISTS mesh_state (
+	ap_mac TEXT PRIMARY KEY,
+	report TEXT NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+
 -- Packages are kept whole so the exact bytes handed to an AP stay auditable.
 CREATE TABLE IF NOT EXISTS packages (
 	mac        TEXT NOT NULL,

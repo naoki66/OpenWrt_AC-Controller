@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"testing"
 	"time"
@@ -34,16 +35,22 @@ func TestControllerClientHasSplitTimeouts(t *testing.T) {
 	}
 }
 
-// An unreachable controller must fail in dial time, not in total time. The
-// address is TEST-NET-1 (RFC 5737), which is never routable.
+// 控制器拒绝连接时应及时失败，因此使用已关闭的本地端口。
+// TEST-NET 地址可能受宿主机路由或代理影响，无法稳定模拟不可达状态。
 func TestHelloFailsInDialTimeWhenControllerIsUnreachable(t *testing.T) {
-	c := NewClient("http://192.0.2.1:9", "")
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	l.Close()
+	c := NewClient("http://"+addr, "")
 	if tr, ok := c.HTTP.Transport.(*http.Transport); ok {
 		tr.Proxy = nil // an environment proxy would answer instead of the void
 	}
 
 	start := time.Now()
-	_, err := c.Hello(context.Background(), proto.Hello{MAC: "00:00:00:00:00:21"})
+	_, err = c.Hello(context.Background(), proto.Hello{MAC: "00:00:00:00:00:21"})
 	elapsed := time.Since(start)
 
 	if err == nil {

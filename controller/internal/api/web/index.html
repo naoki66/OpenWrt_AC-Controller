@@ -1036,6 +1036,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
     <div class="brand"><span class="brand-mark">AC</span> 无线控制器</div>
     <nav class="nav">
       <a href="#" data-view="devices" class="active">设备概览</a>
+      <a href="#" data-view="mesh">Mesh 组网</a>
       <a href="#" data-view="clients">无线终端</a>
       <a href="#" data-view="telemetry">运行情况</a>
       <a href="#" data-view="apmgmt">AP管理</a>
@@ -1106,6 +1107,34 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
       <p class="hint">
         采纳后控制器按模板渲染并签名配置包，AP 拉取时验签。AC 公钥（ed25519）：<code id="pubkey">–</code>
       </p>
+    </section>
+
+    <section id="view-mesh" class="hidden">
+      <h1>Mesh 组网</h1>
+      <div class="sub">实验性功能，未进行实机测试 · 802.11s 回程 · 节点链路状态</div>
+      <div class="panel">
+        <h2>回程设置</h2>
+        <p class="note">先在端口页配置单一 LAN 桥和每台设备的独立管理地址。无线回程使用同一固定信道、频宽、国家码与密钥；首次接入通过网线完成。</p>
+        <div class="act-row">
+          <label>模板 <select id="mesh-template"></select></label>
+          <label>回程 <select id="mesh-mode"><option value="wired">有线回程</option><option value="80211s">802.11s 无线回程</option></select></label>
+          <label>频段 <select id="mesh-band"><option value="5g">5 GHz</option><option value="2g">2.4 GHz</option></select></label>
+          <label>Mesh ID <input id="mesh-id" maxlength="32" autocomplete="off"></label>
+          <label>回程密钥 <input id="mesh-key" type="password" autocomplete="new-password" maxlength="63"></label>
+          <label>LAN 网络 <input id="mesh-network" value="lan"></label>
+          <label><input type="checkbox" id="mesh-dedicated"> 独占回程频段</label>
+          <button id="mesh-save" class="primary">保存回程设置</button>
+        </div>
+        <p class="hint">保存后在设备概览逐台预检并重新下发，确认同步成功后再拔掉节点网线。独占频段需要先在无线服务中取消该频段的客户端 SSID。本版无线回程仅承载单一 LAN。</p>
+        <div id="mesh-msg" class="msg" role="status"></div>
+      </div>
+      <div class="panel">
+        <h2>节点连接</h2>
+        <p class="note">显示 802.11s 邻接关系，不代表当前流量的父节点或有线/无线优先级。未上报节点显示未知。</p>
+        <div id="mesh-topology" class="mesh-topology"></div>
+        <button id="mesh-refresh">刷新链路</button>
+        <div id="mesh-live-msg" class="msg" role="status"></div>
+      </div>
     </section>
 
     <section id="view-apmgmt" class="hidden">
@@ -3283,6 +3312,7 @@ async function refresh() {
     // 模板工作频率编辑器留在 loadRF 里，避免轮询重置未保存的编辑。
     if (currentView === 'rf') refreshRFStatus();
     if (currentView === 'ports') refreshPortStates();
+    if (currentView === 'mesh') refreshMeshStatus();
     // 系统页复用这一轮已经取到的设备列表，再补一次运维查询与事件日志。
     if (currentView === 'system') {
       fillDiagDevices(devices);
@@ -6768,6 +6798,7 @@ document.querySelectorAll('.nav a[data-view]').forEach(a => {
     currentView = view;
     const panels = {
       devices: 'view-devices',
+      mesh: 'view-mesh',
       apmgmt: 'view-apmgmt',
       clients: 'view-clients',
       telemetry: 'view-telemetry',
@@ -6782,6 +6813,7 @@ document.querySelectorAll('.nav a[data-view]').forEach(a => {
     }
     if (view === 'telemetry') loadTelemetry();
     if (view === 'wireless') loadWireless();
+    if (view === 'mesh') loadMesh();
     if (view === 'rf') loadRF();
     if (view === 'ports') loadPorts();
     if (view === 'firmware') loadFirmware();
@@ -7223,5 +7255,6 @@ function fillClientPicker(list) {
   }
 })();
 </script>
+<script src="/mesh.js"></script>
 </body>
 </html>

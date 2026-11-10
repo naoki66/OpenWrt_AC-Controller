@@ -38,11 +38,12 @@ const (
 
 // Template is a complete provisioning intent for one AP.
 type Template struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Bridge Bridge  `json:"bridge"`
-	Radios []Radio `json:"radios"`
-	SSIDs  []SSID  `json:"ssids"`
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Bridge Bridge        `json:"bridge"`
+	Radios []Radio       `json:"radios"`
+	SSIDs  []SSID        `json:"ssids"`
+	Mesh   *MeshBackhaul `json:"mesh,omitempty"`
 	// Steering names the client-steering daemon the AP should run. The
 	// controller never makes per-client steering decisions itself (design D4):
 	// those are millisecond-scale and belong on the AP.
@@ -402,6 +403,9 @@ var htmodeRe = regexp.MustCompile(`^(HT|VHT|HE|EHT)(20|40|80|160|320)$`)
 // fixing a template over the API does not play whack-a-mole.
 func (t Template) Validate() error {
 	var errs []error
+	if err := t.validateMesh(); err != nil {
+		errs = append(errs, err)
+	}
 	if strings.TrimSpace(t.ID) == "" {
 		errs = append(errs, errors.New("id is required"))
 	}

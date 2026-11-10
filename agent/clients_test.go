@@ -60,7 +60,8 @@ const wirelessStatusFixture = `{
 func newCollector(t *testing.T, outputs map[string]string) (*ClientCollector, *mapRunner) {
 	t.Helper()
 	r := &mapRunner{outputs: outputs}
-	return &ClientCollector{Runner: r, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, r
+	// 测试夹具提供的是 iw 输出，应避免探测宿主机真实的 nl80211 接口。
+	return &ClientCollector{Runner: r, Source: "iw", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, r
 }
 
 func TestCollectClients(t *testing.T) {

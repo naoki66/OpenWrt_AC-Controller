@@ -162,7 +162,7 @@ func (c *RadioCollector) hostapd(ctx context.Context, ifname string) (hostapdSta
 // its channel, so the first is as good as any.
 func firstIfname(radio radioStatus) string {
 	for _, iface := range radio.Interfaces {
-		if iface.Ifname != "" {
+		if iface.Ifname != "" && (iface.Config.Mode == "" || iface.Config.Mode == "ap") {
 			return iface.Ifname
 		}
 	}

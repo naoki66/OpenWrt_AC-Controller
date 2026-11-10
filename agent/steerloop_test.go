@@ -53,7 +53,7 @@ func newSteerFixture(t *testing.T) *steerFixture {
 			Runner:   runner,
 			Log:      log,
 		},
-		Clients: &ClientCollector{Runner: runner, Log: log},
+		Clients: &ClientCollector{Runner: runner, Source: "iw", Log: log},
 	}
 	loop := NewSteerLoop()
 	loop.Agent = a
