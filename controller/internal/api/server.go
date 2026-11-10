@@ -241,6 +241,8 @@ func (s *Server) Handler() http.Handler {
 	// Partial updates: the SSID editor must not rewrite the layer-2 fabric it
 	// does not display, and renaming must not require re-sending 18 SSIDs.
 	admin("PUT /api/v1/templates/{id}/ssids", s.handleTemplateSSIDs)
+	admin("PUT /api/v1/templates/{id}/mesh", s.handleTemplateMesh)
+	admin("GET /api/v1/mesh", s.handleMesh)
 	admin("PUT /api/v1/templates/{id}/name", s.handleTemplateRename)
 
 	// AP groups: membership plus the template each group's members should run.

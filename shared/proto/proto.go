@@ -72,11 +72,12 @@ const (
 // the report channel, which keeps the AP's outbound traffic to one request per
 // interval and makes the exchange idempotent.
 type Hello struct {
-	MAC        string `json:"mac"`
-	Model      string `json:"model"`
-	Firmware   string `json:"firmware"`
-	Hostname   string `json:"hostname"`
-	AppliedRev int    `json:"applied_rev"`
+	Mesh       []MeshStat `json:"mesh"`
+	MAC        string     `json:"mac"`
+	Model      string     `json:"model"`
+	Firmware   string     `json:"firmware"`
+	Hostname   string     `json:"hostname"`
+	AppliedRev int        `json:"applied_rev"`
 	// SyncState reports the outcome of the last apply attempt.
 	SyncState   string `json:"sync_state"`
 	SyncMessage string `json:"sync_message,omitempty"`

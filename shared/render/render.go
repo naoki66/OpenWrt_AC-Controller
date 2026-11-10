@@ -219,6 +219,19 @@ func Wireless(t model.Template, opts Options) ([]byte, error) {
 		}
 	}
 
+	if t.MeshEnabled() {
+		m := t.Mesh
+		section(&b, "wifi-iface", opts.Prefix+"mesh_backhaul")
+		option(&b, "device", radioName(radioIndex[m.Band]))
+		option(&b, "mode", "mesh")
+		option(&b, "mesh_id", m.ID)
+		option(&b, "encryption", "sae")
+		option(&b, "key", m.Key)
+		option(&b, "network", m.Network)
+		option(&b, "mesh_fwding", "1")
+		option(&b, "mesh_gate_announcements", "0")
+		option(&b, "disabled", "0")
+	}
 	return []byte(b.String()), nil
 }
 
@@ -247,6 +260,9 @@ func Network(t model.Template, opts Options) ([]byte, error) {
 		section(&b, "device", name)
 		option(&b, "name", br.Name)
 		option(&b, "type", "bridge")
+		if t.MeshEnabled() {
+			option(&b, "stp", "1")
+		}
 		for _, p := range br.Ports {
 			list(&b, "ports", p)
 		}

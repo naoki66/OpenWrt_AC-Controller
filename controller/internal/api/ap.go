@@ -51,6 +51,23 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reportingMAC := mac
+	// 写入设备状态前先限制新增心跳字段的大小，避免异常上报占用过多资源。
+	if len(hello.Mesh) > 8 {
+		writeError(w, 400, errors.New("too many mesh interfaces"))
+		return
+	}
+	for _, m := range hello.Mesh {
+		if len(m.Peers) > 64 || len(m.Ifname) > 32 || len(m.Radio) > 32 || len(m.Error) > 128 || len(m.MAC) > 17 {
+			writeError(w, 400, errors.New("mesh report too large"))
+			return
+		}
+		for _, p := range m.Peers {
+			if discovery.NormalizeMAC(p.MAC) == "" {
+				writeError(w, 400, errors.New("invalid mesh peer MAC"))
+				return
+			}
+		}
+	}
 
 	ctx := r.Context()
 
@@ -68,6 +85,11 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		IP:       clientIP(r),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := s.Store.RecordMesh(ctx, mac, hello.Mesh); err != nil {
+		writeError(w, 500, err)
 		return
 	}
 

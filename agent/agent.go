@@ -944,6 +944,7 @@ func (a *Agent) buildHello(ctx context.Context) proto.Hello {
 		Clients:       clients,
 		Neighbors:     a.collectNeighbors(ctx),
 		Radios:        a.collectRadios(ctx, clients),
+		Mesh:          a.collectMesh(ctx),
 		Ports:         collectPorts(a.Config.Root),
 
 		FirmwareState:   a.state.FirmwareState,

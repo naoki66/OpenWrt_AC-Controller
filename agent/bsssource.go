@@ -56,7 +56,7 @@ func (r netifdBSSReader) BSS(ctx context.Context) ([]bssInfo, error) {
 	for _, radio := range status {
 		band := string(radio.Config.Band)
 		for _, iface := range radio.Interfaces {
-			if iface.Ifname == "" {
+			if iface.Ifname == "" || (iface.Config.Mode != "" && iface.Config.Mode != "ap") {
 				continue
 			}
 			list = append(list, bssInfo{Ifname: iface.Ifname, SSID: iface.Config.SSID, Band: band})

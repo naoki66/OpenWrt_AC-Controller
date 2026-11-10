@@ -242,6 +242,14 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 		return res, fmt.Errorf("apply: health check failed: %w", err)
 	}
 
+	// Mesh 节点即使保留本机地址和 BSS，也可能已经丢失上联，因此需额外探测控制器。
+	if hasMeshBackhaul(curWireless) || hasMeshBackhaul(mergedWireless) {
+		if err := a.waitForMeshController(ctx); err != nil {
+			a.rollback(ctx, backupDir, pending)
+			return res, fmt.Errorf("apply: mesh health check failed: %w", err)
+		}
+	}
+
 	// A network change must not cost an address. BSSes can be up while the
 	// management IP is gone, which would pass the check above and lock the
 	// operator out of the device. A deliberate renumbering passes only when a
@@ -963,6 +971,7 @@ type radioStatus struct {
 		Up      *bool  `json:"up"`
 		Config  struct {
 			SSID string `json:"ssid"`
+			Mode string `json:"mode"`
 		} `json:"config"`
 	} `json:"interfaces"`
 }

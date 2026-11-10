@@ -49,6 +49,9 @@ start_service() {
 	# replace the first, not add to it. Calling it twice silently dropped
 	# AC_SECRET and every hello came back 401 — found only on real hardware.
 	env_set="AC_SECRET=$secret"
+	# 主路由节点需要保留 DHCP/DNS 服务，由 keep_dhcp 显式控制。
+	keep_dhcp=$(uci -q get ac.agent.keep_dhcp)
+	[ "$keep_dhcp" = "1" ] && env_set="$env_set AC_KEEP_DHCP=1"
 	[ -n "$interval" ] && env_set="$env_set AC_INTERVAL=${interval}s"
 	[ -n "$peer_port" ] && env_set="$env_set AC_PEER_PORT=$peer_port"
 	[ -n "$peer_interval" ] && env_set="$env_set AC_PEER_INTERVAL=$peer_interval"
