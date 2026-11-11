@@ -254,6 +254,11 @@ func signingBytes(m Manifest) ([]byte, error) {
 }
 
 func readTarGz(data []byte) (map[string][]byte, error) {
+	const (
+		maxUncompressed = 16 << 20
+		maxEntry        = 8 << 20
+		maxEntries      = 32
+	)
 	gz, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("bundle: open gzip: %w", err)
@@ -261,7 +266,8 @@ func readTarGz(data []byte) (map[string][]byte, error) {
 	defer gz.Close()
 
 	files := map[string][]byte{}
-	tr := tar.NewReader(gz)
+	bounded := &io.LimitedReader{R: gz, N: maxUncompressed + 1}
+	tr := tar.NewReader(bounded)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -278,11 +284,20 @@ func readTarGz(data []byte) (map[string][]byte, error) {
 		if err := validName(hdr.Name); err != nil {
 			return nil, err
 		}
-		body, err := io.ReadAll(io.LimitReader(tr, 8<<20))
+		if len(files) >= maxEntries || hdr.Size < 0 || hdr.Size > maxEntry || hdr.Size >= bounded.N {
+			return nil, errors.New("bundle: archive exceeds extraction budget")
+		}
+		if _, duplicate := files[hdr.Name]; duplicate {
+			return nil, fmt.Errorf("bundle: duplicate file %q", hdr.Name)
+		}
+		body, err := io.ReadAll(tr)
 		if err != nil {
 			return nil, fmt.Errorf("bundle: read %s: %w", hdr.Name, err)
 		}
 		files[hdr.Name] = body
+	}
+	if bounded.N == 0 {
+		return nil, errors.New("bundle: archive exceeds extraction budget")
 	}
 	if len(files) == 0 {
 		return nil, errors.New("bundle: archive is empty")

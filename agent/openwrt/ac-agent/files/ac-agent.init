@@ -25,8 +25,12 @@ start_service() {
 	fi
 
 	ac_addr=$(uci -q get ac.agent.ac_addr)
+	ac_public_key=$(uci -q get ac.agent.ac_public_key)
+	device_key=$(uci -q get ac.agent.device_key)
+	disable_dhcp=$(uci -q get ac.agent.disable_dhcp)
 	secret=$(uci -q get ac.agent.secret)
 	interval=$(uci -q get ac.agent.interval)
+	health_timeout=$(uci -q get ac.agent.health_timeout)
 	peer_port=$(uci -q get ac.agent.peer_port)
 	peer_interval=$(uci -q get ac.agent.peer_interval)
 	peer_network=$(uci -q get ac.agent.peer_network)
@@ -48,13 +52,14 @@ start_service() {
 	# env takes the whole set in one call: a second procd_set_param env would
 	# replace the first, not add to it. Calling it twice silently dropped
 	# AC_SECRET and every hello came back 401 — found only on real hardware.
-	env_set="AC_SECRET=$secret"
-	[ -n "$interval" ] && env_set="$env_set AC_INTERVAL=${interval}s"
-	[ -n "$peer_port" ] && env_set="$env_set AC_PEER_PORT=$peer_port"
-	[ -n "$peer_interval" ] && env_set="$env_set AC_PEER_INTERVAL=$peer_interval"
-	[ -n "$peer_network" ] && env_set="$env_set AC_PEER_NETWORK=$peer_network"
-	env_set="$env_set AC_PEER_STEER=$peer_steer"
-	procd_set_param env $env_set
+	set -- "AC_SECRET=$secret" "AC_PUBLIC_KEY=$ac_public_key" "AC_DEVICE_KEY=$device_key" \
+		"AC_DISABLE_DHCP=$disable_dhcp" "AC_PEER_STEER=$peer_steer"
+	[ -z "$interval" ] || set -- "$@" "AC_INTERVAL=${interval}s"
+	[ -z "$health_timeout" ] || set -- "$@" "AC_HEALTH_TIMEOUT=$health_timeout"
+	[ -z "$peer_port" ] || set -- "$@" "AC_PEER_PORT=$peer_port"
+	[ -z "$peer_interval" ] || set -- "$@" "AC_PEER_INTERVAL=$peer_interval"
+	[ -z "$peer_network" ] || set -- "$@" "AC_PEER_NETWORK=$peer_network"
+	procd_set_param env "$@"
 
 	# Respawn forever: a provisioning agent that gives up is worse than one that
 	# keeps retrying, and the controller may legitimately be down for hours.

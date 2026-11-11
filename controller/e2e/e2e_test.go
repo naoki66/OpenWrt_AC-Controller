@@ -21,6 +21,7 @@ import (
 	"github.com/naoki66/ac-controller/controller/internal/provision"
 	"github.com/naoki66/ac-controller/controller/internal/store"
 	"github.com/naoki66/ac-controller/shared/model"
+	"github.com/naoki66/ac-controller/shared/secret"
 )
 
 const apMAC = "8c:de:52:11:22:33"
@@ -103,8 +104,15 @@ type acFixture struct {
 	cookie *http.Cookie
 }
 
+const fixtureAPSecret = "e2e-ap-shared-secret"
+
+var fixtureDeviceKey = strings.Repeat("ab", 32)
+
 func newAC(t *testing.T, secret string) *acFixture {
 	t.Helper()
+	if secret == "" {
+		secret = fixtureAPSecret
+	}
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "ac.db"))
 	if err != nil {
@@ -113,6 +121,9 @@ func newAC(t *testing.T, secret string) *acFixture {
 	ctx := context.Background()
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
+	}
+	if err := st.SetSetting(ctx, store.DeviceKeySetting(apMAC), fixtureDeviceKey); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := api.EnsureAdminAccount(ctx, st, "admin", "123456"); err != nil {
 		t.Fatalf("seed admin account: %v", err)
@@ -127,12 +138,13 @@ func newAC(t *testing.T, secret string) *acFixture {
 	}
 
 	srv := &api.Server{
-		Store:        st,
-		ACID:         "cafebabecafebabecafebabecafebabe",
-		Key:          key,
-		Provision:    &provision.Service{Store: st, Key: key, ACID: "cafebabecafebabecafebabecafebabe"},
-		SharedSecret: secret,
-		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:           st,
+		ACID:            "cafebabecafebabecafebabecafebabe",
+		Key:             key,
+		Provision:       &provision.Service{Store: st, Key: key, ACID: "cafebabecafebabecafebabecafebabe"},
+		SharedSecret:    secret,
+		RequireSignedAP: true,
+		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(func() {
@@ -145,8 +157,7 @@ func newAC(t *testing.T, secret string) *acFixture {
 	return f
 }
 
-// login obtains the session cookie the management calls need. The seeded
-// credentials are the same defaults the deployment page advertises.
+// login obtains the session cookie for the fixture's test account.
 func (f *acFixture) login() {
 	f.t.Helper()
 	resp, err := http.Post(f.server.URL+"/api/v1/auth/login", "application/json",
@@ -216,6 +227,9 @@ func (f *acFixture) device(t *testing.T, mac string) store.Device {
 
 func newAgentFixture(t *testing.T, ac *acFixture, secret string) (*agent.Agent, *scriptedRunner, string) {
 	t.Helper()
+	if secret == "" {
+		secret = fixtureAPSecret
+	}
 
 	root := t.TempDir()
 	configDir := filepath.Join(root, "etc", "config")
@@ -231,6 +245,8 @@ func newAgentFixture(t *testing.T, ac *acFixture, secret string) (*agent.Agent, 
 	cfg := agent.Config{
 		Root:          root,
 		ACAddr:        strings.TrimPrefix(ac.server.URL, "http://"),
+		ACPublicKey:   ac.key.PublicHex(),
+		DeviceKey:     fixtureDeviceKey,
 		Secret:        secret,
 		HealthTimeout: 0,
 		Identity: agent.Identity{
@@ -365,8 +381,11 @@ func TestAgentAppliesLowerRevisionWhenControllerRollsBack(t *testing.T) {
 	}
 
 	a2, err := agent.New(agent.Config{
-		Root:   root,
-		ACAddr: strings.TrimPrefix(ac.server.URL, "http://"),
+		Root:        root,
+		ACAddr:      strings.TrimPrefix(ac.server.URL, "http://"),
+		ACPublicKey: ac.key.PublicHex(),
+		DeviceKey:   fixtureDeviceKey,
+		Secret:      fixtureAPSecret,
 		Identity: agent.Identity{
 			MAC: apMAC, Model: "XR1710G", Firmware: "20261026", Hostname: "ap250",
 		},
@@ -397,25 +416,14 @@ func TestAgentRefusesWhenPinnedKeyChanges(t *testing.T) {
 		t.Fatalf("step: %v", err)
 	}
 
-	// Simulate a swapped controller: rewrite the pinned key on disk.
-	statePath := filepath.Join(root, "etc", "ac", "state.json")
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatalf("read state: %v", err)
-	}
-	var st map[string]any
-	if err := json.Unmarshal(raw, &st); err != nil {
-		t.Fatalf("decode state: %v", err)
-	}
-	st["pubkey"] = hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 32))
-	patched, _ := json.Marshal(st)
-	if err := os.WriteFile(statePath, patched, 0o600); err != nil {
-		t.Fatalf("write state: %v", err)
-	}
-
+	// A controller not matching the configured trust root is refused even
+	// when state.json contains its key from a previous run.
 	a2, err := agent.New(agent.Config{
-		Root:   root,
-		ACAddr: strings.TrimPrefix(ac.server.URL, "http://"),
+		Root:        root,
+		ACAddr:      strings.TrimPrefix(ac.server.URL, "http://"),
+		ACPublicKey: hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 32)),
+		DeviceKey:   fixtureDeviceKey,
+		Secret:      fixtureAPSecret,
 		Identity: agent.Identity{
 			MAC: apMAC, Model: "XR1710G", Hostname: "ap250",
 		},
@@ -425,21 +433,82 @@ func TestAgentRefusesWhenPinnedKeyChanges(t *testing.T) {
 		t.Fatalf("new agent: %v", err)
 	}
 	err = a2.Step(ctx)
-	if err == nil || !strings.Contains(err.Error(), "public key changed") {
+	if err == nil || !strings.Contains(err.Error(), "provisioned public key") {
 		t.Fatalf("expected a key-change refusal, got %v", err)
 	}
 }
 
-func TestAgentRejectsWrongSecret(t *testing.T) {
-	ac := newAC(t, "right-secret")
-	a, _, _ := newAgentFixture(t, ac, "wrong-secret")
+func TestAgentRejectsWrongDeviceKey(t *testing.T) {
+	ac := newAC(t, "")
+	if err := ac.store.SetSetting(context.Background(), store.DeviceKeySetting(apMAC), strings.Repeat("cd", 32)); err != nil {
+		t.Fatal(err)
+	}
+	a, _, _ := newAgentFixture(t, ac, "")
 
 	err := a.Step(context.Background())
 	if err == nil {
-		t.Fatal("agent authenticated with the wrong secret")
+		t.Fatal("agent authenticated with the wrong device key")
 	}
 	if !strings.Contains(err.Error(), "401") {
 		t.Errorf("error should surface the 401, got %v", err)
+	}
+}
+
+func TestDevicePackageScopeReplayAndIntegrity(t *testing.T) {
+	ac := newAC(t, "")
+	const other = "02:00:00:00:00:02"
+	ac.adopt(t, apMAC)
+	ac.adopt(t, other)
+
+	request := func(mac string) (*http.Request, string) {
+		t.Helper()
+		resp, err := ac.server.Client().Get(ac.server.URL + "/api/v1/ap/challenge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("challenge: %d, %v", resp.StatusCode, err)
+		}
+		challenge := string(raw)
+		req, err := http.NewRequest("GET", ac.server.URL+"/api/v1/devices/"+mac+"/package", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(secret.DeviceMACHeader, apMAC)
+		req.Header.Set(secret.DeviceChallengeHeader, challenge)
+		req.Header.Set(secret.DeviceProofHeader,
+			secret.DeviceProof(fixtureDeviceKey, apMAC, challenge, req.Method, req.URL.RequestURI(), nil))
+		return req, challenge
+	}
+	send := func(req *http.Request, want int) []byte {
+		t.Helper()
+		resp, err := ac.server.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != want {
+			t.Fatalf("package request: got status %d (%v), want %d", resp.StatusCode, err, want)
+		}
+		if want == http.StatusOK && resp.Header.Get("Content-Type") != secret.DevicePackageType {
+			t.Fatal("device received a package without encryption")
+		}
+		return body
+	}
+	req, _ := request(other)
+	send(req, http.StatusForbidden)
+	req, challenge := request(apMAC)
+	ciphertext := send(req, http.StatusOK)
+	send(req, http.StatusUnauthorized)
+	if _, err := secret.OpenDevicePackage(fixtureDeviceKey, challenge, ciphertext); err != nil {
+		t.Fatalf("decrypt own package: %v", err)
+	}
+	ciphertext[len(ciphertext)-1] ^= 1
+	if _, err := secret.OpenDevicePackage(fixtureDeviceKey, challenge, ciphertext); err == nil {
+		t.Fatal("tampered ciphertext passed authentication")
 	}
 }
 
@@ -498,9 +567,12 @@ func TestAgentDryRunDoesNotAdvanceRevision(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	a, err := agent.New(agent.Config{
-		Root:   root,
-		ACAddr: strings.TrimPrefix(ac.server.URL, "http://"),
-		DryRun: true,
+		Root:        root,
+		ACAddr:      strings.TrimPrefix(ac.server.URL, "http://"),
+		ACPublicKey: ac.key.PublicHex(),
+		DeviceKey:   fixtureDeviceKey,
+		Secret:      fixtureAPSecret,
+		DryRun:      true,
 		Identity: agent.Identity{
 			MAC: apMAC, Model: "XR1710G", Hostname: "ap250",
 		},

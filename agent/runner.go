@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Runner abstracts command execution so the apply pipeline can be tested
@@ -21,7 +22,14 @@ type ExecRunner struct{}
 // Run returns stdout and folds stderr into the error so failures are actionable
 // in the log without a second call.
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	switch name {
+	case "ubus", "uci", "iw", "ip":
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = 500 * time.Millisecond
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

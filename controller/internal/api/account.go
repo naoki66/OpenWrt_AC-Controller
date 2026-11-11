@@ -80,6 +80,30 @@ func EnsureAdminAccount(ctx context.Context, st *store.Store, user, password str
 	return seeded, nil
 }
 
+// EnsureSecureAdminAccount requires an explicit password for new deployments
+// and migrates installations still using the former public default.
+func EnsureSecureAdminAccount(ctx context.Context, st *store.Store, user, password string) (bool, error) {
+	hash, err := st.GetSetting(ctx, store.SettingAdminPass)
+	missing := errors.Is(err, store.ErrNotFound)
+	if err != nil && !missing {
+		return false, err
+	}
+	if !missing && !verifyPassword(hash, defaultAdminPassword) {
+		return EnsureAdminAccount(ctx, st, user, password)
+	}
+	if len(strings.TrimSpace(password)) < 12 || password == defaultAdminPassword {
+		return false, errors.New("set AC_ADMIN_PASSWORD to a unique password of at least 12 characters before starting the controller")
+	}
+	if missing {
+		return EnsureAdminAccount(ctx, st, user, password)
+	}
+	newHash, err := hashPassword(password)
+	if err != nil {
+		return false, err
+	}
+	return true, st.SetSetting(ctx, store.SettingAdminPass, newHash)
+}
+
 // adminAccount reads the stored credentials. A missing row means startup did
 // not seed them, which is a deployment error rather than an auth failure.
 func (s *Server) adminAccount(ctx context.Context) (user, hash string, err error) {

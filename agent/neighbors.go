@@ -334,7 +334,11 @@ func (a *Applier) cacheNeighbors(body []byte) {
 		a.Log.Debug("neighbour cache dir failed", "err", err)
 		return
 	}
-	if err := os.WriteFile(filepath.Join(a.StateDir, neighborsCacheFile), body, 0o644); err != nil {
+	path := filepath.Join(a.StateDir, neighborsCacheFile)
+	if old, err := os.ReadFile(path); err == nil && string(old) == string(body) {
+		return
+	}
+	if err := writeAll(map[string]string{path: string(body)}); err != nil {
 		a.Log.Debug("neighbour cache write failed", "err", err)
 	}
 }
@@ -353,8 +357,7 @@ func (a *Applier) cachedNeighbors() []byte {
 const neighborsCacheFile = "neighbors.json"
 
 // sameNeighborList compares hostapd's current list against the desired one.
-// Only the BSSID column is compared: it is what identifies a peer, and it keeps
-// the check immune to whitespace or key-order differences in hostapd's output.
+// Compare the full report: a channel change can keep the same BSSID.
 func sameNeighborList(cur string, want [][]string) bool {
 	var parsed struct {
 		List [][]string `json:"list"`
@@ -362,26 +365,24 @@ func sameNeighborList(cur string, want [][]string) bool {
 	if err := json.Unmarshal([]byte(cur), &parsed); err != nil {
 		return false
 	}
-	have := make([]string, 0, len(parsed.List))
-	for _, e := range parsed.List {
-		if len(e) > 0 {
-			have = append(have, strings.ToLower(e[0]))
-		}
-	}
-	need := make([]string, 0, len(want))
-	for _, e := range want {
-		if len(e) > 0 {
-			need = append(need, strings.ToLower(e[0]))
-		}
-	}
-	if len(have) != len(need) {
+	if len(parsed.List) != len(want) {
 		return false
 	}
-	seen := make(map[string]int, len(have))
-	for _, h := range have {
-		seen[h]++
+	key := func(e []string) [3]string {
+		return [3]string{strings.ToLower(e[0]), e[1], strings.ToLower(e[2])}
 	}
-	for _, n := range need {
+	seen := make(map[[3]string]int, len(want))
+	for _, e := range parsed.List {
+		if len(e) != 3 {
+			return false
+		}
+		seen[key(e)]++
+	}
+	for _, e := range want {
+		if len(e) != 3 {
+			return false
+		}
+		n := key(e)
 		if seen[n] == 0 {
 			return false
 		}

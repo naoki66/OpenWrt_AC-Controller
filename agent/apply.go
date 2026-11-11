@@ -9,7 +9,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -67,6 +69,10 @@ type Applier struct {
 	SteeringMode string
 
 	Now func() time.Time
+	// verifyOpenWrt enables libuci and hostapd checks on the live device.
+	verifyOpenWrt bool
+	// beforeWrite persists the rollback intent before any live file changes.
+	beforeWrite func(backupDir string, restoreDHCP bool) error
 
 	// bssMu guards the cached hostapd BSS set, which is valid for exactly one
 	// sweep: reading it once per batch turns eleven `ubus list` calls into one,
@@ -85,16 +91,18 @@ type ApplyResult struct {
 	Staged    []string
 	// NewAddr is the static address that replaced a lost management address.
 	// Empty means no address moved.
-	NewAddr string
+	NewAddr        string
+	NetworkChanged bool
 	// DHCPRestoreNeeded records that this apply turned DHCP/DNS off although it
 	// was running before. A watchdog revert must put it back, or the restored
 	// routed-mode config would come up without a DHCP server.
 	DHCPRestoreNeeded bool
+	RollbackFailed    bool
 }
 
 // Apply writes one revision. It is safe to call with a revision that matches
 // the current on-disk configuration: nothing is written and no reload happens.
-func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string][]byte) (ApplyResult, error) {
+func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string][]byte) (res ApplyResult, retErr error) {
 	// hostapd is reloaded somewhere below, so any cached BSS set now describes
 	// an instance that is about to disappear.
 	a.invalidateBSSSet()
@@ -172,7 +180,14 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 		pending[filepath.Join(a.ConfigDir, "network")] = mergedNetwork
 	}
 
-	res := ApplyResult{Rev: m.Rev}
+	res = ApplyResult{Rev: m.Rev, NetworkChanged: networkChanged}
+	for path := range pending {
+		res.Files = append(res.Files, filepath.Base(path))
+	}
+	sort.Strings(res.Files)
+	if a.DryRun {
+		return a.stage(m, pending, res)
+	}
 	if len(pending) == 0 {
 		// UCI is already current, but the 11k peer lists live in hostapd memory
 		// and may have been lost to a reload since the last apply.
@@ -186,19 +201,16 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 		a.Log.Info("config already up to date, nothing to write", "rev", m.Rev)
 		return res, nil
 	}
-	for path := range pending {
-		res.Files = append(res.Files, filepath.Base(path))
+	if a.verifyOpenWrt {
+		if err := a.validateStagedUCI(ctx, pending); err != nil {
+			return res, err
+		}
 	}
-	sort.Strings(res.Files)
-
-	if a.DryRun {
-		return a.stage(m, pending, res)
+	paths := make([]string, 0, len(res.Files))
+	for _, name := range res.Files {
+		paths = append(paths, filepath.Join(a.ConfigDir, name))
 	}
-
-	backupDir, err := a.backup(m, []string{
-		filepath.Join(a.ConfigDir, "wireless"),
-		filepath.Join(a.ConfigDir, "network"),
-	})
+	backupDir, err := a.backup(m, paths)
 	if err != nil {
 		return res, err
 	}
@@ -210,35 +222,48 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 	if networkChanged {
 		addrsBefore = a.localIPv4Addrs(ctx)
 	}
+	// The Agent defers auxiliary changes until it has committed the network
+	// revision. Standalone callers have no controller confirmation step.
+	deferAux := networkChanged && a.beforeWrite != nil
+	restoreDHCP := !deferAux && networkChanged && a.DisableDHCP && !a.dhcpWasDisabled(ctx)
+
+	if a.beforeWrite != nil {
+		if err := a.beforeWrite(backupDir, restoreDHCP); err != nil {
+			return res, fmt.Errorf("apply: persist rollback intent: %w", err)
+		}
+	}
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.rollbackTimeout())
+		defer cancel()
+		if err := a.RestoreBackup(undoCtx, backupDir, res.DHCPRestoreNeeded); err != nil {
+			res.RollbackFailed = true
+			retErr = errors.Join(retErr, fmt.Errorf("apply: rollback failed: %w", err))
+		}
+	}()
 
 	if err := writeAll(pending); err != nil {
 		return res, err
 	}
 
-	if err := a.reload(ctx, pending); err != nil {
-		a.rollback(ctx, backupDir, pending)
-		return res, fmt.Errorf("apply: reload failed: %w", err)
-	}
-
 	// After a network change, the bridge VLAN devices are rebuilt asynchronously.
 	// hostapd must not be asked to start until they are back.
 	if networkChanged {
+		if _, err := a.Runner.Run(ctx, "ubus", "call", "network", "reload"); err != nil {
+			return res, fmt.Errorf("apply: network reload failed: %w", err)
+		}
 		if err := a.waitForNetdevs(ctx, ucimerge.Netdevs(mergedNetwork)); err != nil {
-			a.rollback(ctx, backupDir, pending)
 			return res, fmt.Errorf("apply: %w", err)
 		}
 	}
-
-	// The steering file drives daemons only when the controller is allowed to:
-	// in autonomous mode the operator owns usteer/dawn and the directive is
-	// reported to the AC but not enforced here.
-	if steering, ok := files[render.FileSteering]; ok && a.SteeringMode != SteeringModeAutonomous {
-		a.applySteering(ctx, strings.TrimSpace(string(steering)))
+	if _, err := a.Runner.Run(ctx, "wifi", "reload"); err != nil {
+		return res, fmt.Errorf("apply: wireless reload failed: %w", err)
 	}
 
 	expected := ucimerge.ACWifiInterfaces(mergedWireless)
 	if err := a.waitForBSS(ctx, expected); err != nil {
-		a.rollback(ctx, backupDir, pending)
 		return res, fmt.Errorf("apply: health check failed: %w", err)
 	}
 
@@ -249,10 +274,12 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 	if networkChanged {
 		newAddr, err := a.waitForAddrsAfterNetwork(ctx, addrsBefore, []byte(mergedNetwork))
 		if err != nil {
-			a.rollback(ctx, backupDir, pending)
 			return res, fmt.Errorf("apply: network health check failed: %w", err)
 		}
 		res.NewAddr = newAddr
+	}
+	if deferAux {
+		return res, nil
 	}
 
 	// Only after every fallible check: disabling DHCP commits config and stops
@@ -260,9 +287,13 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 	// left a rolled-back AP on its factory routed network with no DHCP server,
 	// so clients connected but never got an address — the outage observed after
 	// a failed takeover on a factory-reset XR1710G.
-	dhcpWasOff := a.dhcpWasDisabled(ctx)
-	a.disableDHCPServices(ctx)
-	res.DHCPRestoreNeeded = a.DisableDHCP && !dhcpWasOff
+	if networkChanged && a.DisableDHCP {
+		res.DHCPRestoreNeeded = restoreDHCP
+		a.disableDHCPServices(ctx)
+	}
+	if steering, ok := files[render.FileSteering]; ok && a.SteeringMode != SteeringModeAutonomous {
+		a.applySteering(ctx, strings.TrimSpace(string(steering)))
+	}
 
 	// The template puts a management address on lan2..lan6, but the stock
 	// firewall only trusts br-lan.1 and dropbear is bound to the `lan` interface.
@@ -300,6 +331,30 @@ func (a *Applier) Apply(ctx context.Context, m bundle.Manifest, files map[string
 	return res, nil
 }
 
+// validateStagedUCI uses the device's parser without changing live UCI state.
+func (a *Applier) validateStagedUCI(ctx context.Context, pending map[string]string) error {
+	dir, err := os.MkdirTemp("", "ac-uci-")
+	if err != nil {
+		return fmt.Errorf("create UCI validation dir: %w", err)
+	}
+	defer os.Remove(dir)
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	for path, body := range pending {
+		name := filepath.Base(path)
+		staged := filepath.Join(dir, name)
+		if err := os.WriteFile(staged, []byte(body), 0o600); err != nil {
+			return fmt.Errorf("stage UCI %s: %w", name, err)
+		}
+		defer os.Remove(staged)
+		if _, err := a.Runner.Run(checkCtx, "uci", "-q", "-c", dir, "show", name); err != nil {
+			// UCI output can include wireless credentials; don't propagate it.
+			return fmt.Errorf("UCI rejected staged %s config", name)
+		}
+	}
+	return nil
+}
+
 // stage writes the merged output to a scratch directory for inspection.
 func (a *Applier) stage(m bundle.Manifest, pending map[string]string, res ApplyResult) (ApplyResult, error) {
 	dir := filepath.Join(a.StateDir, "staging", fmt.Sprintf("rev%d", m.Rev))
@@ -328,11 +383,13 @@ func (a *Applier) backup(m bundle.Manifest, paths []string) (string, error) {
 	if a.Now != nil {
 		now = a.Now
 	}
-	dir := filepath.Join(a.StateDir, "backup", fmt.Sprintf("rev%d-%d", m.Rev, now().Unix()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	root := filepath.Join(a.StateDir, "backup")
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", fmt.Errorf("apply: create backup dir: %w", err)
 	}
+	a.pruneBackups(root)
 
+	saved := map[string]string{}
 	var manifestLines []string
 	for _, path := range paths {
 		body, err := os.ReadFile(path)
@@ -344,15 +401,87 @@ func (a *Applier) backup(m bundle.Manifest, paths []string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("apply: read %s for backup: %w", name, err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
-			return "", fmt.Errorf("apply: write backup %s: %w", name, err)
-		}
+		saved[name] = string(body)
 		manifestLines = append(manifestLines, name+"\tpresent")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "backup.txt"), []byte(strings.Join(manifestLines, "\n")+"\n"), 0o600); err != nil {
-		return "", fmt.Errorf("apply: write backup manifest: %w", err)
+	saved["backup.txt"] = strings.Join(manifestLines, "\n") + "\n"
+
+	var dir string
+	for ts := now().Unix(); ; ts++ {
+		dir = filepath.Join(root, fmt.Sprintf("rev%d-%d", m.Rev, ts))
+		if err := os.Mkdir(dir, 0o700); !os.IsExist(err) {
+			if err != nil {
+				return "", fmt.Errorf("apply: create revision backup: %w", err)
+			}
+			break
+		}
+	}
+	files := make(map[string]string, len(saved))
+	for name, body := range saved {
+		files[filepath.Join(dir, name)] = body
+	}
+	if err := writeAll(files); err != nil {
+		for path := range files {
+			_ = os.Remove(path)
+		}
+		_ = os.Remove(dir)
+		return "", fmt.Errorf("apply: write backup: %w", err)
+	}
+	if err := syncDir(root); err != nil {
+		return "", fmt.Errorf("apply: sync backup directory: %w", err)
 	}
 	return dir, nil
+}
+
+// Apply only runs without a pending journal. Keep nine old backups plus the
+// new one, and only remove directories containing files this agent creates.
+func (a *Applier) pruneBackups(root string) {
+	dirs, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	type backup struct {
+		name string
+		ts   int64
+	}
+	var old []backup
+	for _, entry := range dirs {
+		if !entry.IsDir() {
+			continue
+		}
+		name, ok := strings.CutPrefix(entry.Name(), "rev")
+		rev, stamp, split := strings.Cut(name, "-")
+		n, revErr := strconv.Atoi(rev)
+		ts, tsErr := strconv.ParseInt(stamp, 10, 64)
+		if ok && split && revErr == nil && n > 0 && tsErr == nil && ts > 0 {
+			old = append(old, backup{entry.Name(), ts})
+		}
+	}
+	sort.Slice(old, func(i, j int) bool { return old[i].ts > old[j].ts })
+	for _, b := range old[min(len(old), 9):] {
+		dir := filepath.Join(root, b.name)
+		files, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		known := true
+		for _, f := range files {
+			name := f.Name()
+			if !f.Type().IsRegular() || (name != "backup.txt" && name != "wireless" && name != "network") {
+				known = false
+				break
+			}
+		}
+		if !known {
+			continue
+		}
+		for _, f := range files {
+			_ = os.Remove(filepath.Join(dir, f.Name()))
+		}
+		if err := os.Remove(dir); err != nil {
+			a.Log.Debug("could not prune backup", "dir", dir, "err", err)
+		}
+	}
 }
 
 // reload triggers exactly one wifi reload. Design §7.1 discipline: the bridge is
@@ -497,7 +626,8 @@ func (a *Applier) waitForBSS(ctx context.Context, expected []string) error {
 		poll = 500 * time.Millisecond
 	}
 
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var missing []string
 	for {
 		out, err := a.Runner.Run(ctx, "ubus", "call", "network.wireless", "status")
@@ -505,6 +635,9 @@ func (a *Applier) waitForBSS(ctx context.Context, expected []string) error {
 			up, perr := parseWirelessStatus(out)
 			if perr == nil {
 				missing = missingBSS(expected, up)
+				if len(missing) == 0 && a.verifyOpenWrt {
+					missing = a.disabledHostapdBSS(ctx, out, expected)
+				}
 				if len(missing) == 0 {
 					return nil
 				}
@@ -515,15 +648,41 @@ func (a *Applier) waitForBSS(ctx context.Context, expected []string) error {
 			missing = []string{"ubus call failed: " + err.Error()}
 		}
 
-		if time.Now().After(deadline) {
-			return fmt.Errorf("BSS not up within %s: %s", timeout, strings.Join(missing, ", "))
-		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("BSS not up within %s (%s): %w", timeout, strings.Join(missing, ", "), ctx.Err())
 		case <-time.After(poll):
 		}
 	}
+}
+
+func (a *Applier) disabledHostapdBSS(ctx context.Context, raw string, expected []string) []string {
+	var wireless wirelessStatus
+	if err := json.Unmarshal([]byte(raw), &wireless); err != nil {
+		return expected
+	}
+	names := make(map[string]string, len(expected))
+	for _, radio := range wireless {
+		for _, iface := range radio.Interfaces {
+			names[iface.Section] = iface.Ifname
+		}
+	}
+	var missing []string
+	for _, section := range expected {
+		ifname := names[section]
+		if ifname == "" {
+			missing = append(missing, section+"(no interface)")
+			continue
+		}
+		callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		out, err := a.Runner.Run(callCtx, "ubus", "call", "hostapd."+ifname, "get_status")
+		cancel()
+		var status struct{ Status string }
+		if err != nil || json.Unmarshal([]byte(out), &status) != nil || status.Status != "ENABLED" {
+			missing = append(missing, section+"(hostapd not enabled)")
+		}
+	}
+	return missing
 }
 
 // dhcpWasDisabled reports whether the DHCP server was already switched off
@@ -868,27 +1027,41 @@ func (a *Applier) restoreFiles(backupDir string) (map[string]string, error) {
 	}
 
 	restored := map[string]string{}
+	var missing []string
+	seen := map[string]bool{}
 	for _, line := range strings.Split(strings.TrimSpace(string(manifest)), "\n") {
 		name, status, ok := strings.Cut(line, "\t")
-		if !ok {
-			continue
+		if !ok || (name != "wireless" && name != "network") || seen[name] {
+			return nil, errors.New("invalid rollback manifest")
 		}
+		seen[name] = true
 		target := filepath.Join(a.ConfigDir, name)
 		if status == "missing" {
-			if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-				a.Log.Error("restore: remove failed", "file", name, "err", err)
-			}
+			missing = append(missing, target)
 			continue
+		}
+		if status != "present" {
+			return nil, errors.New("invalid rollback manifest entry")
 		}
 		body, err := os.ReadFile(filepath.Join(backupDir, name))
 		if err != nil {
-			a.Log.Error("restore: backup copy unreadable", "file", name, "err", err)
-			continue
+			return nil, fmt.Errorf("restore: read backup %s: %w", name, err)
 		}
 		restored[target] = string(body)
 	}
 	if err := writeAll(restored); err != nil {
 		return nil, fmt.Errorf("write restored config: %w", err)
+	}
+	for _, target := range missing {
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("restore: remove %s: %w", target, err)
+		}
+		restored[target] = ""
+	}
+	if len(missing) != 0 {
+		if err := syncDir(a.ConfigDir); err != nil {
+			return nil, err
+		}
 	}
 	return restored, nil
 }
@@ -898,6 +1071,7 @@ func (a *Applier) restoreFiles(backupDir string) (map[string]string, error) {
 // the backup and reloads them, then puts DHCP back when the successful apply had
 // switched it off.
 func (a *Applier) RestoreBackup(ctx context.Context, backupDir string, restoreDHCP bool) error {
+	a.invalidateBSSSet()
 	restored, err := a.restoreFiles(backupDir)
 	if err != nil {
 		return err
@@ -915,18 +1089,11 @@ func (a *Applier) RestoreBackup(ctx context.Context, backupDir string, restoreDH
 
 // rollback restores the backed-up files and reloads again. Its own failures are
 // logged but never mask the original error, which is what the operator needs.
-func (a *Applier) rollback(ctx context.Context, backupDir string, pending map[string]string) {
-	a.Log.Warn("rolling back to previous configuration", "backup", backupDir)
-
-	if _, err := a.restoreFiles(backupDir); err != nil {
-		a.Log.Error("rollback: restore failed", "err", err)
-		return
+func (a *Applier) rollbackTimeout() time.Duration {
+	if a.HealthTimeout > 0 {
+		return a.HealthTimeout
 	}
-	if err := a.reload(ctx, pending); err != nil {
-		a.Log.Error("rollback: reload failed", "err", err)
-		return
-	}
-	a.Log.Info("rollback complete")
+	return defaultHealthTimeout
 }
 
 // wirelessStatus mirrors the parts of `ubus call network.wireless status` the
@@ -1022,18 +1189,57 @@ func readFileOrEmpty(path string) (string, error) {
 // writeAll writes files via a temporary sibling plus rename, so a crash mid-write
 // cannot leave a truncated config that netifd would refuse to load.
 func writeAll(files map[string]string) error {
-	for path, content := range files {
+	paths := make([]string, 0, len(files))
+	for path := range files {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	staged := make(map[string]string, len(paths))
+	defer func() {
+		for _, path := range staged {
+			_ = os.Remove(path)
+		}
+	}()
+	for _, path := range paths {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return fmt.Errorf("create dir for %s: %w", path, err)
 		}
-		tmp := path + ".ac-tmp"
-		if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
-			return fmt.Errorf("write %s: %w", tmp, err)
+		f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".ac-*")
+		if err != nil {
+			return fmt.Errorf("stage %s: %w", path, err)
 		}
-		if err := os.Rename(tmp, path); err != nil {
-			_ = os.Remove(tmp)
+		staged[path] = f.Name()
+		_, writeErr := f.WriteString(files[path])
+		if writeErr == nil {
+			writeErr = f.Sync()
+		}
+		if err := errors.Join(writeErr, f.Close()); err != nil {
+			return fmt.Errorf("stage %s: %w", path, err)
+		}
+	}
+	dirs := map[string]bool{}
+	for _, path := range paths {
+		if err := os.Rename(staged[path], path); err != nil {
 			return fmt.Errorf("replace %s: %w", path, err)
+		}
+		delete(staged, path)
+		dirs[filepath.Dir(path)] = true
+	}
+	for dir := range dirs {
+		if err := syncDir(dir); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func syncDir(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil // Windows does not support Sync on an opened directory.
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(f.Sync(), f.Close())
 }

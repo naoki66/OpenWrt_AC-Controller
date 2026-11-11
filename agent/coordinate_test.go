@@ -171,6 +171,21 @@ func TestMergeNeighborLists(t *testing.T) {
 	}
 }
 
+func TestLiveNeighborReportReplacesCachedChannel(t *testing.T) {
+	own := []proto.NeighborBSS{{Ifname: "ap0", SSID: "same", BSSID: "02:00:00:00:00:01"}}
+	const peer = "02:00:00:00:00:02"
+	cache := map[string][][]string{"ap0": {{peer, "same", "old-channel"}}}
+	live := []proto.NeighborBSS{{SSID: "same", BSSID: peer, Report: "new-channel"}}
+	got := mergeNeighborLists(cache, own, live)["ap0"]
+	if len(got) != 1 || got[0][2] != "new-channel" {
+		t.Fatalf("stale channel survived: %v", got)
+	}
+	live[0].SSID = "different"
+	if got := mergeNeighborLists(cache, own, live)["ap0"]; len(got) != 0 {
+		t.Fatalf("moved SSID still advertised: %v", got)
+	}
+}
+
 // More than two APs must all see each other. Every agent announces its own BSS
 // set and merges every live peer's same-SSID BSS, so the site forms a full mesh
 // on the management segment rather than a chain that only the two ends know.
@@ -335,9 +350,11 @@ func TestNeighborBodyWorksWithoutControllerCache(t *testing.T) {
 func TestStepRediscoversVanishedController(t *testing.T) {
 	root := t.TempDir()
 	cfg := Config{
-		Root:     root,
-		Runner:   newNeighborRunner(),
-		Identity: Identity{MAC: testSelfMAC, Model: "XR1710G", Hostname: "ap250"},
+		Root:        root,
+		ACPublicKey: strings.Repeat("aa", 32),
+		DeviceKey:   strings.Repeat("ab", 32),
+		Runner:      newNeighborRunner(),
+		Identity:    Identity{MAC: testSelfMAC, Model: "XR1710G", Hostname: "ap250"},
 	}
 	a, err := New(cfg, testLog())
 	if err != nil {
@@ -534,6 +551,22 @@ func TestMaybeSteerIsOffByDefault(t *testing.T) {
 	a.maybeSteer(context.Background(), weakHello())
 	if calls := runner.btmCalls(); len(calls) != 0 {
 		t.Errorf("11v sent while disabled: %v", calls)
+	}
+}
+
+func TestMaybeSteerLeavesRecentAssociationAlone(t *testing.T) {
+	runner := &steerRunner{}
+	a := newSteerAgent(t, runner, true)
+	h := weakHello()
+	h.Clients[0].ConnectedSeconds = 29
+	a.maybeSteer(context.Background(), h)
+	if got := runner.btmCalls(); len(got) != 0 {
+		t.Fatalf("recent association received BTM: %v", got)
+	}
+	h.Clients[0].ConnectedSeconds = 30
+	a.maybeSteer(context.Background(), h)
+	if got := runner.btmCalls(); len(got) != 1 {
+		t.Fatalf("eligible association didn't receive BTM: %v", got)
 	}
 }
 

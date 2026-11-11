@@ -46,7 +46,7 @@ _process_running() {
 	# ubus pretty-prints its reply, so the separator between key and value is
 	# ": " rather than ":". Matching the compact form silently reported every
 	# running agent as stopped.
-	ubus call service list '{"name":"ac-agent"}' 2>/dev/null | grep -q '"running":[[:space:]]*true'
+	ubus -t 2 call service list '{"name":"ac-agent"}' 2>/dev/null | grep -q '"running":[[:space:]]*true'
 }
 
 _autostart_enabled() {
@@ -59,65 +59,39 @@ _set_autostart() {
 	"$INIT_SCRIPT" "$1" >/dev/null 2>&1
 }
 
-# One switch opens the WAN zone for the ports an AC needs. Named sections keep
-# the rules idempotent: re-running only rewrites values that differ, so no
-# firewall reload happens on an ordinary page visit.
-#
-# Returns non-zero when the firewall was modified, which the caller counts.
-_wan_rule() {
-	local sec="$1" proto="$2" port="$3" enabled="$4"
-	local cur_proto cur_port cur_target cur_src
-
-	if [ "$enabled" != "1" ]; then
-		if [ "$(uci -q get "firewall.$sec")" = "rule" ]; then
-			uci -q delete "firewall.$sec"
+# Only the explicit save operation removes WAN rules made by older builds.
+_remove_legacy_wan_rules() {
+	local sec
+	set --
+	for sec in ac_agent_wan_tcp_8090 ac_agent_wan_udp_29820 ac_agent_wan_udp_29821; do
+		[ "$(uci -q get "firewall.$sec")" != "rule" ] || set -- "$@" "$sec"
+	done
+	[ "$#" -ne 0 ] || return 0
+	[ -z "$(uci -q changes firewall)" ] || return 1
+	for sec in "$@"; do
+		if ! uci -q delete "firewall.$sec"; then
+			for sec in "$@"; do uci -q revert "firewall.$sec"; done
 			return 1
 		fi
-		return 0
+	done
+	if ! uci -q commit firewall; then
+		for sec in "$@"; do uci -q revert "firewall.$sec"; done
+		return 1
 	fi
-
-	cur_proto=$(uci -q get "firewall.$sec.proto")
-	cur_port=$(uci -q get "firewall.$sec.dest_port")
-	cur_target=$(uci -q get "firewall.$sec.target")
-	cur_src=$(uci -q get "firewall.$sec.src")
-
-	if [ "$cur_proto" = "$proto" ] && [ "$cur_port" = "$port" ] &&
-	   [ "$cur_target" = "ACCEPT" ] && [ "$cur_src" = "wan" ]; then
-		return 0
-	fi
-
-	uci -q set "firewall.$sec=rule"
-	uci -q set "firewall.$sec.name=ac-agent-$proto-$port"
-	uci -q set "firewall.$sec.src=wan"
-	uci -q set "firewall.$sec.proto=$proto"
-	uci -q set "firewall.$sec.dest_port=$port"
-	uci -q set "firewall.$sec.target=ACCEPT"
-	return 1
+	/etc/init.d/firewall reload >/dev/null 2>&1
 }
 
-_sync_wan_rules() {
-	local enabled="$1" changed=0
-
-	_wan_rule ac_agent_wan_tcp_8090  tcp 8090  "$enabled" || changed=1
-	_wan_rule ac_agent_wan_udp_29820 udp 29820 "$enabled" || changed=1
-	_wan_rule ac_agent_wan_udp_29821 udp 29821 "$enabled" || changed=1
-
-	if [ "$changed" = "1" ]; then
-		uci -q commit firewall
-		/etc/init.d/firewall reload >/dev/null 2>&1 || true
-	fi
-}
-
-# The page calls this on open and after Save, so the switch is also the thing
-# that starts a factory-fresh agent. Reading the value back from uci rather
-# than taking it as an argument keeps one source of truth: /etc/config/ac.
+# The page calls this after explicit Save. The status RPC is read-only.
 apply_enabled() {
 	local enabled running=false need_start=false output rc
 
 	enabled=$(uci -q get ac.agent.enabled)
 	[ -n "$enabled" ] || enabled=1
 
-	_sync_wan_rules "$enabled"
+	if ! _remove_legacy_wan_rules; then
+		printf '%s\n' '{"ok":false,"message":"could not remove legacy AC WAN firewall rules; check pending firewall changes"}'
+		return
+	fi
 
 	if [ "$enabled" = "1" ]; then
 		_autostart_enabled || _set_autostart enable

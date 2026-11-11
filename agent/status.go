@@ -74,6 +74,13 @@ type Status struct {
 
 	LastError     string `json:"last_error,omitempty"`
 	BSS           int    `json:"bss"`
+	PeerNetwork   string `json:"peer_network,omitempty"`
+	PeerPort      int    `json:"peer_port,omitempty"`
+	PeerSteer     bool   `json:"peer_steer"`
+	PeerTransport string `json:"peer_transport,omitempty"`
+	PeerDevice    string `json:"peer_device,omitempty"`
+	PeerAPs       int    `json:"peer_aps"`
+	PeerBSSes     int    `json:"peer_bss"`
 	FirmwareState string `json:"firmware_state,omitempty"`
 
 	// Steering policy as configured locally, plus what the device actually
@@ -108,12 +115,28 @@ type Status struct {
 	SteeringStats *proto.SteeringStat `json:"steering_stats,omitempty"`
 }
 
-// StatusSnapshot returns the current status without writing it. It reflects the
-// persisted state too, so `ac-agent status --json` and the file LuCI reads can
-// never disagree.
+// StatusSnapshot returns the current process's status without writing it.
 func (a *Agent) StatusSnapshot() Status {
 	a.reflectStatus()
 	return a.rt
+}
+
+// LiveStatus reads the daemon's recent status for a separate CLI process.
+func (a *Agent) LiveStatus() (Status, bool) {
+	var status Status
+	body, err := os.ReadFile(a.Config.statusPath())
+	if err != nil || json.Unmarshal(body, &status) != nil || status.PID <= 0 || status.MAC != a.Identity.MAC {
+		return Status{}, false
+	}
+	at, err := time.Parse(time.RFC3339, status.UpdatedAt)
+	if err != nil || status.Interval < 1 || status.Interval > 86400 {
+		return Status{}, false
+	}
+	age := time.Since(at)
+	if age < -5*time.Second || age > max(15*time.Second, 3*time.Duration(status.Interval)*time.Second) {
+		return Status{}, false
+	}
+	return status, true
 }
 
 // writeStatus publishes the status file. Failures are never fatal: the file is
@@ -186,9 +209,11 @@ func (a *Agent) reflectStatus() {
 	a.rt.SteeringMode = steeringModeOrDefault(a.Config.SteeringMode)
 	a.rt.SteeringFallback = a.Config.SteeringFallback
 	a.rt.SteeringFallbackActive = a.state.SteeringFallbackActive
+	a.steeringMu.Lock()
 	if a.steeringKnown {
 		a.rt.Steering = a.steeringCache
 	}
+	a.steeringMu.Unlock()
 	if a.steer != nil {
 		a.rt.SteerPolicyActive, a.rt.SteerBTM, a.rt.SteerForced = func() (bool, int, int) {
 			active, counts := a.steer.snapshot()
@@ -208,6 +233,11 @@ func (a *Agent) reflectStatus() {
 		a.rt.ACID = a.state.ACID
 	}
 	a.rt.BSS = a.bssCount()
+	if a.peerBus != nil {
+		a.rt.PeerNetwork = a.Config.PeerNetwork
+		a.rt.PeerPort = a.Config.PeerPort
+		a.rt.PeerSteer = a.Config.PeerSteer
+	}
 
 	// Adopted is whatever the controller said last, not a local memory. Making
 	// it sticky looked safer but broke the case an operator actually hits:

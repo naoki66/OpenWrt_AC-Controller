@@ -53,8 +53,9 @@ func newSteerFixture(t *testing.T) *steerFixture {
 			Runner:   runner,
 			Log:      log,
 		},
-		Clients: &ClientCollector{Runner: runner, Log: log},
+		Clients: &ClientCollector{Runner: runner, Log: log, Source: "iw", Probe: newStationProbe(root)},
 	}
+	a.publishRoamingView()
 	loop := NewSteerLoop()
 	loop.Agent = a
 	f := &steerFixture{agent: a, loop: loop, runner: runner, now: time.Unix(1793698800, 0)}
@@ -190,6 +191,35 @@ func TestSteerLoopForcesAfterIgnoredBTM(t *testing.T) {
 	}
 	if _, counts := f.loop.snapshot(); counts.Forced != 1 || counts.BTM != 1 {
 		t.Errorf("counts = %+v, want BTM=1 Forced=1", counts)
+	}
+}
+
+type failingBTMRunner struct{ Runner }
+
+func (r failingBTMRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	out, err := r.Runner.Run(ctx, name, args...)
+	if name == "ubus" && len(args) > 2 && args[2] == "bss_transition_request" {
+		return "", errors.New("hostapd rejected the request")
+	}
+	return out, err
+}
+
+func TestSteerLoopDoesNotForceAfterFailedBTM(t *testing.T) {
+	f := newSteerFixture(t)
+	f.seedCandidates()
+	p := defaultPolicy()
+	p.ForceAfterMS = 10000
+	f.loop.SetPolicy(p)
+	f.agent.Runner = failingBTMRunner{f.runner}
+	for i := 0; i < 6; i++ {
+		f.loop.tick(context.Background())
+		f.advance(5 * time.Second)
+	}
+	if calls := callsJoined(f); !strings.Contains(calls, "bss_transition_request") || strings.Contains(calls, "del_client") {
+		t.Fatalf("expected a failed BTM without disconnect:\n%s", calls)
+	}
+	if _, counts := f.loop.snapshot(); counts.BTM != 0 || counts.Forced != 0 {
+		t.Fatalf("failed request counted as sent or forced: %+v", counts)
 	}
 }
 

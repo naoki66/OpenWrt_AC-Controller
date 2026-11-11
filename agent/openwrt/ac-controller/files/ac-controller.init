@@ -65,20 +65,20 @@ start_service() {
 	chmod 700 "$data_dir"
 
 	# procd_set_param env 第二个参数会整体替换而不追加，所以一次拼完。
-	env_set="AC_PROFILE=$profile AC_DATA_DIR=$data_dir"
-	env_set="$env_set AC_HTTP_ADDR=$http_addr AC_DISCOVER_ADDR=$discover_addr"
-	env_set="$env_set AC_ADMIN_USER=$admin_user"
-	env_set="$env_set AC_SAMPLE_INTERVAL=$sample_interval AC_SAMPLE_RETENTION=$sample_retention"
-	[ -n "$secret" ] && env_set="$env_set AC_SHARED_SECRET=$secret"
-	[ -n "$admin_password" ] && env_set="$env_set AC_ADMIN_PASSWORD=$admin_password"
-	[ -n "$package_history" ] && env_set="$env_set AC_PACKAGE_HISTORY=$package_history"
-	[ -n "$events_max" ] && env_set="$env_set AC_EVENTS_MAX=$events_max"
-	[ -n "$go_memlimit" ] && env_set="$env_set GOMEMLIMIT=$go_memlimit"
-	[ -n "$go_gc" ] && env_set="$env_set GOGC=$go_gc"
+	set -- "AC_PROFILE=$profile" "AC_DATA_DIR=$data_dir" \
+		"AC_HTTP_ADDR=$http_addr" "AC_DISCOVER_ADDR=$discover_addr" \
+		"AC_ADMIN_USER=$admin_user" "AC_SAMPLE_INTERVAL=$sample_interval" \
+		"AC_SAMPLE_RETENTION=$sample_retention"
+	[ -z "$secret" ] || set -- "$@" "AC_SHARED_SECRET=$secret"
+	[ -z "$admin_password" ] || set -- "$@" "AC_ADMIN_PASSWORD=$admin_password"
+	[ -z "$package_history" ] || set -- "$@" "AC_PACKAGE_HISTORY=$package_history"
+	[ -z "$events_max" ] || set -- "$@" "AC_EVENTS_MAX=$events_max"
+	[ -z "$go_memlimit" ] || set -- "$@" "GOMEMLIMIT=$go_memlimit"
+	[ -z "$go_gc" ] || set -- "$@" "GOGC=$go_gc"
 
 	procd_open_instance
 	procd_set_param command "$PROG"
-	procd_set_param env $env_set
+	procd_set_param env "$@"
 	# 控制器可能因为数据库被占用等原因短时退出，持续重试比放弃更合适。
 	procd_set_param respawn 3600 5 10
 	procd_set_param stdout 1

@@ -153,17 +153,7 @@ function valueRow(title, value) {
 
 return view.extend({
 	load: function() {
-		/* Opening the page is the switch's apply action: reconcile the agent
-		 * process and the WAN rules with the saved "enabled" value before
-		 * reading the status, so a factory-fresh AP is usable from the first
-		 * visit. A backend failure must not hide the status card. */
-		return uci.load('ac').then(function() {
-			return callApplyEnabled();
-		}).catch(function() {
-			/* ignored: the status card still renders and the poll retries */
-		}).then(function() {
-			return callStatus();
-		}).then(function(data) {
+		return callStatus().catch(function() { return {}; }).then(function(data) {
 			return { data: data || {} };
 		});
 	},
@@ -183,13 +173,8 @@ return view.extend({
 		s.anonymous = true;
 		s.addremove = false;
 
-		/* One switch owns everything a fresh AP needs: start the agent at boot
-		 * and open the WAN zone so an AC on either side can adopt it. It is on
-		 * by default; the page applies it on open and on save. */
 		var o = s.option(form.Flag, 'enabled', _('Enable'),
-			_('Starts the agent, enables it at boot, and opens TCP 8090 plus UDP 29820/29821 on the WAN zone, ' +
-			  'so an AC on the upstream or LAN side can discover and manage this access point during initial setup. ' +
-			  'On by default.'));
+			_('Starts the agent and enables it at boot when you save the settings.'));
 		o.default = '1';
 		o.rmempty = false;
 
@@ -215,12 +200,28 @@ return view.extend({
 				return uci.get('ac', section_id, 'ac_addr') || discoveredAddr;
 			};
 
-		o = s.option(form.Value, 'secret', _('Shared secret'),
-			_('Must match AC_SHARED_SECRET on the controller and use at least 12 characters. ' +
-			  'It also authenticates AP-to-AP messages with HMAC-SHA256. ' +
-			  'Leave empty when the controller does not check one.'));
+		o = s.option(form.Value, 'ac_public_key', _('Controller signing public key'),
+			_('Enter the 64 hexadecimal digits from ac pubkey, obtained through a trusted administration channel.'));
+		o.rmempty = true;
+		o.validate = function(section_id, value) {
+			return !value || /^[a-fA-F0-9]{64}$/.test(value) || _('Expected a 64-digit hexadecimal Ed25519 public key.');
+		};
+
+		o = s.option(form.Value, 'device_key', _('AP device key'),
+			_('Enter the key issued for this AP by ac ap-key <AP-MAC>. Do not copy it to other APs.'));
 		o.password = true;
 		o.rmempty = true;
+		o.validate = function(section_id, value) {
+			return !value || /^[a-fA-F0-9]{64}$/.test(value) || _('Expected a 64-digit hexadecimal device key.');
+		};
+
+		o = s.option(form.Value, 'secret', _('Peer coordination shared secret'),
+			_('Use the same key of at least 12 characters on each peer AP. Leave blank to disable peer coordination.'));
+		o.password = true;
+		o.rmempty = true;
+		o.validate = function(section_id, value) {
+			return !value || value.length >= 12 || _('Use at least 12 characters.');
+		};
 
 		o = s.option(form.Value, 'interval', _('Heartbeat interval'),
 			_('Seconds between two polls. The default is 20.'));
@@ -274,7 +275,7 @@ return view.extend({
 				if (res && res.ok === false)
 					throw new Error((res && res.message) || 'unknown error');
 				ui.addNotification(null, E('p', {},
-					_('Settings saved. The agent and the WAN rules now follow the switch.')), 'info');
+				_('Settings saved. The agent now follows the enable switch.')), 'info');
 				return self.refresh();
 			}).catch(function(err) {
 				ui.addNotification(null, E('p', {},
@@ -411,6 +412,12 @@ return view.extend({
 
 			if (status.bss)
 				this.card.appendChild(valueRow(_('BSS reported'), String(status.bss)));
+
+			if (status.peer_network) {
+				var link = [ status.peer_network, status.peer_device, status.peer_transport ].filter(Boolean).join(' / ');
+				this.card.appendChild(valueRow(_('Peer coordination'),
+					_('%d APs, %d BSSes · %s').format(status.peer_aps || 0, status.peer_bss || 0, link)));
+			}
 
 			this.card.appendChild(valueRow(_('Agent'),
 				[ status.version || '-', ' ', _('since'), ' ', fmtTime(status.started_at) ]));

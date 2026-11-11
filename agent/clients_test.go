@@ -60,7 +60,7 @@ const wirelessStatusFixture = `{
 func newCollector(t *testing.T, outputs map[string]string) (*ClientCollector, *mapRunner) {
 	t.Helper()
 	r := &mapRunner{outputs: outputs}
-	return &ClientCollector{Runner: r, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, r
+	return &ClientCollector{Runner: r, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Source: "iw"}, r
 }
 
 func TestCollectClients(t *testing.T) {

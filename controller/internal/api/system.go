@@ -94,7 +94,7 @@ func (s *Server) handleDiagnostics(w http.ResponseWriter, r *http.Request) {
 		// The management surface always requires a login account; the AP channel
 		// is only protected when a shared secret is in force.
 		"admin_auth_required": true,
-		"ap_auth_required":    s.EffectiveSecret() != "",
+		"ap_auth_required":    s.RequireSignedAP || s.EffectiveSecret() != "",
 		// Zero means every heartbeat is stored; the agent's cadence is the
 		// throttle instead of a controller-side timer.
 		"sample_interval_seconds": sampleSeconds,

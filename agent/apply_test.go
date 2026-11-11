@@ -238,6 +238,24 @@ func TestApplyWritesMergedConfigAndVerifiesHealth(t *testing.T) {
 	}
 }
 
+func TestOpenWrtApplyRequiresEnabledHostapd(t *testing.T) {
+	const section = "ac_ssid_corp_2g"
+	const wireless = `{"radio0":{"up":true,"interfaces":[{"section":"ac_ssid_corp_2g","ifname":"phy0-ap0"}]}}`
+	f := newApplyFixture(t, wireless)
+	f.applier.verifyOpenWrt = true
+	f.applier.HealthTimeout = 20 * time.Millisecond
+	f.runner.replies = map[string]string{
+		"ubus call hostapd.phy0-ap0 get_status": `{"status":"DFS"}`,
+	}
+	if err := f.applier.waitForBSS(context.Background(), []string{section}); err == nil {
+		t.Fatal("netifd up masked a BSS still waiting for CAC")
+	}
+	f.runner.replies["ubus call hostapd.phy0-ap0 get_status"] = `{"status":"ENABLED"}`
+	if err := f.applier.waitForBSS(context.Background(), []string{section}); err != nil {
+		t.Fatalf("enabled BSS did not pass health check: %v", err)
+	}
+}
+
 func TestApplyIsIdempotent(t *testing.T) {
 	f := newApplyFixture(t, statusWith(true, "ac_ssid_corp_2g"))
 	ctx := context.Background()

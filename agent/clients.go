@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"regexp"
 	"strconv"
@@ -36,8 +37,7 @@ type ClientCollector struct {
 	probeOnce sync.Once
 	probe     *stationProbe
 
-	// reader is the resolved station source; readerMu guards replacement when
-	// netlink fails and the collector drops to iw for the rest of the process.
+	// readerMu guards replacement when the kernel lacks the station source.
 	readerMu sync.Mutex
 	reader   StationReader
 
@@ -52,10 +52,12 @@ type ClientCollector struct {
 	// cache holds the last successful sample so the steering loop and the
 	// heartbeat share one collection instead of each running its own. Guarded
 	// by cacheMu; the slice is read-only for callers.
-	cacheMu sync.Mutex
-	cacheAt time.Time
-	cache   []proto.ClientStat
-	cacheOK bool
+	cacheMu    sync.Mutex
+	cacheAt    time.Time
+	cache      []proto.ClientStat
+	cacheOK    bool
+	sampleOnce sync.Once
+	sampleGate chan struct{}
 }
 
 // stationProbe returns the presence probe, building the default one on first
@@ -90,9 +92,7 @@ var (
 	inactiveRe  = regexp.MustCompile(`^\s*inactive time:\s*(\d+)\s*ms`)
 )
 
-// Collect returns every station across all managed BSSes. An error is only
-// returned when the wireless state itself cannot be read; individual missing
-// interfaces are skipped, because one broken BSS must not blind the whole list.
+// Collect returns an authoritative list, or nil if any part of the sweep failed.
 func (c *ClientCollector) Collect(ctx context.Context) []proto.ClientStat {
 	return c.Snapshot(ctx, 0)
 }
@@ -116,13 +116,28 @@ func (c *ClientCollector) Snapshot(ctx context.Context, maxAge time.Duration) []
 	if c == nil {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	c.sampleOnce.Do(func() { c.sampleGate = make(chan struct{}, 1) })
+	select {
+	case c.sampleGate <- struct{}{}:
+		defer func() { <-c.sampleGate }()
+	case <-ctx.Done():
+		return nil
+	}
+	c.cacheMu.Lock()
+	list, fresh := c.cache, maxAge > 0 && c.cacheOK && time.Since(c.cacheAt) < maxAge
+	c.cacheMu.Unlock()
+	if ctx.Err() != nil {
+		return nil
+	}
+	if fresh {
+		return list
+	}
+	list = c.sample(ctx)
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
-	if maxAge > 0 && c.cacheOK && time.Since(c.cacheAt) < maxAge {
-		return c.cache
-	}
-	list := c.sample(ctx)
-	if list == nil {
+	if list == nil || ctx.Err() != nil {
 		c.cacheOK = false
 		return nil
 	}
@@ -130,7 +145,7 @@ func (c *ClientCollector) Snapshot(ctx context.Context, maxAge time.Duration) []
 	return list
 }
 
-// sample performs one full collection. The caller holds cacheMu, so two
+// sample performs one full collection. The caller holds sampleGate, so two
 // consumers can never read the same BSS at the same time.
 func (c *ClientCollector) sample(ctx context.Context) []proto.ClientStat {
 	bsses := c.bssList(ctx)
@@ -141,7 +156,14 @@ func (c *ClientCollector) sample(ctx context.Context) []proto.ClientStat {
 
 	clients := make([]proto.ClientStat, 0, 16)
 	for _, b := range bsses {
-		clients = append(clients, c.stations(ctx, b, neigh)...)
+		if ctx.Err() != nil {
+			return nil
+		}
+		list, err := c.stations(ctx, b, neigh)
+		if err != nil {
+			return nil
+		}
+		clients = append(clients, list...)
 	}
 	return clients
 }
@@ -154,6 +176,9 @@ func (c *ClientCollector) bssList(ctx context.Context) []bssInfo {
 	list, err := reader.BSS(ctx)
 	if err == nil {
 		return list
+	}
+	if ctx.Err() != nil {
+		return nil
 	}
 	if _, ok := reader.(netifdBSSReader); ok {
 		c.Log.Debug("client collect: wireless status unavailable", "err", err)
@@ -236,28 +261,38 @@ func (c *ClientCollector) decorate(list []proto.ClientStat, ifname, ssid, band s
 }
 
 // stations reads one BSS's station table through the configured source.
-func (c *ClientCollector) stations(ctx context.Context, b bssInfo, neigh map[string]string) []proto.ClientStat {
+func (c *ClientCollector) stations(ctx context.Context, b bssInfo, neigh map[string]string) ([]proto.ClientStat, error) {
 	// An empty BSS is the common case on a multi-SSID AP: eight of eleven BSSes
 	// on the reference site carry no station at all, and each of them would
 	// otherwise cost a full read to learn nothing.
 	if c.skipsEmptyBSS(b.Ifname) {
-		return nil
+		return nil, nil
 	}
 	reader := c.stationReader()
 	list, err := reader.Stations(ctx, b.Ifname, b.Ifindex)
+	if err != nil && ctx.Err() == nil {
+		if _, alreadyIW := reader.(iwReader); !alreadyIW {
+			fallback := iwReader{runner: c.Runner}
+			if errors.Is(err, ErrStationSourceUnsupported) {
+				c.readerMu.Lock()
+				c.reader = fallback
+				c.readerMu.Unlock()
+			}
+			list, err = fallback.Stations(ctx, b.Ifname, b.Ifindex)
+		}
+	}
 	if err != nil {
-		if !c.warnedMissing {
+		if !c.warnedMissing && c.Log != nil {
 			// iw is not part of the minimal OpenWrt image on every build, and
 			// netlink can be missing from a stripped kernel: report once and
 			// keep provisioning working without client telemetry.
-			c.Log.Warn("client collect: station source unavailable, client list will be empty",
+			c.Log.Warn("client collect: incomplete sweep, omitting client report",
 				"source", reader.Name(), "ifname", b.Ifname, "err", err)
 			c.warnedMissing = true
 		}
-		c.fallbackToIW(err)
-		return nil
+		return nil, err
 	}
-	return c.decorate(list, b.Ifname, b.SSID, b.Band, neigh)
+	return c.decorate(list, b.Ifname, b.SSID, b.Band, neigh), nil
 }
 
 // stationReader returns the configured source, building it on first use.
@@ -268,22 +303,6 @@ func (c *ClientCollector) stationReader() StationReader {
 		c.reader = resolveStationSource(c.Source, c.Runner, c.Log)
 	}
 	return c.reader
-}
-
-// fallbackToIW drops to `iw` after a source failure. Permanent, not per-call:
-// a kernel that does not answer one dump will not answer the next eleven, and
-// paying a failing syscall per BSS per cycle is worse than the process spawn it
-// was meant to replace.
-func (c *ClientCollector) fallbackToIW(err error) {
-	c.readerMu.Lock()
-	defer c.readerMu.Unlock()
-	if _, ok := c.reader.(iwReader); ok {
-		return
-	}
-	c.reader = iwReader{runner: c.Runner}
-	if c.Log != nil {
-		c.Log.Warn("client collect: station source failed, using iw from now on", "err", err)
-	}
 }
 
 // parseStationDump parses `iw dev <ifname> station dump`. Kept separate from the

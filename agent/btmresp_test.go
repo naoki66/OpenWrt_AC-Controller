@@ -1,10 +1,10 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"net"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -19,9 +19,12 @@ func (r btmListRunner) Run(_ context.Context, name string, args ...string) (stri
 // attach, parse one response and hand the station, status and target to the
 // callback.
 func TestBTMListenerParsesHostapdResponse(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("hostapd uses Linux Unix datagram sockets")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "phy0-ap0")
-	ln, err := net.Listen("unix", path)
+	ln, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: path, Net: "unixgram"})
 	if err != nil {
 		t.Fatalf("listen unix: %v", err)
 	}
@@ -42,30 +45,28 @@ func TestBTMListenerParsesHostapdResponse(t *testing.T) {
 	l.Start(ctx)
 	defer l.Close()
 
-	if err := ln.(*net.UnixListener).SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+	if err := ln.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("set deadline: %v", err)
 	}
-	conn, err := ln.Accept()
-	if err != nil {
-		t.Fatalf("accept: %v", err)
-	}
-	defer conn.Close()
-
-	// The first thing on the wire must be ATTACH, otherwise hostapd keeps the
-	// socket in command mode and never streams events.
-	reader := bufio.NewReader(conn)
-	line, err := reader.ReadString('\n')
+	var buf [4096]byte
+	n, addr, err := ln.ReadFromUnix(buf[:])
 	if err != nil {
 		t.Fatalf("read attach: %v", err)
 	}
-	if line != "ATTACH\n" {
-		t.Fatalf("first write = %q, want ATTACH", line)
+
+	// The first thing on the wire must be ATTACH, otherwise hostapd keeps the
+	// socket in command mode and never streams events.
+	if string(buf[:n]) != "ATTACH" {
+		t.Fatalf("first write = %q, want ATTACH", buf[:n])
 	}
 
-	if _, err := conn.Write([]byte("<3>CTRL-EVENT-SCAN-RESULTS\n")); err != nil {
+	if _, err := ln.WriteToUnix([]byte("OK\n"), addr); err != nil {
+		t.Fatalf("reply to attach: %v", err)
+	}
+	if _, err := ln.WriteToUnix([]byte("<3>CTRL-EVENT-SCAN-RESULTS"), addr); err != nil {
 		t.Fatalf("write noise: %v", err)
 	}
-	if _, err := conn.Write([]byte("<3>BSS_TM_RESP 02:00:00:00:00:9a status_code=0 bssid=AA:BB:CC:DD:EE:FF\n")); err != nil {
+	if _, err := ln.WriteToUnix([]byte("<3>BSS-TM-RESP 02:00:00:00:00:9a status_code=0 target_bssid=AA:BB:CC:DD:EE:FF"), addr); err != nil {
 		t.Fatalf("write response: %v", err)
 	}
 

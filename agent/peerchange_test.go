@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,6 +133,37 @@ func TestPeerChangeReassertsListsImmediately(t *testing.T) {
 	}
 	if got := r.currentList("phy0.1-ap0"); len(got) != 2 {
 		t.Fatalf("list = %v, want the controller entry plus the peer entry", got)
+	}
+}
+
+func TestExpiredPeerClearsOnlyPreviouslyManagedList(t *testing.T) {
+	r := newNeighborRunner("ap0", "ap1")
+	bus := NewPeerBus(0, time.Minute, "02:00:00:00:00:01", testLog())
+	now := time.Now()
+	bus.now = func() time.Time { return now }
+	a := &Agent{Applier: &Applier{StateDir: t.TempDir(), Runner: r, Log: testLog()}, peerBus: bus, Log: testLog()}
+	a.lastOwnNeighbors = []proto.NeighborBSS{
+		{Ifname: "ap0", SSID: "matched", BSSID: "02:00:00:00:00:03"},
+		{Ifname: "ap1", SSID: "unmatched", BSSID: "02:00:00:00:00:04"},
+	}
+	a.restoreNeighborsOnPeerChange(context.Background())
+	bus.ingest(peerPayload(t, "02:00:00:00:00:02",
+		[]proto.NeighborBSS{{SSID: "matched", BSSID: "02:00:00:00:00:05", Report: "peer"}}, nil))
+	bus.Snapshot()
+	a.restoreNeighborsOnPeerChange(context.Background())
+	if len(r.currentList("ap0")) != 1 {
+		t.Fatal("live peer wasn't installed")
+	}
+	now = now.Add(time.Hour)
+	bus.Snapshot()
+	a.restoreNeighborsOnPeerChange(context.Background())
+	if got := r.currentList("ap0"); len(got) != 0 {
+		t.Fatalf("expired peer stayed installed: %v", got)
+	}
+	for _, call := range r.setCalls() {
+		if strings.Contains(call, "hostapd.ap1 ") {
+			t.Fatalf("unmanaged list was overwritten: %s", call)
+		}
 	}
 }
 

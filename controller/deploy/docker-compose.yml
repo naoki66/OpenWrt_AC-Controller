@@ -12,10 +12,9 @@ services:
     network_mode: host
     environment:
       TZ: Asia/Shanghai
-      # 共享密钥（可选，留空可在 Web 内设置）
-      AC_SHARED_SECRET: ""
+      AC_SHARED_SECRET: "${AC_SHARED_SECRET:-}"
       AC_ADMIN_USER: "admin"
-      AC_ADMIN_PASSWORD: "123456"
+      AC_ADMIN_PASSWORD: "${AC_ADMIN_PASSWORD:-}"
     volumes:
       - ./data:/var/lib/ac
     logging:

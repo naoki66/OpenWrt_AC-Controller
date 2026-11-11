@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -105,6 +106,8 @@ type SteerLoop struct {
 	// merged is the per-tick candidate pool, keyed by interface. Rebuilt every
 	// tick; reading it needs the same mutex as everything else.
 	merged map[string][][]string
+	// tickNeighbors belongs to the current tick, serialized by roamingIO.
+	tickNeighbors []proto.NeighborBSS
 	// rates holds each client's recent best receive rate, the second opinion
 	// the weak-signal test consults (ratewindow.go).
 	rates *rateWindow
@@ -271,7 +274,12 @@ func (s *SteerLoop) tick(ctx context.Context) bool {
 		return false
 	}
 	a := s.Agent
-	if a == nil || a.Config.DryRun || a.Applier == nil || a.state.AppliedRev == 0 {
+	if a == nil || a.Config.DryRun || a.Applier == nil || !a.roamingIO.TryLock() {
+		return false
+	}
+	defer a.roamingIO.Unlock()
+	view := a.roaming.Load()
+	if view == nil || view.appliedRev == 0 {
 		return false
 	}
 	// Yield to a daemon that steers clients itself, exactly like the ad-hoc
@@ -280,7 +288,7 @@ func (s *SteerLoop) tick(ctx context.Context) bool {
 		return false
 	}
 
-	ifaces := s.managedInterfaces(ctx)
+	ifaces := s.managedInterfaces(ctx, view.own)
 	if len(ifaces) == 0 {
 		return false
 	}
@@ -298,7 +306,8 @@ func (s *SteerLoop) tick(ctx context.Context) bool {
 	if a.peerBus != nil {
 		peers = a.peerBus.Snapshot().BSS
 	}
-	merged := mergeNeighborLists(controller, a.lastOwnNeighbors, peers)
+	merged := mergeNeighborLists(controller, view.own, peers)
+	s.tickNeighbors = append(slices.Clone(view.own), peers...)
 	s.mu.Lock()
 	s.merged = merged
 	s.mu.Unlock()
@@ -340,11 +349,11 @@ type managedInterface struct {
 // managedInterfaces lists the BSSes to sample: the 11k self-report first (it
 // is already cached and carries the SSID), falling back to netifd for an AP
 // whose reports have not arrived yet.
-func (s *SteerLoop) managedInterfaces(ctx context.Context) []managedInterface {
+func (s *SteerLoop) managedInterfaces(ctx context.Context, own []proto.NeighborBSS) []managedInterface {
 	a := s.Agent
 	var out []managedInterface
 	seen := map[string]bool{}
-	for _, b := range a.neighborCache {
+	for _, b := range own {
 		if b.Ifname != "" && !seen[b.Ifname] {
 			seen[b.Ifname] = true
 			ifc := managedInterface{ifname: b.Ifname, ssid: b.SSID, bssid: b.BSSID}
@@ -501,9 +510,14 @@ func (s *SteerLoop) processClient(ctx context.Context, p *model.SteerPolicy, now
 		return false
 	}
 
-	if s.sendBTM(ctx, p.BtmDisassocImminent, ifc.ifname, mac, cands) {
-		s.Agent.btm.sent(mac, ifc.ifname, assocAt)
+	if !s.sendBTM(ctx, p.BtmDisassocImminent, ifc.ifname, mac, cands) {
+		// A failed ubus request must not arm a later deauthentication.
+		s.mu.Lock()
+		delete(s.weak, mac)
+		s.mu.Unlock()
+		return true
 	}
+	s.Agent.btm.sent(mac, ifc.ifname, assocAt)
 	s.mu.Lock()
 	delete(s.weak, mac)
 	// Kept for the binding path, which shares the map: a client that was just
@@ -617,16 +631,9 @@ func (s *SteerLoop) bindingCandidates(b proto.ClientBinding) [][]string {
 			add(entry)
 		}
 	}
-	for _, n := range s.Agent.lastOwnNeighbors {
+	for _, n := range s.tickNeighbors {
 		if n.BSSID != "" && n.Report != "" {
 			add([]string{n.BSSID, n.SSID, n.Report})
-		}
-	}
-	if s.Agent.peerBus != nil {
-		for _, n := range s.Agent.peerBus.Snapshot().BSS {
-			if n.BSSID != "" && n.Report != "" {
-				add([]string{n.BSSID, n.SSID, n.Report})
-			}
 		}
 	}
 
@@ -724,23 +731,13 @@ func (s *SteerLoop) putPending(mac string, pk pendingKick) {
 	s.pending[mac] = pk
 }
 
-// candidatesFor returns the merged candidate list for one interface,
-// degrading to the controller's cache alone when the merge produced nothing.
-// The result is filtered and ordered by rankCandidates: a client is never
-// offered its own BSS, and same-channel BSSes come last.
+// candidatesFor uses the current merge. An empty result can mean a live
+// report invalidated the cached target, so do not reload the old cache here.
 func (s *SteerLoop) candidatesFor(ifc managedInterface) [][]string {
 	s.mu.Lock()
-	merged := s.merged
+	list := s.merged[ifc.ifname]
 	s.mu.Unlock()
-	if list, ok := merged[ifc.ifname]; ok && len(list) > 0 {
-		return rankCandidates(list, ifc.info)
-	}
-	if cached := s.Agent.Applier.cachedNeighbors(); cached != nil {
-		if m, err := decodeNeighbors(cached); err == nil {
-			return rankCandidates(m[ifc.ifname], ifc.info)
-		}
-	}
-	return nil
+	return rankCandidates(list, ifc.info)
 }
 
 // trimMaps keeps the per-client maps bounded on a busy AP.

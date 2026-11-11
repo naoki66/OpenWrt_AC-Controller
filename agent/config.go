@@ -51,6 +51,10 @@ type Config struct {
 	Root string
 	// ACAddr is "host:port" of a known controller. Empty means "discover first".
 	ACAddr string
+	// ACPublicKey is the provisioned Ed25519 controller key in hex.
+	ACPublicKey string
+	// DeviceKey authenticates this AP to the AC and encrypts its packages.
+	DeviceKey string
 	// Secret is the shared secret presented to the controller. It also
 	// authenticates AP-to-AP messages, so a site sets it once.
 	Secret string
@@ -66,6 +70,8 @@ type Config struct {
 	// KeepDHCP opts out of stopping dnsmasq/odhcpd. Only useful when the AP is
 	// deliberately kept as a router; an AP in bridged mode must not serve DHCP.
 	KeepDHCP bool
+	// DisableDHCP explicitly opts a bridge AP into DHCP service takeover.
+	DisableDHCP bool
 	// Runner overrides command execution. Nil means the real system, which is
 	// what the device uses; tests inject a fake.
 	Runner Runner
@@ -158,6 +164,14 @@ func Load(c Config) Config {
 	if c.ACAddr == "" {
 		c.ACAddr = os.Getenv("AC_ADDR")
 	}
+	if c.ACPublicKey == "" {
+		c.ACPublicKey = os.Getenv("AC_PUBLIC_KEY")
+	}
+	c.ACPublicKey = strings.ToLower(strings.TrimSpace(c.ACPublicKey))
+	if c.DeviceKey == "" {
+		c.DeviceKey = os.Getenv("AC_DEVICE_KEY")
+	}
+	c.DeviceKey = strings.ToLower(strings.TrimSpace(c.DeviceKey))
 	if c.Secret == "" {
 		c.Secret = os.Getenv("AC_SECRET")
 	}
@@ -171,6 +185,9 @@ func Load(c Config) Config {
 	}
 	if c.HealthTimeout == 0 {
 		c.HealthTimeout = defaultHealthTimeout
+		if v, err := time.ParseDuration(os.Getenv("AC_HEALTH_TIMEOUT")); err == nil && v >= 10*time.Second && v <= 15*time.Minute {
+			c.HealthTimeout = v
+		}
 	}
 	if c.DiscoverPort == 0 {
 		c.DiscoverPort = 29820
@@ -180,6 +197,9 @@ func Load(c Config) Config {
 	}
 	if v := os.Getenv("AC_KEEP_DHCP"); v == "1" || strings.EqualFold(v, "true") {
 		c.KeepDHCP = true
+	}
+	if v := os.Getenv("AC_DISABLE_DHCP"); v == "1" || strings.EqualFold(v, "true") {
+		c.DisableDHCP = true
 	}
 	if c.PeerPort == 0 {
 		c.PeerPort = proto.PeerPort
@@ -407,14 +427,17 @@ type State struct {
 	// the command runs, which is what stops a reboot from being executed twice
 	// when the controller retries an action whose result never arrived.
 	ExecutedActions []string `json:"executed_actions,omitempty"`
-	// PendingConfirm is an address move the controller has not acknowledged
-	// yet. If no hello succeeds before Deadline, the agent restores BackupDir:
+	// PendingConfirm tracks a network revision and its post-commit work.
+	// If no signed acknowledgement arrives before Deadline, restore BackupDir:
 	// a push that makes the AP unreachable from the operator's side must not be
 	// permanent.
 	PendingConfirm *PendingConfirm `json:"pending_confirm,omitempty"`
+	// PendingApply is written before any live configuration file is replaced.
+	PendingApply            string `json:"pending_apply,omitempty"`
+	PendingApplyRestoreDHCP bool   `json:"pending_apply_restore_dhcp,omitempty"`
 }
 
-// PendingConfirm is the commit-confirm window for a management-address move.
+// PendingConfirm is the commit-confirm window for a network change.
 type PendingConfirm struct {
 	Rev       int    `json:"rev"`
 	BackupDir string `json:"backup_dir"`
@@ -422,7 +445,15 @@ type PendingConfirm struct {
 	Deadline string `json:"deadline"`
 	// RestoreDHCP records that the apply switched DHCP off although it ran
 	// before, so the revert has to switch it back on.
-	RestoreDHCP bool `json:"restore_dhcp,omitempty"`
+	RestoreDHCP       bool   `json:"restore_dhcp,omitempty"`
+	PreviousRev       int    `json:"previous_rev,omitempty"`
+	PreviousSHA256    string `json:"previous_sha256,omitempty"`
+	PreviousAppliedAt string `json:"previous_applied_at,omitempty"`
+	Confirmed         bool   `json:"confirmed,omitempty"`
+	DeferredAux       bool   `json:"deferred_aux,omitempty"`
+	Steering          string `json:"steering,omitempty"`
+	SteerPolicy       string `json:"steer_policy,omitempty"`
+	Neighbors         []byte `json:"neighbors,omitempty"`
 }
 
 // LoadState reads the state file. A missing file is not an error: it simply
@@ -452,11 +483,7 @@ func SaveState(path string, st State) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(body, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write state: %w", err)
-	}
-	return os.Rename(tmp, path)
+	return writeAll(map[string]string{path: string(body) + "\n"})
 }
 
 // itoa is a tiny helper kept for readable error messages.

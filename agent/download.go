@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-
-	"github.com/naoki66/ac-controller/shared/secret"
 )
 
 // DownloadFirmware streams an image to dest while hashing it.
@@ -33,15 +31,19 @@ func (c *Client) DownloadFirmware(ctx context.Context, path string, size int64, 
 	ctx, cancel := context.WithTimeout(ctx, firmwareDownloadTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	targetURL, err := c.endpoint(path)
 	if err != nil {
 		return err
 	}
-	if c.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+secret.AuthToken(c.Secret))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := c.authorize(ctx, req, nil); err != nil {
+		return err
 	}
 
-	download := &http.Client{Transport: c.HTTP.Transport, Timeout: firmwareDownloadTimeout}
+	download := &http.Client{Transport: c.HTTP.Transport, Timeout: firmwareDownloadTimeout, CheckRedirect: c.HTTP.CheckRedirect}
 	resp, err := download.Do(req)
 	if err != nil {
 		return err

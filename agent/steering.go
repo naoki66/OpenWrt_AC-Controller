@@ -67,7 +67,7 @@ func (a *Agent) reconcileSteering(ctx context.Context) {
 		// record the transition would retry every cycle for the same result.
 		a.Applier.applySteering(ctx, fallback)
 		a.state.SteeringFallbackActive = true
-		a.steeringKnown = false
+		a.invalidateSteeringState()
 		if err := a.saveState(); err != nil {
 			a.Log.Warn("could not persist fallback state", "err", err)
 		}
@@ -86,7 +86,7 @@ func (a *Agent) reconcileSteering(ctx context.Context) {
 			a.Applier.applySteering(ctx, a.state.Steering)
 		}
 		a.state.SteeringFallbackActive = false
-		a.steeringKnown = false
+		a.invalidateSteeringState()
 		if err := a.saveState(); err != nil {
 			a.Log.Warn("could not persist steering recovery", "err", err)
 		}

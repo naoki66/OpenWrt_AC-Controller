@@ -299,8 +299,10 @@ func rateMbps(b []byte) int {
 
 // netlinkMessage is one decoded netlink frame.
 type netlinkMessage struct {
-	typ  uint16
-	data []byte
+	typ   uint16
+	flags uint16
+	seq   uint32
+	data  []byte
 }
 
 // parseNetlinkMessages splits one recv buffer into frames. Written out rather
@@ -315,7 +317,10 @@ func parseNetlinkMessages(b []byte) []netlinkMessage {
 		if l < 16 || l > len(b) {
 			return out
 		}
-		out = append(out, netlinkMessage{typ: typ, data: b[16:l]})
+		out = append(out, netlinkMessage{
+			typ: typ, flags: binary.NativeEndian.Uint16(b[6:8]),
+			seq: binary.NativeEndian.Uint32(b[8:12]), data: b[16:l],
+		})
 		next := (l + 3) &^ 3
 		if next >= len(b) {
 			return out

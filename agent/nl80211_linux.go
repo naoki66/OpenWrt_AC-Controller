@@ -154,7 +154,7 @@ func (c *nlClient) dump(ctx context.Context, build func(seq uint32, family uint1
 		return err
 	}
 	defer unix.Close(fd)
-	family, err := c.familyID(fd)
+	family, err := c.familyID(ctx, fd)
 	if err != nil {
 		return err
 	}
@@ -191,37 +191,74 @@ func nlSocket(protocol int) (int, error) {
 // slices and reported 37 of the 42 entries present, with the losses scattered
 // across the dump rather than at one end.
 func nlDump(ctx context.Context, fd int, req []byte, fn func(data []byte)) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	seq := binary.NativeEndian.Uint32(req[8:12])
 	if err := unix.Sendto(fd, req, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
 		return fmt.Errorf("netlink send: %w", err)
 	}
 	buf := make([]byte, 1<<16)
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		n, _, err := unix.Recvfrom(fd, buf, 0)
+		n, err := recvNetlink(ctx, fd, buf)
 		if err != nil {
 			return fmt.Errorf("netlink recv: %w", err)
 		}
-		done := false
 		for _, m := range parseNetlinkMessages(buf[:n]) {
+			if m.seq != seq {
+				continue
+			}
+			if m.flags&unix.NLM_F_DUMP_INTR != 0 {
+				return fmt.Errorf("netlink dump interrupted: %w", unix.EINTR)
+			}
 			switch m.typ {
 			case unix.NLMSG_DONE:
-				done = true
+				if len(m.data) != 0 && (len(m.data) < 4 || binary.NativeEndian.Uint32(m.data[:4]) != 0) {
+					return fmt.Errorf("netlink dump ended with error: %w", netlinkErr(m.data))
+				}
+				return nil
 			case unix.NLMSG_ERROR:
 				return fmt.Errorf("netlink error: %w", netlinkErr(m.data))
+			case unix.NLMSG_OVERRUN:
+				return fmt.Errorf("netlink dump overrun: %w", unix.ENOBUFS)
 			default:
 				fn(m.data)
 			}
 		}
-		if done {
-			return nil
+	}
+}
+
+func recvNetlink(ctx context.Context, fd int, buf []byte) (int, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
 		}
+		n, _, flags, from, err := unix.Recvmsg(fd, buf, nil, unix.MSG_DONTWAIT)
+		if err == unix.EINTR {
+			continue
+		}
+		if err == unix.EAGAIN {
+			// Bound each wait so cancellation does not have to wait for the socket.
+			if _, err := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, 25); err != nil && err != unix.EINTR {
+				return 0, err
+			}
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		peer, ok := from.(*unix.SockaddrNetlink)
+		if !ok || peer.Pid != 0 {
+			continue
+		}
+		if flags&unix.MSG_TRUNC != 0 {
+			return 0, fmt.Errorf("truncated netlink datagram: %w", unix.EMSGSIZE)
+		}
+		return n, nil
 	}
 }
 
 // familyID caches the nl80211 generic-netlink family id.
-func (c *nlClient) familyID(fd int) (uint16, error) {
+func (c *nlClient) familyID(ctx context.Context, fd int) (uint16, error) {
 	if c.known {
 		return c.family, nil
 	}
@@ -233,11 +270,16 @@ func (c *nlClient) familyID(fd int) (uint16, error) {
 		return 0, fmt.Errorf("family request: %w", err)
 	}
 	buf := make([]byte, 4096)
-	n, _, err := unix.Recvfrom(fd, buf, 0)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	n, err := recvNetlink(ctx, fd, buf)
 	if err != nil {
 		return 0, fmt.Errorf("family reply: %w", err)
 	}
 	for _, m := range parseNetlinkMessages(buf[:n]) {
+		if m.seq != seq {
+			continue
+		}
 		if m.typ == unix.NLMSG_ERROR {
 			return 0, fmt.Errorf("family error: %w", netlinkErr(m.data))
 		}

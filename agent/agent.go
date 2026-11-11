@@ -3,19 +3,22 @@ package agent
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/naoki66/ac-controller/shared/bundle"
@@ -26,9 +29,12 @@ import (
 
 // Client talks to one controller.
 type Client struct {
-	BaseURL string
-	Secret  string
-	HTTP    *http.Client
+	BaseURL    string
+	Secret     string
+	HTTP       *http.Client
+	controlKey ed25519.PublicKey
+	deviceKey  string
+	deviceMAC  string
 }
 
 // Controller HTTP timeouts.
@@ -58,7 +64,8 @@ const (
 // cycles pay neither a TCP nor a TLS handshake.
 func newControllerHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: controllerTotalTimeout,
+		Timeout:       controllerTotalTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
@@ -83,6 +90,8 @@ func NewClient(baseURL, secret string) *Client {
 
 // Hello registers, reports and polls in a single round trip.
 func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, error) {
+	ctx, cancel := context.WithTimeout(ctx, controllerTotalTimeout)
+	defer cancel()
 	body, err := json.Marshal(h)
 	if err != nil {
 		return proto.HelloReply{}, err
@@ -92,8 +101,16 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 		return proto.HelloReply{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+secret.AuthToken(c.Secret))
+	var nonce string
+	if len(c.controlKey) != 0 {
+		nonce, err = proto.NewControlNonce()
+		if err != nil {
+			return proto.HelloReply{}, err
+		}
+		req.Header.Set(proto.ControlNonceHeader, nonce)
+	}
+	if _, err := c.authorize(ctx, req, body); err != nil {
+		return proto.HelloReply{}, err
 	}
 
 	resp, err := c.HTTP.Do(req)
@@ -102,11 +119,26 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 	}
 	defer resp.Body.Close()
 
-	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+	limit := int64(4096)
+	if resp.StatusCode == http.StatusOK {
+		limit = proto.MaxHelloResponse
+	}
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return proto.HelloReply{}, fmt.Errorf("hello: read reply: %w", err)
+	}
+	if int64(len(payload)) > limit {
+		return proto.HelloReply{}, errors.New("hello: reply exceeds size limit")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return proto.HelloReply{}, fmt.Errorf("hello: controller returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
 
+	if nonce != "" {
+		if err := proto.VerifyHelloReply(c.controlKey, resp.Header.Get(proto.ControlSignatureHeader), nonce, body, payload); err != nil {
+			return proto.HelloReply{}, err
+		}
+	}
 	var reply proto.HelloReply
 	if err := json.Unmarshal(payload, &reply); err != nil {
 		return proto.HelloReply{}, fmt.Errorf("hello: decode reply: %w", err)
@@ -116,13 +148,19 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 
 // FetchPackage downloads a package by its controller-relative path.
 func (c *Client) FetchPackage(ctx context.Context, path string) ([]byte, error) {
-	url := c.BaseURL + path
+	ctx, cancel := context.WithTimeout(ctx, controllerTotalTimeout)
+	defer cancel()
+	url, err := c.endpoint(path)
+	if err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if c.Secret != "" {
-		req.Header.Set("Authorization", "Bearer "+secret.AuthToken(c.Secret))
+	challenge, err := c.authorize(ctx, req, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	resp, err := c.HTTP.Do(req)
@@ -137,7 +175,25 @@ func (c *Client) FetchPackage(ctx context.Context, path string) ([]byte, error) 
 	}
 	// A configuration package is tens of KB; anything near this bound means
 	// something other than a package answered.
-	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	const maxPackage = 8 << 20
+	limit := maxPackage
+	if challenge != "" {
+		limit += 28 // AES-GCM nonce and tag
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(limit+1)))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > limit {
+		return nil, errors.New("configuration package exceeds size limit")
+	}
+	if challenge != "" {
+		if resp.Header.Get("Content-Type") != secret.DevicePackageType {
+			return nil, errors.New("controller did not encrypt the configuration package")
+		}
+		return secret.OpenDevicePackage(c.deviceKey, challenge, body)
+	}
+	return body, nil
 }
 
 // Discover broadcasts AP_DISCOVER and waits for one AC_OFFER.
@@ -284,6 +340,8 @@ type Agent struct {
 	// "unobserved" would swallow the first peer that ever appears.
 	peerVersion     uint64
 	peerVersionSeen bool
+	// Heartbeat-owned interface-to-BSSID entries for lists this agent wrote.
+	managedNeighborBSS map[string]string
 	// peerNTP is the time-source list learned from a peer this cycle. It is used
 	// only when this AP has never received a controller list, so a new AP during
 	// an AC outage can still find the site time source.
@@ -300,6 +358,8 @@ type Agent struct {
 	// lastOwnNeighbors is the freshest 802.11k self-report, used to rebuild
 	// neighbour lists from peers without another ubus read.
 	lastOwnNeighbors []proto.NeighborBSS
+	roaming          atomic.Pointer[roamingView]
+	roamingIO        sync.Mutex
 
 	// steeringCache remembers which steering daemon the device reports as
 	// enabled. Probing it runs three init scripts, so probing every heartbeat
@@ -307,6 +367,7 @@ type Agent struct {
 	steeringCache string
 	steeringAt    time.Time
 	steeringKnown bool
+	steeringMu    sync.Mutex
 
 	// steer is the policy-driven local steering loop.
 	// Always present; it only acts when a package carried a steer-policy file.
@@ -395,6 +456,14 @@ const helloClientReuse = 12 * time.Second
 // applier pointing at this AP's /etc tree.
 func New(cfg Config, log *slog.Logger) (*Agent, error) {
 	cfg = Load(cfg)
+	if cfg.DeviceKey != "" && !secret.ValidDeviceKey(cfg.DeviceKey) {
+		return nil, errors.New("AC_DEVICE_KEY must be a 64-digit device key in hex")
+	}
+	if cfg.ACPublicKey != "" {
+		if key, err := hex.DecodeString(cfg.ACPublicKey); err != nil || len(key) != ed25519.PublicKeySize {
+			return nil, errors.New("AC_PUBLIC_KEY must be a 64-digit Ed25519 public key in hex")
+		}
+	}
 
 	id := cfg.Identity
 	detected := DetectIdentity(cfg.Root)
@@ -444,9 +513,10 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 			Log:           log,
 			HealthTimeout: cfg.HealthTimeout,
 			DryRun:        cfg.DryRun,
-			DisableDHCP:   !cfg.KeepDHCP,
+			DisableDHCP:   cfg.DisableDHCP && !cfg.KeepDHCP,
 			SteeringMode:  cfg.SteeringMode,
 			ACAddr:        cfg.ACAddr,
+			verifyOpenWrt: cfg.Root == "/" && id.Firmware != "",
 		},
 		Clients: &ClientCollector{
 			Runner: runner, Log: log,
@@ -464,7 +534,7 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 		a.Radios.Ubus = a.ubus
 		a.Neighbors.Ubus = a.ubus
 	}
-	if cfg.PeerPort > 0 {
+	if cfg.PeerPort > 0 && len(cfg.Secret) >= 12 {
 		a.peerBus = NewPeerBusWithOptions(PeerOptions{
 			Port:     cfg.PeerPort,
 			Interval: cfg.PeerInterval,
@@ -474,6 +544,8 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 			Network:  cfg.PeerNetwork,
 			Runner:   runner,
 		})
+	} else if cfg.PeerPort > 0 && cfg.Secret != "" {
+		log.Warn("AP peer coordination disabled: shared secret must be at least 12 characters")
 	}
 	a.btm = newBTMGuard()
 	a.steer = NewSteerLoop()
@@ -494,13 +566,37 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 		}
 	}
 	if a.acAddr != "" {
-		a.client = NewClient(withScheme(a.acAddr), cfg.Secret)
+		a.client = a.newControlClient(a.acAddr)
 	}
+	a.publishRoamingView()
 	return a, nil
+}
+
+type roamingView struct {
+	appliedRev int
+	own        []proto.NeighborBSS
+}
+
+// The heartbeat is the sole publisher. A tick uses the same view throughout
+// its candidate and binding decisions.
+func (a *Agent) publishRoamingView() {
+	rev := a.state.AppliedRev
+	if a.state.PendingApply != "" || a.state.PendingConfirm != nil {
+		rev = 0
+	}
+	a.roaming.Store(&roamingView{appliedRev: rev, own: slices.Clone(a.lastOwnNeighbors)})
 }
 
 // State exposes a copy of the agent's persisted state for CLI status output.
 func (a *Agent) State() State { return a.state }
+
+func (a *Agent) newControlClient(addr string) *Client {
+	c := NewClient(withScheme(addr), "")
+	c.controlKey, _ = hex.DecodeString(a.Config.ACPublicKey)
+	c.deviceKey = a.Config.DeviceKey
+	c.deviceMAC = normalizePeerMAC(a.Identity.MAC)
+	return c
+}
 
 // Run polls the controller until the context is cancelled. Transport failures
 // are logged and retried: the whole design assumes the controller may vanish
@@ -726,13 +822,24 @@ func (a *Agent) Step(ctx context.Context) error {
 	// One write per cycle even when nothing else changes: UpdatedAt is how a
 	// local UI tells "agent running and idle" from "agent gone, file stale".
 	defer a.writeStatus()
+	if a.state.PendingApply != "" {
+		if err := a.recoverInterruptedApply(ctx); err != nil {
+			return err
+		}
+	}
 	// A management-address move that was never confirmed must be undone before
 	// this cycle builds its hello, so the hello reports the restored address.
-	a.checkPendingConfirm(ctx)
+	if err := a.checkPendingConfirm(ctx); err != nil {
+		return err
+	}
 	a.reconcileFirmware()
 	// Steering transitions use the previous cycle's outcome, so this sits
 	// before the hello of the current cycle. See steering.go.
-	a.reconcileSteering(ctx)
+	a.roamingIO.Lock()
+	if a.state.PendingConfirm == nil {
+		a.reconcileSteering(ctx)
+	}
+	a.roamingIO.Unlock()
 	// Same reasoning for the peer cadence: it follows the previous cycle's
 	// outcome so the announcement below already uses it.
 	a.reconcilePeerCadence()
@@ -743,20 +850,35 @@ func (a *Agent) Step(ctx context.Context) error {
 	// an AP that stops serving roaming data during an AC outage is exactly the
 	// failure this design is meant to avoid.
 	hello := a.buildHello(ctx)
-	if len(a.state.NTPServers) == 0 && len(a.peerNTP) > 0 {
-		if err := a.applyNTP(ctx, a.peerNTP); err != nil {
-			a.Log.Warn("peer NTP list not applied", "err", err)
+	if a.state.PendingConfirm == nil {
+		if len(a.state.NTPServers) == 0 && len(a.peerNTP) > 0 {
+			if err := a.applyNTP(ctx, a.peerNTP); err != nil {
+				a.Log.Warn("peer NTP list not applied", "err", err)
+			}
 		}
+		a.restoreNeighborsIfDue(ctx)
+		a.restoreNeighborsOnPeerChange(ctx)
 	}
-	a.restoreNeighborsIfDue(ctx)
-	a.restoreNeighborsOnPeerChange(ctx)
+
+	if a.Config.ACPublicKey == "" {
+		err := errors.New("controller trust is not provisioned: configure AC_PUBLIC_KEY")
+		a.rt.LastHelloOK = false
+		a.rt.LastHelloError = err.Error()
+		return err
+	}
+	if a.Config.DeviceKey == "" {
+		err := errors.New("controller device credential is not provisioned: configure AC_DEVICE_KEY")
+		a.rt.LastHelloOK = false
+		a.rt.LastHelloError = err.Error()
+		return err
+	}
 
 	if a.client == nil {
 		if time.Now().Before(a.nextDiscover) {
 			a.Log.Debug("controller discovery deferred", "retry_at", a.nextDiscover)
 			return nil
 		}
-		addr, offer, err := Discover(ctx, a.Config, a.Identity, a.Log)
+		addr, _, err := Discover(ctx, a.Config, a.Identity, a.Log)
 		if err != nil {
 			a.nextDiscover = time.Now().Add(rediscoverDelay)
 			// Recorded like a failed hello: from an operator's point of view
@@ -767,13 +889,7 @@ func (a *Agent) Step(ctx context.Context) error {
 			return err
 		}
 		a.acAddr = addr
-		a.client = NewClient(withScheme(addr), a.Config.Secret)
-		if a.Config.Secret == "" && offer.SecretRequired {
-			secretErr := errors.New("controller requires a shared secret but AC_SECRET is empty")
-			a.rt.LastHelloOK = false
-			a.rt.LastHelloError = secretErr.Error()
-			return secretErr
-		}
+		a.client = a.newControlClient(addr)
 	}
 
 	reply, err := a.client.Hello(ctx, hello)
@@ -785,7 +901,7 @@ func (a *Agent) Step(ctx context.Context) error {
 
 		// A rejected token will not fix itself; surface it instead of looping.
 		if strings.Contains(err.Error(), "401") {
-			return fmt.Errorf("%w (check AC_SECRET)", err)
+			return fmt.Errorf("%w (check AC_DEVICE_KEY and AP MAC)", err)
 		}
 		// A discovered controller that vanished may have moved (DHCP, reinstall,
 		// a different controller taking over). Forget its address and re-resolve
@@ -801,14 +917,21 @@ func (a *Agent) Step(ctx context.Context) error {
 		}
 		return err
 	}
+	if err := a.pinController(reply); err != nil {
+		a.rt.LastHelloOK = false
+		a.rt.LastHelloError = err.Error()
+		return err
+	}
 	a.helloFailures = 0
 	// A successful hello is the controller's acknowledgement that it can still
 	// reach this AP after an address move; the watchdog can stand down.
-	if a.state.PendingConfirm != nil {
-		a.Log.Info("controller confirmed the new management address", "rev", a.state.PendingConfirm.Rev)
-		a.state.PendingConfirm = nil
-		if err := a.saveState(); err != nil {
-			a.Log.Error("state save failed", "err", err)
+	if a.confirmedRevision(reply) {
+		a.roamingIO.Lock()
+		err := a.commitNetworkRevision(ctx)
+		a.publishRoamingView()
+		a.roamingIO.Unlock()
+		if err != nil {
+			return err
 		}
 	}
 	a.rt.LastHelloOK = true
@@ -821,6 +944,9 @@ func (a *Agent) Step(ctx context.Context) error {
 	// reflectStatus (a revision already applied on this AP is proof enough),
 	// which covers a controller that lost its database.
 	a.rt.Adopted = (reply.State == proto.APStateAdopted)
+	if a.state.PendingConfirm != nil {
+		return nil
+	}
 
 	// The report, if any, was delivered; clear it before doing more work.
 	if a.state.PendingSync != "" {
@@ -851,22 +977,16 @@ func (a *Agent) Step(ctx context.Context) error {
 		}
 	}
 
-	if err := a.pinController(reply); err != nil {
-		// The controller answered, so this is not a reachability problem: it is
-		// the trust-on-first-use pin refusing a changed key. Surfaced as an
-		// error on the status card, because nothing will proceed until an
-		// operator resolves it by hand.
-		a.rt.LastHelloError = err.Error()
-		return err
-	}
-
 	// Time sources are site-wide intent from the controller. Applying them is
 	// best effort and independent of config revisions.
 	a.applyNTPFromReply(ctx, reply)
 
 	// Commands are independent of configuration revisions. A reboot stops the
 	// cycle: nothing else should run on a box that is going down.
+	a.roamingIO.Lock()
 	reboot, err := a.runActions(ctx, reply.Actions)
+	a.publishRoamingView()
+	a.roamingIO.Unlock()
 	if err != nil {
 		return err
 	}
@@ -881,7 +1001,7 @@ func (a *Agent) Step(ctx context.Context) error {
 	// 10.0.30.251: applied 9, controller desired 7, so the LAN4-6 BSS never
 	// came back). Applying stops next cycle because state records the manifest
 	// rev, so the loop converges instead of re-downloading.
-	if reply.DesiredRev != a.state.AppliedRev && reply.PackagePath != "" {
+	if a.state.PendingConfirm == nil && reply.DesiredRev != a.state.AppliedRev && reply.PackagePath != "" {
 		if wait := time.Until(a.nextApply); wait > 0 {
 			a.Log.Warn("apply backing off after previous failure", "retry_in", wait.Round(time.Second).String())
 		} else {
@@ -965,12 +1085,20 @@ func (a *Agent) steeringState(ctx context.Context) string {
 	if a.Applier == nil {
 		return ""
 	}
+	a.steeringMu.Lock()
+	defer a.steeringMu.Unlock()
 	if !a.steeringKnown || time.Since(a.steeringAt) >= steeringProbeInterval {
 		a.steeringCache = a.Applier.probeSteering(ctx)
 		a.steeringAt = time.Now()
 		a.steeringKnown = true
 	}
 	return a.steeringCache
+}
+
+func (a *Agent) invalidateSteeringState() {
+	a.steeringMu.Lock()
+	a.steeringKnown = false
+	a.steeringMu.Unlock()
 }
 
 // steeringStats returns the guard's counters, or nil when this agent has none.
@@ -1054,22 +1182,17 @@ func (a *Agent) collectClients(ctx context.Context) []proto.ClientStat {
 	return a.Clients.Snapshot(ctx, helloClientReuse)
 }
 
-// pinController trusts the first public key it sees and refuses any change.
-// Swapping the key is exactly what an attacker on the path would do, so the
-// agent treats it as a fatal condition rather than a warning.
+// pinController records the identity from an already verified response.
+// The provisioned key, never the cached state, is the trust root.
 func (a *Agent) pinController(reply proto.HelloReply) error {
-	if reply.PubKey == "" {
-		return errors.New("controller did not provide a public key")
+	if a.Config.ACPublicKey == "" || reply.PubKey != a.Config.ACPublicKey {
+		return errors.New("controller public key differs from the provisioned key")
 	}
-	if a.state.PubKey == "" {
+	if a.state.PubKey != a.Config.ACPublicKey {
 		a.state.PubKey = reply.PubKey
 		a.state.ACID = reply.ACID
 		a.Log.Info("pinned controller key", "ac_id", reply.ACID, "pubkey", reply.PubKey)
 		return a.saveState()
-	}
-	if a.state.PubKey != reply.PubKey {
-		return fmt.Errorf("controller public key changed (pinned %s..., got %s...); refusing to apply",
-			prefix(a.state.PubKey), prefix(reply.PubKey))
 	}
 	if reply.ACID != "" && a.state.ACID != "" && reply.ACID != a.state.ACID {
 		return fmt.Errorf("controller ac_id changed (pinned %s, got %s)", a.state.ACID, reply.ACID)
@@ -1083,12 +1206,7 @@ func (a *Agent) applyRevision(ctx context.Context, reply proto.HelloReply) error
 		return a.reportFailure(fmt.Errorf("download: %w", err))
 	}
 
-	pub, err := hex.DecodeString(a.state.PubKey)
-	if err != nil {
-		return a.reportFailure(fmt.Errorf("pinned public key is not hex: %w", err))
-	}
-
-	manifest, files, err := bundle.Extract(raw, pub)
+	manifest, files, err := bundle.Extract(raw, a.client.controlKey)
 	if err != nil {
 		return a.reportFailure(fmt.Errorf("package rejected: %w", err))
 	}
@@ -1101,14 +1219,37 @@ func (a *Agent) applyRevision(ctx context.Context, reply proto.HelloReply) error
 	if !manifest.AllowsModel(a.Identity.Model) {
 		return a.reportFailure(fmt.Errorf("package does not allow model %q (whitelist %v)", a.Identity.Model, manifest.ModelWhitelist))
 	}
+	if manifest.Rev != reply.DesiredRev {
+		return a.reportFailure(fmt.Errorf("package revision %d does not match signed desired revision %d", manifest.Rev, reply.DesiredRev))
+	}
 
 	// The address may have come from discovery rather than the config, so hand
 	// the live value to the applier for the renumbering reachability check.
+	a.roamingIO.Lock()
+	defer func() {
+		a.publishRoamingView()
+		a.roamingIO.Unlock()
+	}()
 	a.Applier.ACAddr = a.acAddr
+	before := a.state
+	a.Applier.beforeWrite = func(dir string, restoreDHCP bool) error {
+		a.state.PendingApply = dir
+		a.state.PendingApplyRestoreDHCP = restoreDHCP
+		if err := a.saveState(); err != nil {
+			a.state.PendingApply = ""
+			a.state.PendingApplyRestoreDHCP = false
+			return err
+		}
+		return nil
+	}
 	res, err := a.Applier.Apply(ctx, manifest, files)
+	a.Applier.beforeWrite = nil
 	if err != nil {
-		// The applier already rolled the device back to its previous config.
-		a.Log.Error("apply failed and was rolled back", "rev", manifest.Rev, "err", err)
+		if !res.RollbackFailed {
+			a.state.PendingApply = ""
+			a.state.PendingApplyRestoreDHCP = false
+		}
+		a.Log.Error("apply failed", "rev", manifest.Rev, "rollback_failed", res.RollbackFailed, "err", err)
 		a.state.LastError = err.Error()
 		return a.reportFailure(err)
 	}
@@ -1122,45 +1263,33 @@ func (a *Agent) applyRevision(ctx context.Context, reply proto.HelloReply) error
 	// An address move is committed only when the controller acknowledges it.
 	// Arm the watchdog before the immediate hello below: if that hello fails,
 	// the window keeps running and only a later successful hello clears it.
-	if res.NewAddr != "" {
+	if res.NetworkChanged {
 		window := a.ConfirmWindow
 		if window <= 0 {
 			window = defaultConfirmWindow
 		}
 		a.state.PendingConfirm = &PendingConfirm{
-			Rev:         manifest.Rev,
-			BackupDir:   res.BackupDir,
-			Deadline:    time.Now().Add(window).UTC().Format(time.RFC3339),
-			RestoreDHCP: res.DHCPRestoreNeeded,
+			Rev:               manifest.Rev,
+			BackupDir:         res.BackupDir,
+			Deadline:          time.Now().Add(window).UTC().Format(time.RFC3339),
+			RestoreDHCP:       res.DHCPRestoreNeeded,
+			PreviousRev:       before.AppliedRev,
+			PreviousSHA256:    before.SHA256,
+			PreviousAppliedAt: before.AppliedAt,
+			DeferredAux:       true,
+			Steering:          strings.TrimSpace(string(files[render.FileSteering])),
+			SteerPolicy:       strings.TrimSpace(string(files[render.FileSteerPolicy])),
+			Neighbors:         files[render.FileNeighbors],
 		}
-		a.Log.Info("management address moved; waiting for the controller to confirm",
+		a.Log.Info("network changed; waiting for signed controller confirmation",
 			"new_addr", res.NewAddr, "window", window.String())
 	} else {
 		a.state.PendingConfirm = nil
+		a.recordSteeringDirective(string(files[render.FileSteering]), string(files[render.FileSteerPolicy]))
 	}
 	// The package may have changed the steering daemon; do not report the cached
 	// answer on the hello sent right below.
-	a.steeringKnown = false
-	// Remember what the controller wants steering to be. This is the directive
-	// the steering policy restores after an autonomous-steering outage, so it
-	// must be the package's content, not the daemons actually found on disk.
-	if raw, ok := files[render.FileSteering]; ok {
-		if wanted := strings.TrimSpace(string(raw)); wanted != "" {
-			a.state.Steering = wanted
-		}
-	}
-	// The steering-loop policy rides in the same package. A malformed policy
-	// must not fail the apply — the wireless config is still good — so it is
-	// logged and dropped, and the controller sees the device running without
-	// local steering on the next hello.
-	if raw, ok := files[render.FileSteerPolicy]; ok {
-		if p, err := parseSteerPolicy(raw); err != nil {
-			a.Log.Warn("steer-policy rejected", "err", err)
-		} else {
-			a.steer.SetPolicy(p)
-			a.state.SteerPolicyRaw = strings.TrimSpace(string(raw))
-		}
-	}
+	a.invalidateSteeringState()
 	// Record the archive digest, not a manifest field: it is what the controller
 	// stored and what an operator can compare against on either side.
 	sum := sha256.Sum256(raw)
@@ -1169,7 +1298,14 @@ func (a *Agent) applyRevision(ctx context.Context, reply proto.HelloReply) error
 	a.state.LastError = ""
 	a.state.PendingSync = proto.SyncApplied
 	a.state.PendingSyncMsg = fmt.Sprintf("rev %d, files %v", manifest.Rev, res.Files)
+	journal := a.state.PendingApply
+	journalDHCP := a.state.PendingApplyRestoreDHCP
+	a.state.PendingApply = ""
+	a.state.PendingApplyRestoreDHCP = false
 	if err := a.saveState(); err != nil {
+		a.state = before
+		a.state.PendingApply = journal
+		a.state.PendingApplyRestoreDHCP = journalDHCP
 		return err
 	}
 
@@ -1177,21 +1313,115 @@ func (a *Agent) applyRevision(ctx context.Context, reply proto.HelloReply) error
 	// showing a stale state for no reason. buildHello is reused so the report
 	// cannot silently drop the steering state and client list the first hello
 	// carried — that is exactly the bug this helper was introduced to prevent.
-	if _, err := a.client.Hello(ctx, a.buildHello(ctx)); err != nil {
+	ack, err := a.client.Hello(ctx, a.buildHello(ctx))
+	if err != nil {
 		a.Log.Warn("could not report applied revision yet, will retry", "err", err)
 		return nil // the pending report survives on disk and goes out next cycle
 	}
 
 	a.state.PendingSync = ""
 	a.state.PendingSyncMsg = ""
-	if a.state.PendingConfirm != nil {
-		a.Log.Info("controller confirmed the new management address", "rev", a.state.PendingConfirm.Rev)
-		a.state.PendingConfirm = nil
+	if a.confirmedRevision(ack) {
+		return a.commitNetworkRevision(ctx)
 	}
 	return a.saveState()
 }
 
-// defaultConfirmWindow is how long a management-address move may stay
+func (a *Agent) recordSteeringDirective(wanted, policy string) {
+	if wanted = strings.TrimSpace(wanted); wanted != "" {
+		a.state.Steering = wanted
+	}
+	if policy = strings.TrimSpace(policy); policy != "" {
+		if p, err := parseSteerPolicy([]byte(policy)); err != nil {
+			a.Log.Warn("steer-policy rejected", "err", err)
+		} else {
+			a.steer.SetPolicy(p)
+			a.state.SteerPolicyRaw = policy
+		}
+	}
+}
+
+// commitNetworkRevision runs under roamingIO. Persist the signed ACK before
+// changing services that the network rollback does not restore.
+func (a *Agent) commitNetworkRevision(ctx context.Context) error {
+	pc := a.state.PendingConfirm
+	if !pc.Confirmed {
+		pc.Confirmed = true
+		if err := a.saveState(); err != nil {
+			pc.Confirmed = false
+			return fmt.Errorf("persist network confirmation: %w", err)
+		}
+		a.Log.Info("controller confirmed the network revision", "rev", pc.Rev)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if pc.DeferredAux {
+		network, err := os.ReadFile(filepath.Join(a.Applier.ConfigDir, "network"))
+		if err != nil {
+			return fmt.Errorf("read confirmed network config: %w", err)
+		}
+		postCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		a.Applier.ensureManagementAccess(postCtx, string(network))
+		a.Applier.disableDHCPServices(postCtx)
+		if pc.Steering != "" && a.Applier.SteeringMode != SteeringModeAutonomous {
+			a.Applier.applySteering(postCtx, pc.Steering)
+		}
+		if len(pc.Neighbors) != 0 {
+			a.Applier.invalidateBSSSet()
+			a.Applier.cacheNeighbors(pc.Neighbors)
+			a.Applier.EnsureNeighbors(postCtx, pc.Neighbors)
+		}
+		if err := postCtx.Err(); err != nil {
+			return err
+		}
+		a.recordSteeringDirective(pc.Steering, pc.SteerPolicy)
+		a.invalidateSteeringState()
+	}
+	a.state.PendingConfirm = nil
+	if err := a.saveState(); err != nil {
+		a.state.PendingConfirm = pc
+		return fmt.Errorf("save finalized network revision: %w", err)
+	}
+	return nil
+}
+
+func (a *Agent) confirmedRevision(reply proto.HelloReply) bool {
+	return a.state.PendingConfirm != nil && reply.State == proto.APStateAdopted &&
+		reply.ACID == a.state.ACID && reply.PubKey == a.Config.ACPublicKey &&
+		reply.AcceptedRev == a.state.PendingConfirm.Rev
+}
+
+func (a *Agent) recoverInterruptedApply(ctx context.Context) error {
+	if a.Config.DryRun {
+		return errors.New("incomplete apply requires recovery with dry run disabled")
+	}
+	dir := a.state.PendingApply
+	restoreDHCP := a.state.PendingApplyRestoreDHCP
+	a.roamingIO.Lock()
+	defer func() {
+		a.publishRoamingView()
+		a.roamingIO.Unlock()
+	}()
+	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.Applier.rollbackTimeout())
+	defer cancel()
+	if err := a.Applier.RestoreBackup(undoCtx, dir, restoreDHCP); err != nil {
+		return fmt.Errorf("restore interrupted apply: %w", err)
+	}
+	a.state.PendingApply = ""
+	a.state.PendingApplyRestoreDHCP = false
+	a.state.PendingSync = proto.SyncRollback
+	a.state.PendingSyncMsg = "interrupted apply was rolled back"
+	if err := a.saveState(); err != nil {
+		a.state.PendingApply = dir
+		a.state.PendingApplyRestoreDHCP = restoreDHCP
+		return err
+	}
+	return nil
+}
+
+// defaultConfirmWindow is how long a network change may stay
 // unacknowledged before the watchdog restores the previous configuration.
 const defaultConfirmWindow = 5 * time.Minute
 
@@ -1201,51 +1431,51 @@ const defaultConfirmWindow = 5 * time.Minute
 // happens — asymmetric routing, a VLAN that only the controller can reach, a
 // dropped route after the apply — the old configuration comes back and the
 // operator keeps an AP instead of losing one.
-func (a *Agent) checkPendingConfirm(ctx context.Context) {
+func (a *Agent) checkPendingConfirm(ctx context.Context) error {
 	pc := a.state.PendingConfirm
 	if pc == nil || a.Config.DryRun {
-		return
+		return nil
+	}
+	if pc.Confirmed {
+		a.roamingIO.Lock()
+		defer func() {
+			a.publishRoamingView()
+			a.roamingIO.Unlock()
+		}()
+		return a.commitNetworkRevision(ctx)
 	}
 	deadline, err := time.Parse(time.RFC3339, pc.Deadline)
-	if err != nil {
-		a.Log.Warn("pending confirm has an invalid deadline; dropping it", "deadline", pc.Deadline, "err", err)
-		a.state.PendingConfirm = nil
-		if err := a.saveState(); err != nil {
-			a.Log.Error("state save failed", "err", err)
-		}
-		return
+	if err == nil && time.Now().Before(deadline) {
+		return nil
 	}
-	if time.Now().Before(deadline) {
-		return
-	}
+	a.roamingIO.Lock()
+	defer func() {
+		a.publishRoamingView()
+		a.roamingIO.Unlock()
+	}()
 
-	a.Log.Warn("management address was never confirmed by the controller; restoring the previous config",
+	a.Log.Warn("network change was never confirmed by the controller; restoring the previous config",
 		"rev", pc.Rev, "deadline", pc.Deadline, "backup", pc.BackupDir)
-	if err := a.Applier.RestoreBackup(ctx, pc.BackupDir, pc.RestoreDHCP); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			a.Log.Error("pending confirm cannot be restored: backup is gone", "backup", pc.BackupDir, "err", err)
-			a.state.PendingConfirm = nil
-			a.state.LastError = "management address was not confirmed and its backup is gone"
-			a.state.PendingSync = proto.SyncRollback
-			a.state.PendingSyncMsg = truncate(a.state.LastError, 500)
-			if err := a.saveState(); err != nil {
-				a.Log.Error("state save failed", "err", err)
-			}
-			return
-		}
-		// Transient failure (write, reload): keep the pending record and try
-		// again on the next cycle rather than leaving the AP half-restored.
-		a.Log.Error("watchdog restore failed; will retry next cycle", "err", err)
-		return
+	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.Applier.rollbackTimeout())
+	defer cancel()
+	if err := a.Applier.RestoreBackup(undoCtx, pc.BackupDir, pc.RestoreDHCP); err != nil {
+		a.state.LastError = "watchdog restore failed: " + err.Error()
+		return fmt.Errorf("watchdog restore failed; will retry: %w", err)
 	}
 
 	a.state.PendingConfirm = nil
-	a.state.LastError = fmt.Sprintf("rev %d moved the management address and was never confirmed; rolled back", pc.Rev)
+	a.state.AppliedRev = pc.PreviousRev
+	a.state.SHA256 = pc.PreviousSHA256
+	a.state.AppliedAt = pc.PreviousAppliedAt
+	a.nextApply = time.Now().Add(applyBackoff(1))
+	a.state.LastError = fmt.Sprintf("network revision %d was never confirmed; rolled back", pc.Rev)
 	a.state.PendingSync = proto.SyncRollback
 	a.state.PendingSyncMsg = truncate(a.state.LastError, 500)
 	if err := a.saveState(); err != nil {
-		a.Log.Error("state save failed after watchdog revert", "err", err)
+		a.state.PendingConfirm = pc
+		return fmt.Errorf("save state after watchdog revert: %w", err)
 	}
+	return nil
 }
 
 // reportFailure records the outcome so the controller learns about it even if

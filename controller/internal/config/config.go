@@ -87,7 +87,7 @@ func Load() Config {
 		SharedSecret:    env("AC_SHARED_SECRET", ""),
 		AdminToken:      env("AC_ADMIN_TOKEN", ""),
 		AdminUser:       env("AC_ADMIN_USER", "admin"),
-		AdminPassword:   env("AC_ADMIN_PASSWORD", "123456"),
+		AdminPassword:   env("AC_ADMIN_PASSWORD", ""),
 		AdvertiseIP:     env("AC_ADVERTISE_IP", ""),
 		SampleInterval:  dur("AC_SAMPLE_INTERVAL", 60*time.Second),
 		SampleRetention: dur("AC_SAMPLE_RETENTION", 7*24*time.Hour),
@@ -139,17 +139,11 @@ func (c Config) IDFile() string {
 	return filepath.Join(c.DataDir, "ac.id")
 }
 
-// SecretWarnings reports credentials that weaken the management/AP boundary.
-//
-// It returns warnings rather than errors on purpose: an unauthenticated
-// controller is still the right thing to boot on an isolated management VLAN,
-// and refusing to start would be worse than saying so loudly. The one case that
-// is actively dangerous — reusing the shared secret as the admin token — is
-// still a warning, because the deployment in question may be locked down.
+// SecretWarnings reports optional credentials and unsafe credential reuse.
 func (c Config) SecretWarnings() []string {
 	var out []string
 	if c.SharedSecret == "" {
-		out = append(out, "AC_SHARED_SECRET is empty: AP registration will not be authenticated")
+		out = append(out, "AC_SHARED_SECRET is empty: no AP peer coordination key is configured on the controller")
 	}
 	if c.AdminToken == "" {
 		out = append(out, "AC_ADMIN_TOKEN is empty: automation has no Bearer token "+

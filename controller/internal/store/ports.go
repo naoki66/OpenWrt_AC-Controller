@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -28,22 +29,35 @@ func (s *Store) ReplacePortsForAP(ctx context.Context, apMAC string, ports []Por
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM port_state WHERE ap_mac = ?`, apMAC); err != nil {
-		return fmt.Errorf("port state clear: %w", err)
-	}
 	const insert = `INSERT INTO port_state
 		(ap_mac, name, mac, up, speed_mbps, duplex, mtu, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(ap_mac, name) DO UPDATE SET
+			mac=excluded.mac, up=excluded.up, speed_mbps=excluded.speed_mbps,
+			duplex=excluded.duplex, mtu=excluded.mtu, updated_at=excluded.updated_at
+		WHERE (port_state.mac, port_state.up, port_state.speed_mbps, port_state.duplex, port_state.mtu)
+		   IS NOT (excluded.mac, excluded.up, excluded.speed_mbps, excluded.duplex, excluded.mtu)
+		   OR port_state.updated_at <= excluded.updated_at - ?`
 	now := time.Now().Unix()
+	names := make([]string, 0, len(ports))
 	for _, p := range ports {
+		names = append(names, p.Name)
 		up := 0
 		if p.Up {
 			up = 1
 		}
 		if _, err := tx.ExecContext(ctx, insert,
-			apMAC, p.Name, p.MAC, up, p.SpeedMbps, p.Duplex, p.MTU, now); err != nil {
+			apMAC, p.Name, p.MAC, up, p.SpeedMbps, p.Duplex, p.MTU, now, stateRefreshSeconds); err != nil {
 			return fmt.Errorf("insert port %s: %w", p.Name, err)
 		}
+	}
+	encoded, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM port_state
+		WHERE ap_mac = ? AND name NOT IN (SELECT value FROM json_each(?))`, apMAC, string(encoded)); err != nil {
+		return fmt.Errorf("remove stale ports: %w", err)
 	}
 	return tx.Commit()
 }

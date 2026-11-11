@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -240,6 +241,10 @@ FROM radio_samples WHERE ts >= ? AND ts <= ?`
 	return out, rows.Err()
 }
 
+// Keep a coarse freshness timestamp without rewriting identical samples on
+// every heartbeat. Changed state is always persisted immediately.
+const stateRefreshSeconds = 300
+
 // ReplaceRadiosForAP converges the "now" view onto the set the AP just
 // reported: names absent from the list are deleted, so a renamed or removed
 // radio vanishes on the next hello instead of haunting the radio page until
@@ -253,26 +258,43 @@ func (s *Store) ReplaceRadiosForAP(ctx context.Context, apMAC string, radios []R
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM radio_state WHERE ap_mac = ?`, apMAC); err != nil {
-		return fmt.Errorf("radio state clear: %w", err)
-	}
 	const insert = `INSERT INTO radio_state
 		(ap_mac, radio, band, up, channel, freq_mhz, htmode, width_mhz, txpower, country, utilization, clients, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(ap_mac, radio) DO UPDATE SET
+			band=excluded.band, up=excluded.up, channel=excluded.channel, freq_mhz=excluded.freq_mhz,
+			htmode=excluded.htmode, width_mhz=excluded.width_mhz, txpower=excluded.txpower,
+			country=excluded.country, utilization=excluded.utilization, clients=excluded.clients,
+			updated_at=excluded.updated_at
+		WHERE (radio_state.band, radio_state.up, radio_state.channel, radio_state.freq_mhz, radio_state.htmode,
+			radio_state.width_mhz, radio_state.txpower, radio_state.country, radio_state.utilization, radio_state.clients)
+		   IS NOT (excluded.band, excluded.up, excluded.channel, excluded.freq_mhz, excluded.htmode,
+			excluded.width_mhz, excluded.txpower, excluded.country, excluded.utilization, excluded.clients)
+		   OR radio_state.updated_at <= excluded.updated_at - ?`
 	now := time.Now().Unix()
+	names := make([]string, 0, len(radios))
 	for _, r := range radios {
 		if r.Radio == "" {
 			continue
 		}
+		names = append(names, r.Radio)
 		up := 0
 		if r.Up {
 			up = 1
 		}
 		if _, err := tx.ExecContext(ctx, insert,
 			apMAC, r.Radio, r.Band, up, r.Channel, r.FreqMHz, r.HTMode,
-			r.WidthMHz, r.TxPower, r.Country, r.Utilization, r.Clients, now); err != nil {
+			r.WidthMHz, r.TxPower, r.Country, r.Utilization, r.Clients, now, stateRefreshSeconds); err != nil {
 			return fmt.Errorf("radio state insert: %w", err)
 		}
+	}
+	encoded, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM radio_state
+		WHERE ap_mac = ? AND radio NOT IN (SELECT value FROM json_each(?))`, apMAC, string(encoded)); err != nil {
+		return fmt.Errorf("remove stale radios: %w", err)
 	}
 	return tx.Commit()
 }

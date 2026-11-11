@@ -317,10 +317,11 @@ type HelloReply struct {
 	// lower value, which is how a controller restored from an older database
 	// rolls an AP back.
 	DesiredRev int `json:"desired_rev"`
+	// AcceptedRev acknowledges the applied revision recorded by this hello.
+	AcceptedRev int `json:"accepted_rev,omitempty"`
 	// PackagePath is a path relative to the controller base URL.
 	PackagePath string `json:"package_path,omitempty"`
-	// PubKey is the Ed25519 verification key in hex. The agent pins the first
-	// value it sees and refuses any later change (trust on first use).
+	// PubKey echoes the provisioned Ed25519 verification key for diagnostics.
 	PubKey         string `json:"pubkey"`
 	SecretRequired bool   `json:"secret_required"`
 	// Firmware, when set, is an image the controller wants this AP to flash.

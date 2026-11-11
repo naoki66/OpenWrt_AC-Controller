@@ -26,8 +26,10 @@ type Listener struct {
 	// SecretRequiredFunc, when set, wins over SecretRequired so the offer
 	// tracks the live effective secret (it is consulted per offer).
 	SecretRequiredFunc func() bool
-	Store              *store.Store
-	Log                *slog.Logger
+	// OfferOnly leaves durable registration to authenticated heartbeats.
+	OfferOnly bool
+	Store     *store.Store
+	Log       *slog.Logger
 }
 
 // secretRequired reports whether APs must authenticate right now.
@@ -104,14 +106,16 @@ func (l *Listener) handle(ctx context.Context, uc *net.UDPConn, payload []byte, 
 		hostname = "unknown"
 	}
 
-	if err := l.Store.UpsertDiscovered(ctx, store.Device{
-		MAC:      mac,
-		Model:    p.Model,
-		Firmware: p.Firmware,
-		IP:       peer.IP.String(),
-		Hostname: hostname,
-	}); err != nil {
-		l.Log.Warn("record discovery failed", "mac", mac, "err", err)
+	if !l.OfferOnly {
+		if err := l.Store.UpsertDiscovered(ctx, store.Device{
+			MAC:      mac,
+			Model:    p.Model,
+			Firmware: p.Firmware,
+			IP:       peer.IP.String(),
+			Hostname: hostname,
+		}); err != nil {
+			l.Log.Warn("record discovery failed", "mac", mac, "err", err)
+		}
 	}
 
 	reply := proto.Offer{
@@ -130,7 +134,7 @@ func (l *Listener) handle(ctx context.Context, uc *net.UDPConn, payload []byte, 
 		l.Log.Warn("offer failed", "peer", peer.String(), "err", err)
 		return
 	}
-	l.Log.Info("ap discovered", "mac", mac, "model", p.Model, "ip", peer.IP.String())
+	l.Log.Debug("ap discovery offer sent", "mac", mac, "ip", peer.IP.String())
 }
 
 // advertiseIP reports the local address the AP should connect to. Deriving it

@@ -30,7 +30,7 @@ const (
 	// lose its link (-78 dBm). Above it, the client is left alone.
 	steerWeakSignal = -78
 	// steerMinConnected avoids fighting the association the client just made.
-	steerMinConnected = 30
+	steerMinConnected = 30 * time.Second
 	// steerCooldown is per-client; a client that did not take the suggestion is
 	// not asked again for a while.
 	steerCooldown = 2 * time.Minute
@@ -55,6 +55,7 @@ func (a *Agent) coordinatePeers(ctx context.Context, h proto.Hello) {
 	// Keep the freshest self-report; the periodic neighbour restore uses it to
 	// rebuild lists without another ubus read.
 	a.lastOwnNeighbors = h.Neighbors
+	a.publishRoamingView()
 	if a.peerBus == nil {
 		return
 	}
@@ -64,6 +65,10 @@ func (a *Agent) coordinatePeers(ctx context.Context, h proto.Hello) {
 	st.NTP = a.state.NTPServers
 	a.peerBus.Announce(st)
 	snap := a.peerBus.Snapshot()
+	a.rt.PeerTransport = snap.Transport
+	a.rt.PeerDevice = snap.Device
+	a.rt.PeerAPs = len(snap.APs)
+	a.rt.PeerBSSes = len(snap.BSS)
 	if len(snap.NTP) > 0 {
 		a.peerNTP = snap.NTP
 	}
@@ -73,10 +78,8 @@ func (a *Agent) coordinatePeers(ctx context.Context, h proto.Hello) {
 // neighborBody merges the controller's cached lists with this AP's own reports
 // and every live peer's reports.
 //
-// Precedence does not matter: entries are deduplicated by BSSID and all three
-// sources describe the same thing. Keeping the controller's entries means a
-// peer outage cannot make a previously good list worse, while adding peers
-// covers the controller outage case.
+// Live reports take precedence: ACS can change a peer's channel while the
+// controller is offline and the cached report still names its old channel.
 func (a *Agent) neighborBody() []byte {
 	if a.Applier == nil {
 		return nil
@@ -94,6 +97,25 @@ func (a *Agent) neighborBody() []byte {
 	}
 
 	merged := mergeNeighborLists(controller, a.lastOwnNeighbors, peers)
+	if a.managedNeighborBSS == nil {
+		a.managedNeighborBSS = make(map[string]string)
+	}
+	for _, self := range a.lastOwnNeighbors {
+		if self.Ifname == "" || self.BSSID == "" {
+			continue
+		}
+		bssid := strings.ToLower(self.BSSID)
+		if len(merged[self.Ifname]) > 0 {
+			a.managedNeighborBSS[self.Ifname] = bssid
+		} else if a.managedNeighborBSS[self.Ifname] == bssid {
+			// Send [] to clear an expired learned list. Never clear an
+			// interface this agent hasn't managed or whose BSSID changed.
+			if merged == nil {
+				merged = make(map[string][][]string)
+			}
+			merged[self.Ifname] = [][]string{}
+		}
+	}
 	if len(merged) == 0 {
 		return nil
 	}
@@ -121,11 +143,18 @@ func mergeNeighborLists(controller map[string][][]string, own, peers []proto.Nei
 		bssid string
 	}
 	local := map[string]localBSS{}
+	live := make(map[string]bool, len(own)+len(peers))
 	for _, b := range own {
 		if b.Ifname == "" || b.BSSID == "" {
 			continue
 		}
 		local[b.Ifname] = localBSS{ssid: b.SSID, bssid: strings.ToLower(b.BSSID)}
+		live[strings.ToLower(b.BSSID)] = true
+	}
+	for _, b := range peers {
+		if b.BSSID != "" && b.Report != "" {
+			live[strings.ToLower(b.BSSID)] = true
+		}
 	}
 
 	out := map[string][][]string{}
@@ -133,7 +162,7 @@ func mergeNeighborLists(controller map[string][][]string, own, peers []proto.Nei
 		seen := make(map[string]bool)
 		var list [][]string
 		add := func(entry []string) {
-			if len(entry) < 1 || entry[0] == "" {
+			if len(entry) != 3 || entry[0] == "" || entry[1] != self.ssid || entry[2] == "" {
 				return
 			}
 			key := strings.ToLower(entry[0])
@@ -144,9 +173,6 @@ func mergeNeighborLists(controller map[string][][]string, own, peers []proto.Nei
 			list = append(list, entry)
 		}
 
-		for _, entry := range controller[ifname] {
-			add(entry)
-		}
 		// Sibling BSSes on this AP (same SSID, different BSSID) are legitimate
 		// neighbours too, and the controller list may predate them.
 		for _, b := range own {
@@ -160,6 +186,11 @@ func mergeNeighborLists(controller map[string][][]string, own, peers []proto.Nei
 				continue
 			}
 			add([]string{b.BSSID, b.SSID, b.Report})
+		}
+		for _, entry := range controller[ifname] {
+			if len(entry) == 3 && !live[strings.ToLower(entry[0])] {
+				add(entry)
+			}
 		}
 
 		if len(list) == 0 {
@@ -271,8 +302,8 @@ func (a *Agent) maybeSteer(ctx context.Context, h proto.Hello) {
 		// (the hex body from rrm_nr_get_own), not bare BSSIDs: anything else is
 		// rejected with "Invalid argument" (verified on 10.0.30.251, 2026-11-03).
 		//
-		// The pool goes through the same quality filter the policy loop uses, so
-		// this path cannot point a client at a BSS on its own channel either.
+		// A nearby peer on the same channel is still useful to a weak client.
+		// Offer it as a last resort here; this path never disconnects the client.
 		var pooled [][]string
 		for _, b := range snapshot.BSS {
 			if b.SSID != c.SSID || b.BSSID == "" || b.Report == "" {
@@ -293,7 +324,7 @@ func (a *Agent) maybeSteer(ctx context.Context, h proto.Hello) {
 			}
 			break
 		}
-		pooled = rankCandidates(pooled, self)
+		pooled = rankCandidatesForAdvice(pooled, self)
 		// A target this client just rejected is not offered again for a while:
 		// repeating a BSS the station already said no to is exactly the nagging
 		// this guard exists to stop. Other candidates remain eligible.

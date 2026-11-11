@@ -167,6 +167,31 @@ func TestWriteStatusFile(t *testing.T) {
 	}
 }
 
+func TestLiveStatusUsesRecentDaemonSnapshot(t *testing.T) {
+	daemon := newStatusAgent(t)
+	daemon.cycles = 5
+	daemon.rt.LastHelloOK = true
+	daemon.rt.Adopted = true
+	daemon.rt.PeerAPs = 2
+	daemon.writeStatus()
+	cli := &Agent{Config: daemon.Config, Identity: daemon.Identity}
+	got, ok := cli.LiveStatus()
+	if !ok || got.State != StatusManaged || got.PeerAPs != 2 {
+		t.Fatalf("daemon status unavailable: %+v, %v", got, ok)
+	}
+	got.UpdatedAt = "2000-01-01T00:00:00Z"
+	body, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cli.Config.statusPath(), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cli.LiveStatus(); ok {
+		t.Fatal("stale daemon status was presented as live")
+	}
+}
+
 // A failed write must not take the agent down: /var may be read-only. Making a
 // directory unwritable is not portable across the CI platforms, so this covers
 // the cheap half — a path whose parent is a file, which MkdirAll cannot create.

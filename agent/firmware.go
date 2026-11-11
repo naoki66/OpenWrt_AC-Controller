@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -74,6 +76,11 @@ func (a *Agent) upgradeFirmware(ctx context.Context, ref proto.FirmwareRef) erro
 	if a.Identity.Model != "" && ref.Model != "" && !strings.EqualFold(a.Identity.Model, ref.Model) {
 		msg := fmt.Sprintf("image is for %s, this AP is %s", ref.Model, a.Identity.Model)
 		return a.reportFirmwareFailure(msg, errors.New(msg))
+	}
+	if digest, err := hex.DecodeString(ref.SHA256); err != nil || len(digest) != sha256.Size ||
+		ref.Size <= 0 || ref.Size > 300<<20 {
+		err := errors.New("signed firmware reference has an invalid SHA-256 or size")
+		return a.reportFirmwareFailure(err.Error(), err)
 	}
 
 	// Already running the requested build. This is the normal path right after a

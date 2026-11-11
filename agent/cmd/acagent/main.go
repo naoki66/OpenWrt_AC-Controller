@@ -26,16 +26,19 @@ func main() {
 	var (
 		verbose     = flag.Bool("v", false, "enable debug logging")
 		acAddr      = flag.String("ac", "", "controller address host:port (empty = discover via broadcast)")
-		secret      = flag.String("secret", "", "shared secret (or AC_SECRET)")
+		secret      = flag.String("secret", "", "peer coordination shared secret (or AC_SECRET)")
+		acPublicKey = flag.String("ac-public-key", "", "provisioned controller Ed25519 public key (or AC_PUBLIC_KEY)")
 		root        = flag.String("root", "", "filesystem root, defaults to / (or AC_ROOT)")
 		dryRun      = flag.Bool("dry-run", false, "render and stage only, never touch /etc/config")
 		interval    = flag.Duration("interval", 0, "sync interval (or AC_INTERVAL)")
 		mac         = flag.String("mac", "", "override local MAC (used when /sys is unavailable)")
 		model       = flag.String("model", "", "override model")
 		keepDHCP    = flag.Bool("keep-dhcp", false, "do NOT stop dnsmasq/odhcpd (AP mode must not serve DHCP)")
+		disableDHCP = flag.Bool("disable-dhcp", false, "explicitly take over DHCP on a bridged AP (or AC_DISABLE_DHCP)")
 		peerPort    = flag.Int("peer-port", 0, "AP-to-AP coordination UDP port (0 = AC_PEER_PORT/29821, <0 disables)")
 		peerSteer   = flag.Bool("peer-steer", false, "suggest roaming locally when a client is weak and a peer has the same SSID (or AC_PEER_STEER)")
 		peerNetwork = flag.String("peer-network", "", "OpenWrt logical network carrying AP-to-AP traffic (or AC_PEER_NETWORK/lan)")
+		peerListen  = flag.Duration("listen", 45*time.Second, "passive receive window for the peers command")
 		jsonOut     = flag.Bool("json", false, "with status: print the machine-readable status LuCI reads")
 	)
 
@@ -49,12 +52,14 @@ func main() {
 	valueFlags := map[string]bool{
 		"-ac": true, "--ac": true,
 		"-secret": true, "--secret": true,
+		"-ac-public-key": true, "--ac-public-key": true,
 		"-root": true, "--root": true,
 		"-interval": true, "--interval": true,
 		"-mac": true, "--mac": true,
 		"-model": true, "--model": true,
 		"-peer-port": true, "--peer-port": true,
 		"-peer-network": true, "--peer-network": true,
+		"-listen": true, "--listen": true,
 	}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -86,10 +91,12 @@ func main() {
 	cfg := agent.Load(agent.Config{
 		Root:        *root,
 		ACAddr:      *acAddr,
+		ACPublicKey: *acPublicKey,
 		Secret:      *secret,
 		Interval:    *interval,
 		DryRun:      *dryRun,
 		KeepDHCP:    *keepDHCP,
+		DisableDHCP: *disableDHCP,
 		PeerPort:    *peerPort,
 		PeerSteer:   *peerSteer,
 		PeerNetwork: *peerNetwork,
@@ -260,20 +267,75 @@ func main() {
 			os.Exit(1)
 		}
 	case "status":
+		snap, live := a.LiveStatus()
+		if !live {
+			snap = a.StatusSnapshot()
+		}
 		if *jsonOut {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
-			if err := enc.Encode(a.StatusSnapshot()); err != nil {
+			if err := enc.Encode(snap); err != nil {
 				log.Error("encode status", "err", err)
 				os.Exit(1)
 			}
 			return
 		}
-		printStatus(a)
+		printStatus(a, snap)
+	case "peers":
+		if err := probePeers(ctx, a, log, *peerListen); err != nil {
+			log.Error("peer diagnostic", "err", err)
+			os.Exit(1)
+		}
 	default:
-		log.Error("unknown command", "cmd", cmd, "hint", "supported: run, once, status, stations, version")
+		log.Error("unknown command", "cmd", cmd, "hint", "supported: run, once, status, peers, stations, version")
 		os.Exit(2)
 	}
+}
+
+// probePeers receives and verifies announcements without transmitting or
+// changing Wi-Fi, so it can check a candidate VLAN alongside the daemon.
+func probePeers(ctx context.Context, a *agent.Agent, log *slog.Logger, window time.Duration) error {
+	if a.Config.PeerPort <= 0 || len(a.Config.Secret) < 12 {
+		return fmt.Errorf("set a peer port and the configured AP peer key (AC_SECRET)")
+	}
+	if window < time.Second || window > 2*time.Minute {
+		return fmt.Errorf("listen window must be between 1s and 2m")
+	}
+	bus := agent.NewPeerBusWithOptions(agent.PeerOptions{
+		Port: a.Config.PeerPort, Interval: a.Config.PeerInterval, SelfMAC: a.Identity.MAC,
+		Log: log, Secret: a.Config.Secret, Network: a.Config.PeerNetwork, Runner: a.Runner,
+	})
+	if err := bus.Start(ctx); err != nil {
+		return err
+	}
+	defer bus.Stop()
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	snapshot := bus.Snapshot()
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	local := a.Neighbors.Collect(readCtx)
+	ssids := make(map[string]bool, len(local))
+	for _, bss := range local {
+		if bss.SSID != "" {
+			ssids[bss.SSID] = true
+		}
+	}
+	matched := 0
+	for _, bss := range snapshot.BSS {
+		if ssids[bss.SSID] {
+			matched++
+		}
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"network": a.Config.PeerNetwork, "device": snapshot.Device, "transport": snapshot.Transport,
+		"peer_aps": len(snapshot.APs), "peer_bss": len(snapshot.BSS), "local_bss": len(local), "matching_peer_bss": matched,
+	})
 }
 
 // envRepeat reads a repeat count from the environment, defaulting to one so a
@@ -287,9 +349,8 @@ func envRepeat(name string) int {
 	return 1
 }
 
-func printStatus(a *agent.Agent) {
+func printStatus(a *agent.Agent, snap agent.Status) {
 	st := a.State()
-	snap := a.StatusSnapshot()
 	fmt.Printf("state        %s\n", snap.State)
 	fmt.Printf("ac_addr      %s", snap.ACAddr)
 	if snap.ACAddrSource != "" {
@@ -299,7 +360,7 @@ func printStatus(a *agent.Agent) {
 	fmt.Printf("mac          %s\n", a.Identity.MAC)
 	fmt.Printf("model        %s\n", a.Identity.Model)
 	fmt.Printf("firmware     %s\n", a.Identity.Firmware)
-	fmt.Printf("applied_rev  %d\n", st.AppliedRev)
+	fmt.Printf("applied_rev  %d\n", snap.AppliedRev)
 	fmt.Printf("desired_rev  %d\n", snap.DesiredRev)
 	if snap.SHA256 != "" {
 		fmt.Printf("sha256       %s\n", snap.SHA256)
@@ -325,10 +386,12 @@ func printStatus(a *agent.Agent) {
 	if st.LastError != "" {
 		fmt.Printf("last_error   %s\n", st.LastError)
 	}
-	fmt.Printf("peer_port    %d\n", a.Config.PeerPort)
-	fmt.Printf("peer_network %s\n", a.Config.PeerNetwork)
-	fmt.Printf("peer_auth    %v\n", a.Config.Secret != "")
-	fmt.Printf("peer_steer   %v\n", a.Config.PeerSteer)
+	if snap.PeerNetwork != "" {
+		fmt.Printf("peer_port    %d\n", snap.PeerPort)
+		fmt.Printf("peer_network %s (%s %s)\n", snap.PeerNetwork, snap.PeerTransport, snap.PeerDevice)
+		fmt.Printf("peer_aps     %d\npeer_bss     %d\n", snap.PeerAPs, snap.PeerBSSes)
+		fmt.Printf("peer_steer   %v\n", snap.PeerSteer)
+	}
 	fmt.Printf("steering     %s (mode %s", snap.Steering, snap.SteeringMode)
 	if snap.SteeringFallback != "" && snap.SteeringFallback != "none" {
 		fmt.Printf(", fallback %s", snap.SteeringFallback)

@@ -10,7 +10,7 @@
 
 > A lightweight OpenWrt wireless controller: a single Go binary on the AC side (Web UI, REST API and SQLite embedded) plus `ac-agent` running under procd on each AP. One compose file runs it on a NAS, x86 soft-router or ARM board; the controller can also be built as an OpenWrt package and run directly on a router.
 
-**Fastest path**: start the container → install the agent on your APs (set the shared secret if you use one) → adopt a template on the Devices page.
+**Fastest path**: start the controller → provision its signing public key and each AP's own key → adopt a template on the Devices page.
 
 > This is the English README. The Chinese version is [README.md](README.md). Every command and config below is copy-paste ready.
 
@@ -36,7 +36,7 @@ It **does not forward user traffic** and does not implement CAPWAP. It does exac
 - **Segment-level merge, not full-file overwrite**: backup before apply and automatic rollback on failure, so you never lock yourself out of an AP.
 - **Three anti-lockout guards** (added after v0.5.1): a `preflight` check for management-address moves before a push; a post-apply BSS/address watchdog; and automatic repair of the `lan` firewall zone and dropbear binding for newly added management interfaces.
 - **The AC never connects to APs**: config is always pulled. APs exchange 11k neighbour and client state over UDP 29821, so local 11v roaming advice survives an AC outage (`peer_steer=1`); the agent steps aside when usteer/dawn is detected.
-- **Signed bundles**: Ed25519 signature, per-file sha256 manifest, target MAC / model allowlist, and TOFU pinning of the AC public key on the first heartbeat.
+- **AC trust over HTTP**: APs verify heartbeat replies and bundles with a preprovisioned Ed25519 public key. Bundles also carry per-file SHA-256 hashes and target constraints.
 - **One secret, two purposes**: the AC and every AP share only `AC_SHARED_SECRET`; HKDF-SHA256 derives two distinct keys — the AP→AC auth token and the AP↔AP message HMAC key. The raw secret is never sent on the wire.
 - **Templates + per-device overrides + groups**: templates define wireless/L2, groups decide which template their members run, and per-device `network_params` / radio overrides supply ports, VLANs, management addresses, channels and power.
 - **Operations loop**: firmware repository and upgrades, scheduled reboot/LED, client naming and kick, telemetry charts, event log, config import/export and diagnostics.
@@ -89,7 +89,7 @@ services:
       # Shared secret (optional; leave empty to set it in the Web UI)
       AC_SHARED_SECRET: ""
       AC_ADMIN_USER: "admin"
-      AC_ADMIN_PASSWORD: "123456"
+      AC_ADMIN_PASSWORD: "${AC_ADMIN_PASSWORD:-}"
     volumes:
       - ./data:/var/lib/ac
     logging:
@@ -109,7 +109,7 @@ curl -s http://<HOST_IP>:8090/api/v1/health
 # expect {"status":"ok","version":...,"commit":...,"devices":0,...}
 ```
 
-Open `http://<HOST_IP>:8090/`, log in with `admin` / `123456`, and **change the password first**. Then install the AP agent (section 8).
+Set `AC_ADMIN_PASSWORD` to at least 12 characters in your local Compose environment before first start. Open `http://<HOST_IP>:8090/` and log in as `admin` with that password. Then install the AP agent (section 8).
 
 ## 5. Other deployment options
 
@@ -133,7 +133,7 @@ The compose file lists only four common deployment settings. The table below is 
 |---|---|---|
 | `AC_SHARED_SECRET` | empty (**optional**) | Shared by the AC and all APs; leave it empty and set or rotate it from the System page (≥12 characters when set). A saved UI value wins over the environment |
 | `AC_ADMIN_USER` | `admin` | Initial login user, **seeded once on first boot** |
-| `AC_ADMIN_PASSWORD` | `123456` | Initial login password, likewise; change it right after first login |
+| `AC_ADMIN_PASSWORD` | empty | Required for first startup or migration from the old default password, at least 12 characters. On OpenWrt use `ac-controller.controller.admin_password` |
 | `AC_ADMIN_TOKEN` | empty | Bearer credential for automation; must differ from the shared secret |
 | `AC_HTTP_ADDR` | `:8090` | Web UI / API listen address; override only on a port conflict |
 | `AC_HTTP_PORT` | derived from `AC_HTTP_ADDR` (`8090`) | Port advertised to APs |
@@ -173,7 +173,7 @@ The image contains only the **AC side**; every AP also needs `ac-agent`.
 
 ### Option A: Flash the companion firmware (easiest)
 
-For the Brightspeed/Gemtek XR1710G: flash the [ImmortalWrt firmware releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases), which already include the agent and the LuCI page. Then fill in the controller address and, if used, the shared secret as described under "Configure the AP in LuCI" below.
+For the Brightspeed/Gemtek XR1710G: the [ImmortalWrt firmware releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) include the agent and LuCI page. Update the agent to a version matching the controller and provision it as described below.
 
 ### Option B: Build ipk/apk from the OpenWrt feed
 
@@ -219,19 +219,41 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 ### Configure the AP in LuCI
 
-Open LuCI → `Control` → `AC Agent`. In the "Controller connection" section only three fields matter; leave everything else at its default and click **Save & apply** (saving starts the agent and enables it at boot):
+Get the signing public key and issue a device key on the AC. Replace the example MAC with the one shown by `ac-agent status` on the AP:
+
+```sh
+# Release image (use /usr/local/bin/ac in the local development image)
+docker compose exec ac /ac pubkey
+docker compose exec ac /ac ap-key 02:00:00:00:00:01
+
+# OpenWrt controller package: use the running service's data directory
+AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller pubkey
+AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller ap-key 02:00:00:00:00:01
+```
+
+Provision the complete public key and device key through a trusted channel. Use the LuCI fields below or UCI options `ac_public_key` and `device_key`. All APs use the same AC public key, and each AP has a different device key. Preserve the AC data directory and signing key when upgrading. Provision credentials before switching versions: legacy agents cannot authenticate to the new AC. Replacing the signing key requires provisioning the new public key on the APs. Use `ap-key-rotate <MAC>` to issue a replacement device key or `ap-key-revoke <MAC>` to revoke it.
+
+Open LuCI → `Control` → `AC Agent`, fill in "Controller connection", and click **Save & apply**:
 
 | Field | What to enter | Required |
 |---|---|---|
-| Enable | Leave it on (default). This one switch starts the agent, enables it at boot and opens the discovery ports | Default is fine |
+| Enable | Leave it on (default). This starts the agent and enables it at boot | Default is fine |
 | Controller address | **Leave empty** on the same broadcast domain — UDP discovery fills it in and you can save it to pin the address; set `<AC_IP>:8090` across L3 | Required across L3 |
-| Shared secret | Exactly the same value as the effective secret on the AC (environment or System page) | Required when the AC has a secret |
+| AC signing public key | Output of `pubkey` | Required |
+| AP device key | Output of `ap-key` for this AP | Required |
+| Peer coordination shared secret | The same key on APs in the group (at least 12 characters); blank disables peer coordination | When using peer coordination |
 
 Everything else can stay as-is: heartbeat 20s, peer coordination port 29821, local roam suggestion on by default. The status card at the top shows `discovering` / `connected` / `managed`; click **Restart agent** to force an immediate sync.
 
+For offline roaming, set `ac.agent.peer_network` on each AP to the logical OpenWrt network that reaches the other APs on the same management VLAN, and use the same peer key. That network might be `lan3` instead of the default `lan`. LuCI and `ac-agent status` show the resolved device, transport and peer AP/BSS counts; a successful AC heartbeat does not verify the peer path.
+
+On the AP, `AC_SECRET="$(uci -q get ac.agent.secret)" ac-agent peers --peer-network lan3 --listen 45s` passively checks for authenticated peers and matching SSIDs without changing Wi-Fi or sending roam suggestions.
+
+OpenWrt's hostapd handles 802.11k/v/r frames natively. 11k needs valid neighbor reports for the same SSID, 11v depends on the client accepting the advice, and 11r requires matching SSID, security, mobility domain and FT key configuration. Verify roaming and FT with two APs and a test client before tuning thresholds. Keep forced disassociation off initially and use only one active steering system if usteer or DAWN is installed.
+
 ## 9. Onboarding flow
 
-1. In LuCI → `Control` → `AC Agent`, confirm Enable is on and the shared secret matches the AC (leave it empty if the AC has none), then click Save & apply; the status card should move from `discovering` to `connected`.
+1. In LuCI, enter the AC signing public key and this AP's device key, then enable and save. The status card should move from `discovering` to `connected`.
 2. The device appears as `pending` on the AC's Devices page → pick a template → **adopt**.
 3. The AP pulls rev1 on its next heartbeat and applies it.
 4. **Repush once more**: the first revision is built before the AC has received interface/BSS reports, so only rev2 carries sibling APs' 11k neighbour table.
@@ -240,6 +262,7 @@ Two rules that prevent a lockout:
 
 - Rehearse the first takeover with `ac-agent once --dry-run -v`: it renders, verifies and stages only, without touching `/etc`.
 - For a full network takeover, **set the management address / ports / VLAN first** (`PUT /devices/{mac}/network` or the UI), then adopt the template. The UI runs a `preflight` check to warn about address moves before pushing.
+- For DFS channels, set the AP's `ac.agent.health_timeout` to allow the local CAC wait (default `45s`, maximum `15m`). Apply waits for the target BSSes to reach `ENABLED` in hostapd.
 
 `ac-agent status` states: `discovering` (no AC address), `unreachable` (heartbeat failed), `connected` (not adopted), `managed` (adopted).
 
@@ -250,7 +273,7 @@ Management endpoints require a login session cookie or `Authorization: Bearer <A
 ```sh
 # Log in and keep the session cookie
 curl -s -c ac.jar -X POST -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"123456"}' http://<AC_IP>:8090/api/v1/auth/login
+  -d '{"username":"admin","password":"<your-admin-password>"}' http://<AC_IP>:8090/api/v1/auth/login
 curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 ```
 
@@ -264,7 +287,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `POST /api/v1/devices/{mac}/adopt` · `repush` · `release` | Adopt / repush / release |
 | `GET /api/v1/devices/{mac}/preflight` | Pre-push management-address check |
 | `PUT /api/v1/devices/{mac}/network` · `radios` · `group` | Per-device network / radio / group overrides |
-| `GET /api/v1/devices/{mac}/package` | Download a signed bundle (AP uses the shared secret, operator uses a session) |
+| `GET /api/v1/devices/{mac}/package` | Download a signed bundle (AP authenticates and decrypts with its device key; operator uses a session) |
 | `GET/POST /api/v1/templates` · `clone` · `ssids` · `name` | Template management |
 | `GET/POST /api/v1/groups` | AP groups |
 | `GET /api/v1/clients` · `PUT/POST .../{mac}/kick` | Clients, rename, kick |
@@ -280,10 +303,8 @@ See [`controller/internal/api/server.go`](controller/internal/api/server.go) for
 
 ## 11. Security notes
 
-- The AC serves **HTTP only, with no built-in HTTPS**, and templates carry plaintext PSKs. Keep the management plane on a trusted segment, terminate TLS at a reverse proxy, and **never expose 8090 to the internet / WAN**.
-- The default account is `admin` / `123456` — change it immediately after first login. Failed authentication is rate-limited to 5 attempts per minute with a 1-minute lockout.
-- If a shared secret is set, it, the admin password and `AC_ADMIN_TOKEN` must all differ and be long (the secret must be ≥12 characters). **Leaving it empty disables AP registration authentication** and triggers a startup warning — only do this on a fully trusted management segment.
-- TOFU pinning **does not prevent a first-contact man-in-the-middle** — pair on a trusted segment. Bundle downloads rely on the shared secret, not per-device certificates.
+- The AC serves HTTP only. AP configuration bundles are encrypted separately, while browser login, management API calls and heartbeat telemetry remain plaintext. Use an isolated management VLAN and do not expose port 8090 to the internet or WAN.
+- APs authenticate with individual device keys and single-use challenges. They verify replies and bundles with the preprovisioned public key. The optional shared secret is for AP peer coordination.
 - `ac.db`, `/etc/ac/backup/`, config exports, the signing key and firmware images all contain sensitive data. Protect them equally and never paste them into an issue.
 - Firmware upgrades and network pushes rewrite critical AP config: rehearse with dry-run / preflight and keep a serial console or local management port as a fallback.
 

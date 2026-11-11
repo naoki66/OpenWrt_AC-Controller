@@ -128,3 +128,44 @@ func TestPendingConfirmWaitsForTheWindow(t *testing.T) {
 		t.Errorf("commands ran before the deadline: %v", runner.Calls())
 	}
 }
+
+func TestNetworkConfirmationMustMatchAppliedRevision(t *testing.T) {
+	a := &Agent{
+		Config: Config{ACPublicKey: "pinned-key"},
+		state:  State{ACID: "controller", PendingConfirm: &PendingConfirm{Rev: 9}},
+	}
+	reply := proto.HelloReply{ACID: "controller", PubKey: "pinned-key", State: proto.APStateAdopted}
+	for _, rev := range []int{0, 8, 10} {
+		reply.AcceptedRev = rev
+		if a.confirmedRevision(reply) {
+			t.Fatalf("revision %d confirmed pending revision 9", rev)
+		}
+	}
+	reply.AcceptedRev = 9
+	if !a.confirmedRevision(reply) {
+		t.Fatal("matching ACK did not confirm the network change")
+	}
+}
+
+func TestInterruptedApplyKeepsJournalWhenRestoreFails(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "missing-backup")
+	a := &Agent{
+		Config:  Config{Root: root},
+		Applier: &Applier{ConfigDir: filepath.Join(root, "etc", "config")},
+		state:   State{AppliedRev: 2, PendingApply: dir},
+	}
+	if err := a.saveState(); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.recoverInterruptedApply(context.Background()); err == nil {
+		t.Fatal("recovery reported success without a backup")
+	}
+	stored, err := LoadState(a.Config.statePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.state.PendingApply != dir || stored.PendingApply != dir || stored.AppliedRev != 2 {
+		t.Fatalf("failed recovery lost the journal: in memory %+v; on disk %+v", a.state, stored)
+	}
+}

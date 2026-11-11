@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -53,16 +55,62 @@ func main() {
 		os.Stdout.WriteString("ac " + version.Version + " (" + version.Commit + ", " + version.Date + ")\n")
 	case "pubkey":
 		err = printPubKey()
+	case "ap-key", "ap-key-rotate", "ap-key-revoke":
+		err = manageDeviceKey(cmd, flag.Args()[1:])
 	case "verify":
 		err = verifyPackage(log)
 	default:
-		log.Error("unknown command", "cmd", cmd, "hint", "supported: serve, version, pubkey, verify")
+		log.Error("unknown command", "cmd", cmd, "hint", "supported: serve, version, pubkey, ap-key, ap-key-rotate, ap-key-revoke, verify")
 		os.Exit(2)
 	}
 	if err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+func manageDeviceKey(cmd string, args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: ac %s <AP MAC address>", cmd)
+	}
+	mac := discovery.NormalizeMAC(args[0])
+	if mac == "" {
+		return errors.New("invalid AP MAC address")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st, err := store.Open(config.Load().DBPath())
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.Migrate(ctx); err != nil {
+		return err
+	}
+	name := store.DeviceKeySetting(mac)
+	if cmd == "ap-key-revoke" {
+		return st.DeleteSetting(ctx, name)
+	}
+	if cmd == "ap-key" {
+		key, err := st.GetSetting(ctx, name)
+		if err == nil {
+			fmt.Println(key)
+			return nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
+	key := hex.EncodeToString(raw[:])
+	if err := st.SetSetting(ctx, name, key); err != nil {
+		return err
+	}
+	fmt.Println(key)
+	return nil
 }
 
 func serve(log *slog.Logger) error {
@@ -95,20 +143,12 @@ func serve(log *slog.Logger) error {
 		return err
 	}
 
-	// Login accounts are seeded on first start so a fresh deployment is usable
-	// immediately (AC_ADMIN_USER / AC_ADMIN_PASSWORD, default admin/123456).
-	// The warning is the only nudge to rotate it from the system page.
-	seededAccount, err := api.EnsureAdminAccount(ctx, st, cfg.AdminUser, cfg.AdminPassword)
+	seededAccount, err := api.EnsureSecureAdminAccount(ctx, st, cfg.AdminUser, cfg.AdminPassword)
 	if err != nil {
 		return err
 	}
 	if seededAccount {
-		if cfg.AdminPassword == "123456" {
-			log.Warn("seeded admin account with the default password",
-				"user", cfg.AdminUser, "hint", "change it from the system page")
-		} else {
-			log.Info("seeded admin account from environment", "user", cfg.AdminUser)
-		}
+		log.Info("configured admin password from environment", "user", cfg.AdminUser)
 	}
 
 	for _, warning := range cfg.SecretWarnings() {
@@ -133,16 +173,17 @@ func serve(log *slog.Logger) error {
 	}
 
 	apiSrv := &api.Server{
-		Store:          st,
-		ACID:           acID,
-		Key:            key,
-		Provision:      prov,
-		SharedSecret:   cfg.SharedSecret,
-		AdminToken:     cfg.AdminToken,
-		SampleInterval: cfg.SampleInterval,
-		OfflineAfter:   cfg.OfflineAfter,
-		NTPServers:     cfg.NTPServers,
-		Log:            log,
+		Store:           st,
+		ACID:            acID,
+		Key:             key,
+		Provision:       prov,
+		SharedSecret:    cfg.SharedSecret,
+		RequireSignedAP: true,
+		AdminToken:      cfg.AdminToken,
+		SampleInterval:  cfg.SampleInterval,
+		OfflineAfter:    cfg.OfflineAfter,
+		NTPServers:      cfg.NTPServers,
+		Log:             log,
 		Features: &api.FeatureGate{
 			Profile:          cfg.Profile,
 			TelemetryHistory: cfg.TelemetryHistory,
@@ -184,6 +225,7 @@ func serve(log *slog.Logger) error {
 		Addr:              cfg.HTTPAddr,
 		Handler:           apiSrv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 
 	listener := &discovery.Listener{
@@ -193,7 +235,8 @@ func serve(log *slog.Logger) error {
 		AdvertiseIP:        cfg.AdvertiseIP,
 		Store:              st,
 		Log:                log,
-		SecretRequiredFunc: func() bool { return apiSrv.EffectiveSecret() != "" },
+		SecretRequiredFunc: func() bool { return true },
+		OfferOnly:          true,
 	}
 
 	errCh := make(chan error, 2)

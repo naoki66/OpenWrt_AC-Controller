@@ -21,6 +21,7 @@ import (
 	"github.com/naoki66/ac-controller/controller/internal/provision"
 	"github.com/naoki66/ac-controller/controller/internal/store"
 	"github.com/naoki66/ac-controller/shared/model"
+	"github.com/naoki66/ac-controller/shared/secret"
 	"github.com/naoki66/ac-controller/shared/version"
 )
 
@@ -38,6 +39,13 @@ type Server struct {
 	// precedence (see secretOverride) so an operator can rotate it without
 	// recreating the container.
 	SharedSecret string
+	// RequireSignedAP rejects legacy heartbeats without a signing challenge.
+	RequireSignedAP   bool
+	challengeOnce     sync.Once
+	challengeKey      [32]byte
+	deviceAuthMu      sync.Mutex
+	usedChallenges    map[[deviceChallengeLen]byte]time.Time
+	sweepChallengesAt time.Time
 	// AdminToken is an optional Bearer credential for automation. The Web UI no
 	// longer uses it: operators log in with the account seeded by
 	// EnsureAdminAccount, and the session cookie is accepted here as well.
@@ -58,6 +66,8 @@ type Server struct {
 	// hello through, which is exactly the right recovery.
 	lastSample map[string]time.Time
 	sampleMu   sync.Mutex
+	helloOnce  sync.Once
+	helloSlots chan struct{}
 
 	// auth tracks failed credential attempts per source address so a guessed
 	// token or password cannot be hammered at network speed. The zero value is
@@ -170,6 +180,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
 	mux.HandleFunc("GET /api/v1/ac/pubkey", s.handlePubKey)
 	mux.HandleFunc("POST /api/v1/ap/hello", s.handleHello)
+	if s.RequireSignedAP {
+		mux.HandleFunc("GET /api/v1/ap/challenge", s.handleDeviceChallenge)
+	}
 
 	// Login itself has to be reachable without a session; the session probe is
 	// how the UI decides whether to show the login form.
@@ -302,7 +315,21 @@ func (s *Server) adminOnly(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) adminOrAP(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if !s.authorizedAdmin(r) && !s.authorized(r) {
+		if s.authorizedAdmin(r) {
+			s.auth.reset(remoteIP(r))
+			next(w, r)
+			return
+		}
+		if s.RequireSignedAP {
+			cred, ok := s.verifyDevice(r, nil)
+			if !ok {
+				writeError(w, http.StatusUnauthorized, errors.New("device request proof required"))
+				return
+			}
+			next(w, withDevice(r, cred))
+			return
+		}
+		if s.EffectiveSecret() == "" || !s.authorized(r) {
 			s.rejectAuth(w, r, "invalid or missing token")
 			return
 		}
@@ -695,6 +722,11 @@ func (s *Server) handlePackage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	cred, device := deviceFrom(r)
+	if device && cred.mac != mac {
+		writeError(w, http.StatusForbidden, errors.New("package belongs to another device"))
+		return
+	}
 	rev := 0
 	if raw := r.URL.Query().Get("rev"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -711,7 +743,16 @@ func (s *Server) handlePackage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/gzip")
+	if device {
+		blob, err = secret.SealDevicePackage(cred.key, cred.challenge, blob)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, errors.New("could not encrypt device package"))
+			return
+		}
+		w.Header().Set("Content-Type", secret.DevicePackageType)
+	} else {
+		w.Header().Set("Content-Type", "application/gzip")
+	}
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=%q", fmt.Sprintf("acpkg-%s-rev%d.tar.gz", shortMAC(mac), pkg.Rev)))
 	w.Header().Set("X-Ac-Rev", strconv.Itoa(pkg.Rev))

@@ -317,9 +317,13 @@ func TestSameNeighborListIgnoresCaseAndOrder(t *testing.T) {
 		{"aa:bb:cc:dd:ee:01", "SSID-A", "00"},
 		{"aa:bb:cc:dd:ee:02", "SSID-A", "00"},
 	}
-	cur := `{"list":[["AA:BB:CC:DD:EE:02","SSID-A","z"],["AA:BB:CC:DD:EE:01","SSID-A","y"]]}`
+	cur := `{"list":[["AA:BB:CC:DD:EE:02","SSID-A","00"],["AA:BB:CC:DD:EE:01","SSID-A","00"]]}`
 	if !sameNeighborList(cur, want) {
 		t.Error("same set reported as different")
+	}
+	changedChannel := `{"list":[["aa:bb:cc:dd:ee:01","SSID-A","01"],["aa:bb:cc:dd:ee:02","SSID-A","00"]]}`
+	if sameNeighborList(changedChannel, want) {
+		t.Error("changed neighbor report must be reapplied")
 	}
 
 	shorter := `{"list":[["AA:BB:CC:DD:EE:01","SSID-A","y"]]}`

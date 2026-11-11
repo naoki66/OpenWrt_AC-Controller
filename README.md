@@ -10,7 +10,7 @@
 
 > 轻量的 OpenWrt 无线控制器：AC 端是一个 Go 单二进制（内嵌 Web UI、REST API、SQLite），AP 端是跑在 procd 下的 `ac-agent`。一条 compose 就能在 NAS、x86 软路由、ARM 盒子上跑起来，也可以把 AC 编译成 OpenWrt 软件包直接跑在路由器上。
 
-**最快路径**：起容器 → 给 AP 装上 agent 并按需填共享密钥 → 在「设备」页采纳模板。
+**最快路径**：启动控制器 → 为 AP 预置 AC 签名公钥和设备专属密钥 → 在「设备」页采纳模板。
 
 > 本文是中文文档，完整英文版见 [README.en.md](README.en.md)。所有命令与配置均可直接复制执行。
 
@@ -36,7 +36,7 @@
 - **段级合并，不整文件覆盖**：应用前备份、失败自动回滚，避免把自己锁在 AP 门外。
 - **防锁死三道防线**（v0.5.1 之后）：下发前 `preflight` 预检管理地址迁移；下发后校验 BSS 与管理地址是否丢失；自动把新增管理接口补进 `lan` 防火墙 zone 并修正 dropbear 绑定。
 - **AC 不主动连 AP**：配置永远由 AP 拉取；AP 之间经 UDP 29821 交换 11k 邻居与客户端信息，AC 失联时本地 11v 漫游建议仍可用（`peer_steer=1`）；检测到 usteer/dawn 时自动让位。
-- **签名配置包**：Ed25519 签名 + manifest 逐文件 sha256 + 目标 MAC / 型号白名单；AP 首次心跳钉住 AC 公钥（TOFU）。
+- **HTTP 下的 AC 信任**：AP 预置唯一的 AC Ed25519 公钥，验证心跳响应和配置包；配置包还有逐文件 SHA-256 与目标校验。
 - **一个密钥，两个用途**：AC 与每个 AP 只填同一个 `AC_SHARED_SECRET`，由 HKDF-SHA256 派生出 AP→AC 鉴权令牌和 AP↔AP 报文 HMAC 密钥，两者互不相同，原始密钥永不上线传输。
 - **模板 + 设备覆盖 + 分组**：模板定义无线与二层，分组决定成员用哪个模板，设备级 `network_params` / 射频覆盖给出端口、VLAN、管理地址、信道与功率。
 - **运维闭环**：固件镜像仓库与升级、定时重启 / LED、客户端命名与踢除、遥测图表、事件日志、配置导入导出、诊断信息。
@@ -89,7 +89,7 @@ services:
       # 共享密钥（可选，留空可在 Web 内设置）
       AC_SHARED_SECRET: ""
       AC_ADMIN_USER: "admin"
-      AC_ADMIN_PASSWORD: "123456"
+      AC_ADMIN_PASSWORD: "${AC_ADMIN_PASSWORD:-}"
     volumes:
       - ./data:/var/lib/ac
     logging:
@@ -109,7 +109,7 @@ curl -s http://<宿主机IP>:8090/api/v1/health
 # 返回 {"status":"ok","version":...,"commit":...,"devices":0,...}
 ```
 
-打开 `http://<宿主机IP>:8090/`，用 `admin` / `123456` 登录，**第一件事就是改密码**。然后给 AP 装 agent（见第 8 节）。
+首次启动前，在本机的 Compose 环境中设置至少 12 字符的 `AC_ADMIN_PASSWORD`。打开 `http://<宿主机IP>:8090/`，用 `admin` 和该密码登录。然后给 AP 装 agent（见第 8 节）。
 
 ## 5. 其他部署方式
 
@@ -133,7 +133,7 @@ compose 只列出 4 个常用部署项。下表是**全部**可用变量与内�
 |---|---|---|
 | `AC_SHARED_SECRET` | 空（**可选**） | AC 与所有 AP 共用的密钥；留空可在「系统配置」页设置或在线轮换（设置时 ≥12 位），页面值优先于环境变量 |
 | `AC_ADMIN_USER` | `admin` | 初始登录账号，**仅首次启动播种一次** |
-| `AC_ADMIN_PASSWORD` | `123456` | 初始登录密码，同上，首次登录后立即修改 |
+| `AC_ADMIN_PASSWORD` | 空 | 首次启动或从旧默认密码迁移时必填，至少 12 字符；OpenWrt 包用 `ac-controller.controller.admin_password` |
 | `AC_ADMIN_TOKEN` | 空 | 自动化用的 Bearer 凭据，必须与共享密钥不同 |
 | `AC_HTTP_ADDR` | `:8090` | Web UI / API 监听地址，端口冲突时才需覆盖 |
 | `AC_HTTP_PORT` | 由 `AC_HTTP_ADDR` 推导（`8090`） | 宣告给 AP 的端口 |
@@ -173,7 +173,7 @@ docker compose pull && docker compose up -d
 
 ### 方式 A：刷入配套固件（最省事）
 
-适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。开机后按下方「在 LuCI 里配置 AP」按需填写控制器地址与共享密钥即可。
+适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。升级到与 AC 匹配的 agent 后，按下方步骤预置凭据。
 
 ### 方式 B：从 OpenWrt feed 编译 ipk/apk
 
@@ -218,19 +218,41 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 ### 在 LuCI 里配置 AP
 
-打开 LuCI → `Control` → `AC Agent`，在「控制器连接」里只确认这三项，其余保持默认，点「保存并应用」即可（保存时会自动启动 agent 并设为开机自启）：
+在 AC 本机获取公钥并发放设备密钥。MAC 使用该 AP 的 `ac-agent status` 输出；下例 MAC 需替换：
+
+```sh
+# 发布镜像（本地开发镜像使用 /usr/local/bin/ac）
+docker compose exec ac /ac pubkey
+docker compose exec ac /ac ap-key 02:00:00:00:00:01
+
+# OpenWrt 控制器包：若改过 data_dir，使用服务正在用的目录
+AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller pubkey
+AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller ap-key 02:00:00:00:00:01
+```
+
+通过可信渠道预置完整公钥和设备密钥；可在 LuCI 填写，也可写入 UCI 的 `ac_public_key` 和 `device_key`。同一 AC 下所有 AP 预置同一个公钥，每台 AP 的设备密钥各不相同。不要通过首次 HTTP 响应取得信任根。升级旧部署前请先准备凭据并保留 AC 数据目录和签名私钥；旧 agent 无法在新版 AC 上通过鉴权。替换 AC 签名私钥后，须重新预置公钥。设备密钥可用 `ap-key-rotate <MAC>` 轮换，或用 `ap-key-revoke <MAC>` 撤销；轮换后请更新对应 AP。
+
+打开 LuCI → `Control` → `AC Agent`，填写「控制器连接」后点「保存并应用」：
 
 | 界面字段 | 怎么填 | 是否必填 |
 |---|---|---|
-| 启用 | 保持打开（默认已开）。这一个开关同时负责启动 agent、开机自启和放行发现端口 | 默认即可 |
+| 启用 | 保持打开（默认已开），控制启动和开机自启 | 默认即可 |
 | 控制器地址 | 同一广播域**留空**，靠 UDP 广播自动发现，发现后页面会回填并可保存固定；跨三层必须填 `<AC_IP>:8090` | 跨三层必填 |
-| 共享密钥 | 与 AC 侧生效的密钥 **完全一致**（环境变量或系统页设置） | AC 设置了密钥时必填 |
+| AC 签名公钥 | `pubkey` 输出 | 必填 |
+| AP 设备密钥 | 此 AP 的 `ap-key` 输出 | 必填 |
+| 漫游协同共享密钥 | 同组 AP 使用相同密钥（至少 12 字符）；留空关闭 AP 间协同 | 启用 AP 间协同时配置 |
 
 心跳间隔（默认 20 秒）、AP 间协同端口（29821）、本地漫游建议（默认开）等都不用动。页面上方的状态卡片会显示 `discovering` / `connected` / `managed`，需要立刻重新同步时点「重启 agent」。
 
+多 AP 离线漫游时，把各 AP 的 `ac.agent.peer_network` 指向彼此可达的同一二层管理 VLAN，并配置相同的协同密钥。该选项是 OpenWrt 的逻辑接口名，例如 `lan3`，不一定是默认的 `lan`。LuCI 和 `ac-agent status` 可查看实际设备名、传输方式和已发现的 AP/BSS 数；AC 心跳正常不能证明 AP 间协同正常。
+
+在 AP 上可用 `AC_SECRET="$(uci -q get ac.agent.secret)" ac-agent peers --peer-network lan3 --listen 45s` 被动验证指定 VLAN 上的同密钥邻居及匹配 SSID 的 BSS 数；该命令不下发配置或发出漫游建议。
+
+OpenWrt 的 hostapd 原生处理 802.11k/v/r 帧。11k 还需要同 SSID 的有效邻居表，11v 由终端决定是否接受，11r 则要求同 SSID、同安全模式及一致的 FT 移动域和密钥配置。先用两台 AP 和测试终端验证普通漫游与 FT，再调整门槛；默认保持强制断开关闭。已有 usteer 或 DAWN 时，只留一个系统做主动引导。
+
 ## 9. 上线流程
 
-1. 在 LuCI 的 `AC Agent` 页面确认「启用」已打开、共享密钥与 AC 侧一致（AC 未设置则留空），点「保存并应用」；状态卡片从 `discovering` 变为 `connected`。
+1. 在 LuCI 填好 AC 公钥和本机设备密钥，启用并保存；状态卡片从 `discovering` 变为 `connected`。
 2. AC 的「设备概览」出现 `pending` 设备 → 选模板 → **采纳**。
 3. AP 下一轮心跳拉取 rev1 并应用。
 4. **再点一次 repush**：第一版生成时 AC 还没收到接口/BSS 报告，rev2 才会带上兄弟 AP 的 11k 邻居表。
@@ -239,6 +261,7 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 - 首次正式接管前先演练：`ac-agent once --dry-run -v`，只渲染、验签、暂存，不动 `/etc`。
 - 若要做网络全接管：**先 `PUT /devices/{mac}/network` 写入管理地址 / 端口 / VLAN，再采纳模板**；页面会在下发前调用 `preflight` 提示地址迁移。
+- 若使用 DFS 信道，按当地 CAC 等待时间调大 AP 的 `ac.agent.health_timeout`（默认 `45s`，上限 `15m`）；下发成功要求目标 BSS 在 hostapd 中进入 `ENABLED`。
 
 `ac-agent status` 的 `state`：`discovering`（没找到 AC）、`unreachable`（心跳失败）、`connected`（未采纳）、`managed`（已纳管）。
 
@@ -249,7 +272,7 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 ```sh
 # 登录并拿会话 Cookie
 curl -s -c ac.jar -X POST -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"123456"}' http://<AC_IP>:8090/api/v1/auth/login
+  -d '{"username":"admin","password":"<你的管理密码>"}' http://<AC_IP>:8090/api/v1/auth/login
 curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 ```
 
@@ -263,7 +286,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `POST /api/v1/devices/{mac}/adopt` · `repush` · `release` | 采纳 / 重新下发 / 释放 |
 | `GET /api/v1/devices/{mac}/preflight` | 下发前的地址迁移预检 |
 | `PUT /api/v1/devices/{mac}/network` · `radios` · `group` | 设备级网络 / 射频 / 分组覆盖 |
-| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用共享密钥，管理员用会话） |
+| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用设备密钥认证并解密，管理员用会话） |
 | `GET/POST /api/v1/templates` · `clone` · `ssids` · `name` | 模板管理 |
 | `GET/POST /api/v1/groups` | AP 分组 |
 | `GET /api/v1/clients` · `PUT/POST .../{mac}/kick` | 终端查看、命名、踢除 |
@@ -279,10 +302,8 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 
 ## 11. 安全须知
 
-- AC 只提供 **HTTP，没有内置 HTTPS**；模板里含明文 PSK。请把管理面放在可信网段，对外访问必须加 TLS 反向代理，**不要把 8090 暴露到公网 / WAN**。
-- 初始账号默认 `admin` / `123456`，首次登录后立即修改；认证失败有 5 次/分钟的限流与 1 分钟锁定。
-- 若启用共享密钥，它与管理密码、`AC_ADMIN_TOKEN` 三者必须互不相同、且足够长（≥12 位）；**留空时 AP 注册不鉴权**，启动会告警，仅适合完全可信的管理网段。
-- TOFU 公钥钉扎**不防首次连接时的中间人**，首次配对应在可信网段完成；配置包下载目前只凭共享密钥，没有设备级证书绑定。
+- AC 只提供 HTTP。AP 配置包单独加密，Web 登录、管理 API 和心跳遥测仍是明文；请放在隔离的管理 VLAN，仅允许管理终端和 AP 访问，勿暴露 8090 到公网或 WAN。
+- 首次启动需设置管理密码。AP 控制接口使用设备专属密钥和一次性挑战；心跳响应和配置包使用预置公钥验签。共享密钥仅用于 AP 间协同。
 - `ac.db`、`/etc/ac/backup/`、配置导出文件、签名私钥与固件镜像都含敏感信息，需同等保护，别贴到 Issue 里。
 - 固件升级与网络下发会改动 AP 的关键配置，请先用 dry-run / preflight 演练，并保留串口或本地管理口作为兜底。
 
@@ -294,7 +315,8 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | 现象 | 先看什么 |
 |---|---|
 | AP 一直 `discovering` | compose 是否 `network_mode: host`；AC 是否监听 UDP 29820；是否同一广播域；跨三层是否在 LuCI 填了「控制器地址」 |
-| 每 20s 收到 401 | LuCI 里的「共享密钥」与 AC 侧生效的密钥（环境变量或系统页设置）是否一致；是否轮换过（页面值优先） |
+| 每 20s 收到 401 | 核对 AP 上报 MAC 与发放设备密钥时使用的 MAC，检查密钥是否被轮换或撤销 |
+| 心跳签名验证失败 | 用可信渠道比对 AP 上的完整 AC 公钥与本机 `pubkey` 输出 |
 | 容器起不来 / 数据库报错 | `./data` 是否存在且属主 `1000:1000` |
 | `connected` 但没有 rev | 设备仍是 `pending`，页面未采纳 |
 | `sync_state=rollback` | `sync_message`、`/etc/ac/backup/`、`logread`；多半是 BSS 或管理地址自检失败 |

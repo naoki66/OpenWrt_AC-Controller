@@ -85,6 +85,7 @@ type nrAssembly struct {
 	gen      uint64
 	parts    map[int][]proto.NeighborBSS
 	expected int
+	reports  int
 	updated  time.Time
 }
 
@@ -97,6 +98,8 @@ type peerReplay struct {
 
 // PeerSnapshot is one consistent read of the live peer table.
 type PeerSnapshot struct {
+	Transport string
+	Device    string
 	// BSS entries are every BSS advertised by a live peer, in AP MAC order.
 	BSS []proto.NeighborBSS
 	// APs is the set of live peer AP MACs.
@@ -289,10 +292,17 @@ func (b *PeerBus) ingest(body []byte) {
 	}
 	// Validate before storing, so a malformed report never reaches hostapd.
 	st.BSS = validatePeerBSS(st.BSS)
+	if st.Type == proto.MsgPeerNR && (st.Parts < 0 || st.Parts > proto.PeerMaxReports ||
+		(st.Parts > 1 && (st.Part < 1 || st.Part > st.Parts || len(st.BSS) == 0))) {
+		return
+	}
 
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if _, known := b.peers[mac]; !known && len(b.peers) >= proto.PeerMaxPeers {
+		return
+	}
 	if !b.acceptReplayLocked(mac, st, now) {
 		return
 	}
@@ -318,11 +328,8 @@ func (b *PeerBus) acceptReplayLocked(mac string, st proto.PeerState, now time.Ti
 		return true
 	}
 	if st.TS > 0 {
-		delta := now.Unix() - st.TS
-		if delta < 0 {
-			delta = -delta
-		}
-		if delta > int64(peerFreshness/time.Second) {
+		fresh := int64(peerFreshness / time.Second)
+		if st.TS < now.Unix()-fresh || st.TS > now.Unix()+fresh {
 			return false
 		}
 	}
@@ -337,7 +344,7 @@ func (b *PeerBus) acceptReplayLocked(mac string, st proto.PeerState, now time.Ti
 		r.seen = map[uint64]struct{}{st.Counter: {}}
 		return true
 	}
-	if st.Counter+peerReplayWindow <= r.max {
+	if st.Counter <= r.max && r.max-st.Counter >= peerReplayWindow {
 		return false
 	}
 	if _, ok := r.seen[st.Counter]; ok {
@@ -348,7 +355,7 @@ func (b *PeerBus) acceptReplayLocked(mac string, st proto.PeerState, now time.Ti
 		r.max = st.Counter
 	}
 	for c := range r.seen {
-		if c+peerReplayWindow <= r.max {
+		if r.max-c >= peerReplayWindow {
 			delete(r.seen, c)
 		}
 	}
@@ -383,15 +390,20 @@ func (b *PeerBus) applyNR(mac string, st *proto.PeerState, now time.Time) {
 		asm = &nrAssembly{gen: st.Gen, parts: map[int][]proto.NeighborBSS{}, expected: st.Parts}
 		b.parts[mac] = asm
 	}
+	if asm.expected != st.Parts {
+		return
+	}
+	total := asm.reports - len(asm.parts[st.Part]) + len(st.BSS)
+	if total > proto.PeerMaxReports {
+		return
+	}
 	asm.parts[st.Part] = st.BSS
+	asm.reports = total
 	asm.updated = now
 	if len(asm.parts) >= asm.expected {
-		var all []proto.NeighborBSS
+		all := make([]proto.NeighborBSS, 0, asm.reports)
 		for i := 1; i <= asm.expected; i++ {
 			all = append(all, asm.parts[i]...)
-		}
-		if len(all) > proto.PeerMaxReports {
-			all = all[:proto.PeerMaxReports]
 		}
 		e.state.BSS = all
 		delete(b.parts, mac)
@@ -774,7 +786,7 @@ func (b *PeerBus) Snapshot() PeerSnapshot {
 		b.lastSig = sig
 		b.version++
 	}
-	return PeerSnapshot{BSS: bss, APs: apMACs, NTP: ntp}
+	return PeerSnapshot{Transport: b.transport, Device: b.device, BSS: bss, APs: apMACs, NTP: ntp}
 }
 
 // Version counts changes to the live peer BSS set. The agent uses it to reassert

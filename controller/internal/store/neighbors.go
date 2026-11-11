@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -31,14 +32,13 @@ func (s *Store) ReplaceNeighborsForAP(ctx context.Context, apMAC string, list []
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM bss_neighbors WHERE ap_mac = ?`, apMAC); err != nil {
-		return fmt.Errorf("neighbors clear: %w", err)
-	}
+	ifnames := make([]string, 0, len(list))
 	now := time.Now().Unix()
 	for _, n := range list {
 		if n.Ifname == "" || n.BSSID == "" {
 			continue
 		}
+		ifnames = append(ifnames, n.Ifname)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO bss_neighbors (ap_mac, ifname, bssid, ssid, report, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?)
@@ -46,10 +46,21 @@ func (s *Store) ReplaceNeighborsForAP(ctx context.Context, apMAC string, list []
 				bssid = excluded.bssid,
 				ssid = excluded.ssid,
 				report = excluded.report,
-				updated_at = excluded.updated_at`,
+				updated_at = excluded.updated_at
+			WHERE (bss_neighbors.bssid, bss_neighbors.ssid, bss_neighbors.report)
+			   IS NOT (excluded.bssid, excluded.ssid, excluded.report)`,
 			apMAC, n.Ifname, n.BSSID, n.SSID, n.Report, now); err != nil {
 			return fmt.Errorf("neighbors upsert %s/%s: %w", apMAC, n.Ifname, err)
 		}
+	}
+	// Remove only BSSes missing from the new snapshot, including an empty one.
+	encoded, err := json.Marshal(ifnames)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bss_neighbors
+		WHERE ap_mac = ? AND ifname NOT IN (SELECT value FROM json_each(?))`, apMAC, string(encoded)); err != nil {
+		return fmt.Errorf("neighbors remove stale: %w", err)
 	}
 	return tx.Commit()
 }

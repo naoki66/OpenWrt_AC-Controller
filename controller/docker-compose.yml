@@ -22,7 +22,8 @@ services:
       AC_HTTP_ADDR: ":8090"
       AC_DISCOVER_ADDR: ":29820"
       AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
-      # 管理面始终要求登录（首次启动自动建 admin/123456，可在系统页改密）。
+      # 首次启动和迁移旧默认密码时需设置。
+      AC_ADMIN_PASSWORD: "${AC_ADMIN_PASSWORD:-}"
       # 该令牌仅供自动化脚本以 Bearer 方式访问管理 REST。
       AC_ADMIN_TOKEN: "${AC_ADMIN_TOKEN:-}"
       # 下发给所有 AP 的站点 NTP 源；AP 本地持久化，AC 离线后继续生效。

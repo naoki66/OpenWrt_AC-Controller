@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -30,9 +31,46 @@ const maxTelemetryJSON = 512
 // Keeping it to one call means the AP's outbound traffic is one request per
 // interval and the exchange is naturally idempotent.
 func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
-	if !s.authorized(r) {
+	if !s.RequireSignedAP && !s.authorized(r) {
 		writeError(w, http.StatusUnauthorized, errors.New("invalid or missing bearer token"))
 		return
+	}
+	s.helloOnce.Do(func() { s.helloSlots = make(chan struct{}, 16) })
+	select {
+	case s.helloSlots <- struct{}{}:
+		defer func() { <-s.helloSlots }()
+	default:
+		writeError(w, http.StatusServiceUnavailable, errors.New("controller heartbeat queue is full"))
+		return
+	}
+
+	nonce := r.Header.Get(proto.ControlNonceHeader)
+	if (nonce != "" || s.RequireSignedAP) && !proto.ValidControlNonce(nonce) {
+		writeError(w, http.StatusBadRequest, errors.New("AP must send a valid control nonce"))
+		return
+	}
+	control := http.NewResponseController(w)
+	if err := control.SetReadDeadline(time.Now().Add(10 * time.Second)); err == nil {
+		defer control.SetReadDeadline(time.Time{})
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, proto.MaxHelloRequest))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, errors.New("hello request exceeds size limit"))
+		} else {
+			writeError(w, http.StatusBadRequest, errors.New("could not read hello request"))
+		}
+		return
+	}
+	var cred deviceCredentials
+	if s.RequireSignedAP {
+		var ok bool
+		cred, ok = s.verifyDevice(r, body)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, errors.New("device request proof required"))
+			return
+		}
 	}
 
 	var hello proto.Hello
@@ -40,14 +78,23 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 	// *different* build talks to: a newer agent that adds a telemetry field must
 	// not be rejected outright by an older controller, because a 400 on hello
 	// stops the AP reporting anything at all. The management API stays strict.
-	if err := json.NewDecoder(r.Body).Decode(&hello); err != nil {
+	if err := json.Unmarshal(body, &hello); err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid JSON body: %w", err))
+		return
+	}
+	if len(hello.Clients) > 4096 || len(hello.Neighbors) > 128 ||
+		len(hello.Radios) > 32 || len(hello.Ports) > 128 || len(hello.Actions) > 128 {
+		writeError(w, http.StatusBadRequest, errors.New("hello contains too many records"))
 		return
 	}
 
 	mac := discovery.NormalizeMAC(hello.MAC)
 	if mac == "" {
 		writeError(w, http.StatusBadRequest, errors.New("malformed MAC address"))
+		return
+	}
+	if s.RequireSignedAP && cred.mac != mac {
+		writeError(w, http.StatusForbidden, errors.New("hello identity does not match device key"))
 		return
 	}
 	reportingMAC := mac
@@ -280,13 +327,14 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		ACID:           s.ACID,
 		State:          device.State,
 		PubKey:         s.Key.PublicHex(),
-		SecretRequired: s.EffectiveSecret() != "",
+		SecretRequired: s.RequireSignedAP || s.EffectiveSecret() != "",
 		Firmware:       s.firmwareRef(r, device),
 		// NTP is safe for a pending device too: a factory AP needs time before
 		// adoption, and the list is independent of configuration revisions.
 		NTP: s.EffectiveNTPServers(),
 	}
 	if device.State == store.StateAdopted && device.ConfigRev > 0 {
+		reply.AcceptedRev = hello.AppliedRev
 		reply.DesiredRev = device.ConfigRev
 		reply.PackagePath = fmt.Sprintf("/api/v1/devices/%s/package?rev=%d", mac, device.ConfigRev)
 	}
@@ -335,7 +383,24 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, reply)
+	if nonce == "" {
+		writeJSON(w, http.StatusOK, reply)
+		return
+	}
+	response, err := json.Marshal(reply)
+	if err != nil || len(response) > proto.MaxHelloResponse {
+		writeError(w, http.StatusInternalServerError, errors.New("hello response could not be encoded within size limit"))
+		return
+	}
+	sig, err := proto.SignHelloReply(s.Key.Private, nonce, body, response)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errors.New("hello response could not be signed"))
+		return
+	}
+	w.Header().Set(proto.ControlSignatureHeader, sig)
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(response)
 }
 
 // resolveBindingBSSID finds the BSSID of the BSS a binding targets. An exact

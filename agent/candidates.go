@@ -105,11 +105,12 @@ func bandRank(op uint8) int {
 
 // ranked is one candidate with the sort keys derived from its report.
 type ranked struct {
-	entry    []string
-	sameBand bool
-	band     int
-	channel  uint8
-	order    int
+	entry     []string
+	sameBand  bool
+	coChannel bool
+	band      int
+	channel   uint8
+	order     int
 }
 
 // rankCandidates removes candidates that cannot be an improvement and orders
@@ -121,6 +122,14 @@ type ranked struct {
 // build that encodes reports differently, which is a worse failure than
 // offering a mediocre option.
 func rankCandidates(cands [][]string, self neighborInfo) [][]string {
+	return rankCandidateList(cands, self, false)
+}
+
+func rankCandidatesForAdvice(cands [][]string, self neighborInfo) [][]string {
+	return rankCandidateList(cands, self, true)
+}
+
+func rankCandidateList(cands [][]string, self neighborInfo, allowCoChannel bool) [][]string {
 	if len(cands) == 0 {
 		return nil
 	}
@@ -153,13 +162,17 @@ func rankCandidates(cands [][]string, self neighborInfo) [][]string {
 			}
 			// Same class and channel: the client would keep the same airtime
 			// and the same interference, and pay a reassociation for it.
-			if self.valid() && info.OpClass == self.OpClass && info.Channel == self.Channel {
+			r.coChannel = self.valid() && info.OpClass == self.OpClass && info.Channel == self.Channel
+			if r.coChannel && !allowCoChannel {
 				continue
 			}
 		}
 		out = append(out, r)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].coChannel != out[j].coChannel {
+			return !out[i].coChannel
+		}
 		if out[i].sameBand != out[j].sameBand {
 			return out[i].sameBand
 		}

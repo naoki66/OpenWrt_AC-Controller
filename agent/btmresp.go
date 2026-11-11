@@ -1,11 +1,11 @@
 package agent
 
 import (
-	"bufio"
 	"context"
-	"io"
+	"errors"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,7 +45,7 @@ type btmListener struct {
 	Retry time.Duration
 
 	mu      sync.Mutex
-	started map[string]bool
+	started map[string]context.CancelFunc
 	conns   map[string]net.Conn
 	cancel  context.CancelFunc
 	closed  bool
@@ -64,13 +64,12 @@ func (l *btmListener) Start(ctx context.Context) {
 		l.mu.Unlock()
 		return
 	}
-	l.started = map[string]bool{}
+	l.started = map[string]context.CancelFunc{}
 	l.conns = map[string]net.Conn{}
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancel = cancel
-	l.mu.Unlock()
-
 	l.wg.Add(1)
+	l.mu.Unlock()
 	go func() {
 		defer l.wg.Done()
 		l.supervise(ctx)
@@ -108,8 +107,20 @@ func (l *btmListener) Close() {
 // (a radio finishing ACS, a reload) is followed too.
 func (l *btmListener) supervise(ctx context.Context) {
 	for {
-		for _, ifname := range l.enumerate(ctx) {
-			l.followBSS(ctx, ifname)
+		if names, ok := l.enumerate(ctx); ok {
+			live := make(map[string]bool, len(names))
+			for _, ifname := range names {
+				live[ifname] = true
+				l.followBSS(ctx, ifname)
+			}
+			l.mu.Lock()
+			for ifname, stop := range l.started {
+				if !live[ifname] {
+					stop()
+					delete(l.started, ifname)
+				}
+			}
+			l.mu.Unlock()
 		}
 		if !l.sleep(ctx) {
 			return
@@ -117,11 +128,11 @@ func (l *btmListener) supervise(ctx context.Context) {
 	}
 }
 
-func (l *btmListener) enumerate(ctx context.Context) []string {
+func (l *btmListener) enumerate(ctx context.Context) ([]string, bool) {
 	out, err := l.Runner.Run(ctx, "ubus", "list")
 	if err != nil {
 		l.Log.Debug("btm listener: ubus list unavailable", "err", err)
-		return nil
+		return nil, false
 	}
 	var names []string
 	for _, line := range strings.Split(out, "\n") {
@@ -130,20 +141,20 @@ func (l *btmListener) enumerate(ctx context.Context) []string {
 			names = append(names, ifname)
 		}
 	}
-	return names
+	return names, true
 }
 
 // followBSS starts one reconnect loop per interface.
 func (l *btmListener) followBSS(ctx context.Context, ifname string) {
 	l.mu.Lock()
-	if l.closed || l.started[ifname] {
+	if l.closed || l.started[ifname] != nil {
 		l.mu.Unlock()
 		return
 	}
-	l.started[ifname] = true
-	l.mu.Unlock()
-
+	ctx, cancel := context.WithCancel(ctx)
+	l.started[ifname] = cancel
 	l.wg.Add(1)
+	l.mu.Unlock()
 	go func() {
 		defer l.wg.Done()
 		l.follow(ctx, ifname)
@@ -151,11 +162,22 @@ func (l *btmListener) followBSS(ctx context.Context, ifname string) {
 }
 
 func (l *btmListener) follow(ctx context.Context, ifname string) {
+	localDir, err := os.MkdirTemp("", "ac-btm-")
+	if err != nil {
+		l.Log.Warn("btm listener: create local socket directory failed", "err", err)
+		return
+	}
+	defer os.Remove(localDir)
+	local := filepath.Join(localDir, "ctrl")
+	defer os.Remove(local)
+	remote := filepath.Join(l.dir(), ifname)
 	for ctx.Err() == nil {
-		path := filepath.Join(l.dir(), ifname)
-		conn, err := net.Dial("unix", path)
+		conn, err := net.DialUnix("unixgram",
+			&net.UnixAddr{Name: local, Net: "unixgram"},
+			&net.UnixAddr{Name: remote, Net: "unixgram"})
 		if err != nil {
-			l.Log.Debug("btm listener: connect failed", "ifname", ifname, "path", path, "err", err)
+			_ = os.Remove(local)
+			l.Log.Debug("btm listener: connect failed", "ifname", ifname, "path", remote, "err", err)
 			if !l.sleep(ctx) {
 				return
 			}
@@ -174,11 +196,18 @@ func (l *btmListener) follow(ctx context.Context, ifname string) {
 		l.conns[ifname] = conn
 		l.mu.Unlock()
 
-		l.read(conn)
+		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+		if err := l.read(conn); err != nil && ctx.Err() == nil {
+			l.Log.Debug("btm listener: control socket ended", "ifname", ifname, "err", err)
+		}
+		stop()
 
 		_ = conn.Close()
+		_ = os.Remove(local)
 		l.mu.Lock()
-		delete(l.conns, ifname)
+		if l.conns[ifname] == conn {
+			delete(l.conns, ifname)
+		}
 		l.mu.Unlock()
 
 		if !l.sleep(ctx) {
@@ -187,17 +216,58 @@ func (l *btmListener) follow(ctx context.Context, ifname string) {
 	}
 }
 
-// read attaches to the socket and parses events until it goes away.
-func (l *btmListener) read(conn net.Conn) {
-	// ATTACH is what turns a command socket into a stream of hostapd events.
-	if _, err := io.WriteString(conn, "ATTACH\n"); err != nil {
-		l.Log.Debug("btm listener: attach failed", "err", err)
-		return
+// read verifies the ATTACH reply and handles one event per datagram.
+func (l *btmListener) read(conn *net.UnixConn) error {
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return err
 	}
-	sc := bufio.NewScanner(conn)
-	sc.Buffer(make([]byte, 0, 4096), 64*1024)
-	for sc.Scan() {
-		mac, status, target, ok := parseBTMResponse(sc.Text())
+	if _, err := conn.Write([]byte("ATTACH")); err != nil {
+		return err
+	}
+	buf := make([]byte, 8193)
+	n, err := conn.Read(buf)
+	if err != nil {
+		return err
+	}
+	if string(buf[:n]) != "OK\n" {
+		return errors.New("hostapd rejected ATTACH")
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		return err
+	}
+	// An idle Unix datagram socket does not signal hostapd exit. Periodically
+	// ping it to detect a replaced socket even with no station activity.
+	waitingPong := false
+	for {
+		wait := 2 * time.Minute
+		if waitingPong {
+			wait = 2 * time.Second
+		}
+		if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+			return err
+		}
+		n, err := conn.Read(buf)
+		if err != nil {
+			if ne, ok := err.(net.Error); !ok || !ne.Timeout() || waitingPong {
+				return err
+			}
+			if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				return err
+			}
+			if _, err := conn.Write([]byte("PING")); err != nil {
+				return err
+			}
+			waitingPong = true
+			continue
+		}
+		if n == len(buf) {
+			continue
+		}
+		if string(buf[:n]) == "PONG\n" {
+			waitingPong = false
+			continue
+		}
+		mac, status, target, ok := parseBTMResponse(string(buf[:n]))
 		if !ok {
 			continue
 		}
@@ -269,6 +339,8 @@ func parseBTMResponse(line string) (mac string, status int, target string, ok bo
 			haveStatus = true
 		case strings.HasPrefix(field, "bssid="):
 			target = normalizeBTMAddr(strings.TrimPrefix(field, "bssid="))
+		case strings.HasPrefix(field, "target_bssid="):
+			target = normalizeBTMAddr(strings.TrimPrefix(field, "target_bssid="))
 		default:
 			if mac == "" && !strings.Contains(field, "=") && looksLikeMAC(field) {
 				mac = strings.ToLower(field)

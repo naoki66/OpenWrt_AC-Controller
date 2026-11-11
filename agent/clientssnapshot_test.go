@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -108,6 +109,26 @@ func TestSnapshotDoesNotCacheFailures(t *testing.T) {
 	}
 	if r.calls != 2 {
 		t.Fatalf("attempts = %d, want 2 (a failure must not be cached)", r.calls)
+	}
+}
+
+type oneBSSFailRunner struct{ *mapRunner }
+
+func (r oneBSSFailRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
+	if name == "iw" && strings.Join(args, " ") == "dev phy0.1-ap1 station dump" {
+		return "", errors.New("interface reloading")
+	}
+	return r.mapRunner.Run(ctx, name, args...)
+}
+
+func TestSnapshotDoesNotPublishPartialSweep(t *testing.T) {
+	c, runner := newCollector(t, map[string]string{
+		"status":                         wirelessStatusFixture,
+		"iw dev phy0.1-ap0 station dump": stationDump,
+	})
+	c.Runner = oneBSSFailRunner{runner}
+	if list := c.Snapshot(context.Background(), 0); list != nil {
+		t.Fatalf("incomplete snapshot was published: %+v", list)
 	}
 }
 

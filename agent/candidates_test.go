@@ -89,6 +89,16 @@ func TestRankCandidatesDropsSelfAndSameChannel(t *testing.T) {
 	}
 }
 
+func TestAdvisoryRankingKeepsCoChannelAsFallback(t *testing.T) {
+	self := neighborInfo{BSSID: "00:00:00:00:00:5c", OpClass: 129, Channel: 36}
+	same := []string{"02:00:00:00:00:5c", "SSID-A_5G", "02000000005cef58200081240e0603033200"}
+	other := []string{"0a:00:00:00:00:5c", "SSID-A_5G", "0a000000005cef58200081280e0603033200"}
+	got := rankCandidatesForAdvice([][]string{same, other}, self)
+	if len(got) != 2 || got[0][0] != other[0] || got[1][0] != same[0] {
+		t.Fatalf("advisory order = %v", got)
+	}
+}
+
 // Same band first, then the higher-capacity band, then channel. A 5 GHz client
 // should be offered 6 GHz ahead of 2.4 GHz even though 2.4 GHz uses the lower
 // channel number.

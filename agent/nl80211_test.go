@@ -190,18 +190,17 @@ func TestCollectorFallsBackToIwAfterSourceFailure(t *testing.T) {
 	bad := &failingReader{}
 	c := &ClientCollector{Runner: runner, Log: log, reader: bad}
 
-	// First call fails and switches the collector to iw; the sample itself is
-	// still nil, because a failed read is "not reported", not "no clients".
-	if list := c.stations(context.Background(), bssInfo{Ifname: "phy0.1-ap0", SSID: "SSID-A", Band: "5g"}, nil); list != nil {
-		t.Fatalf("stations = %+v, want nil after a failed read", list)
+	bss := bssInfo{Ifname: "phy0.1-ap0", SSID: "SSID-A", Band: "5g"}
+	if list, err := c.stations(context.Background(), bss, nil); err != nil || len(list) != 1 {
+		t.Fatalf("first read should fall back to iw: %+v, %v", list, err)
 	}
 	if got := c.stationReader().Name(); got != "iw" {
 		t.Fatalf("source after failure = %q, want iw", got)
 	}
 
-	list := c.stations(context.Background(), bssInfo{Ifname: "phy0.1-ap0", SSID: "SSID-A", Band: "5g"}, nil)
-	if len(list) != 1 {
-		t.Fatalf("stations after fallback = %+v", list)
+	list, err := c.stations(context.Background(), bss, nil)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("stations after fallback = %+v, %v", list, err)
 	}
 	if list[0].SSID != "SSID-A" || list[0].Band != "5g" || list[0].Ifname != "phy0.1-ap0" {
 		t.Errorf("context not filled in: %+v", list[0])
