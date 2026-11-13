@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/naoki66/ac-controller/controller/internal/discovery"
-	"github.com/naoki66/ac-controller/controller/internal/store"
 	"github.com/naoki66/ac-controller/shared/secret"
 )
 
@@ -67,8 +66,8 @@ func (s *Server) verifyDevice(r *http.Request, body []byte) (deviceCredentials, 
 	if issued.After(now) || !expiry.After(now) {
 		return deviceCredentials{}, false
 	}
-	key, err := s.Store.GetSetting(r.Context(), store.DeviceKeySetting(mac))
-	if err != nil || !secret.ValidDeviceKey(key) {
+	key := secret.DeviceKey(s.EffectiveSecret(), mac)
+	if key == "" {
 		return deviceCredentials{}, false
 	}
 	proof := r.Header.Get(secret.DeviceProofHeader)

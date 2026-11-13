@@ -21,7 +21,7 @@ services:
       AC_DATA_DIR: /var/lib/ac
       AC_HTTP_ADDR: ":8090"
       AC_DISCOVER_ADDR: ":29820"
-      AC_SHARED_SECRET: "${AC_SHARED_SECRET:?set AC_SHARED_SECRET in .env}"
+      AC_SHARED_SECRET: "${AC_SHARED_SECRET:-}"
       # 首次启动和迁移旧默认密码时需设置。
       AC_ADMIN_PASSWORD: "${AC_ADMIN_PASSWORD:-}"
       # 该令牌仅供自动化脚本以 Bearer 方式访问管理 REST。

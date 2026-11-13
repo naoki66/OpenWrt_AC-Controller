@@ -155,7 +155,7 @@ msgstr ""
 msgid "Shared secret"
 msgstr ""
 
-msgid "Must match AC_SHARED_SECRET on the controller and use at least 12 characters. It also authenticates AP-to-AP messages with HMAC-SHA256. Leave empty when the controller does not check one."
+msgid "Copy the shared secret from AP Management in the controller web interface."
 msgstr ""
 
 msgid "Heartbeat interval"

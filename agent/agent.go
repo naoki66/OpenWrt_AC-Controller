@@ -102,14 +102,15 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 	}
 	req.Header.Set("Content-Type", "application/json")
 	var nonce string
-	if len(c.controlKey) != 0 {
+	if c.deviceKey != "" {
 		nonce, err = proto.NewControlNonce()
 		if err != nil {
 			return proto.HelloReply{}, err
 		}
 		req.Header.Set(proto.ControlNonceHeader, nonce)
 	}
-	if _, err := c.authorize(ctx, req, body); err != nil {
+	challenge, err := c.authorize(ctx, req, body)
+	if err != nil {
 		return proto.HelloReply{}, err
 	}
 
@@ -135,7 +136,7 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 	}
 
 	if nonce != "" {
-		if err := proto.VerifyHelloReply(c.controlKey, resp.Header.Get(proto.ControlSignatureHeader), nonce, body, payload); err != nil {
+		if err := proto.VerifyHelloReply(c.deviceKey, resp.Header.Get(proto.ControlReplyProofHeader), challenge, nonce, body, payload); err != nil {
 			return proto.HelloReply{}, err
 		}
 	}
@@ -456,15 +457,6 @@ const helloClientReuse = 12 * time.Second
 // applier pointing at this AP's /etc tree.
 func New(cfg Config, log *slog.Logger) (*Agent, error) {
 	cfg = Load(cfg)
-	if cfg.DeviceKey != "" && !secret.ValidDeviceKey(cfg.DeviceKey) {
-		return nil, errors.New("AC_DEVICE_KEY must be a 64-digit device key in hex")
-	}
-	if cfg.ACPublicKey != "" {
-		if key, err := hex.DecodeString(cfg.ACPublicKey); err != nil || len(key) != ed25519.PublicKeySize {
-			return nil, errors.New("AC_PUBLIC_KEY must be a 64-digit Ed25519 public key in hex")
-		}
-	}
-
 	id := cfg.Identity
 	detected := DetectIdentity(cfg.Root)
 	if id.MAC == "" {
@@ -592,9 +584,8 @@ func (a *Agent) State() State { return a.state }
 
 func (a *Agent) newControlClient(addr string) *Client {
 	c := NewClient(withScheme(addr), "")
-	c.controlKey, _ = hex.DecodeString(a.Config.ACPublicKey)
-	c.deviceKey = a.Config.DeviceKey
 	c.deviceMAC = normalizePeerMAC(a.Identity.MAC)
+	c.deviceKey = secret.DeviceKey(a.Config.Secret, c.deviceMAC)
 	return c
 }
 
@@ -860,14 +851,14 @@ func (a *Agent) Step(ctx context.Context) error {
 		a.restoreNeighborsOnPeerChange(ctx)
 	}
 
-	if a.Config.ACPublicKey == "" {
-		err := errors.New("controller trust is not provisioned: configure AC_PUBLIC_KEY")
+	if len(a.Config.Secret) < 12 {
+		err := errors.New("configure the same shared secret as the controller (at least 12 characters)")
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
 		return err
 	}
-	if a.Config.DeviceKey == "" {
-		err := errors.New("controller device credential is not provisioned: configure AC_DEVICE_KEY")
+	if normalizePeerMAC(a.Identity.MAC) == "" {
+		err := errors.New("no valid AP MAC address available")
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
 		return err
@@ -899,10 +890,6 @@ func (a *Agent) Step(ctx context.Context) error {
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
 
-		// A rejected token will not fix itself; surface it instead of looping.
-		if strings.Contains(err.Error(), "401") {
-			return fmt.Errorf("%w (check AC_DEVICE_KEY and AP MAC)", err)
-		}
 		// A discovered controller that vanished may have moved (DHCP, reinstall,
 		// a different controller taking over). Forget its address and re-resolve
 		// it, but at a pace that does not broadcast every heartbeat. A pinned
@@ -1182,21 +1169,25 @@ func (a *Agent) collectClients(ctx context.Context) []proto.ClientStat {
 	return a.Clients.Snapshot(ctx, helloClientReuse)
 }
 
-// pinController records the identity from an already verified response.
-// The provisioned key, never the cached state, is the trust root.
+// pinController records the signing key delivered in a shared-secret-authenticated reply.
 func (a *Agent) pinController(reply proto.HelloReply) error {
-	if a.Config.ACPublicKey == "" || reply.PubKey != a.Config.ACPublicKey {
-		return errors.New("controller public key differs from the provisioned key")
+	key, err := hex.DecodeString(reply.PubKey)
+	if err != nil || len(key) != ed25519.PublicKeySize || reply.ACID == "" {
+		return errors.New("controller returned an invalid signing identity")
 	}
-	if a.state.PubKey != a.Config.ACPublicKey {
+	if a.state.PubKey != reply.PubKey || a.state.ACID != reply.ACID {
+		if a.state.PendingConfirm != nil {
+			return errors.New("controller identity changed while confirming a network revision")
+		}
+		previousKey, previousID := a.state.PubKey, a.state.ACID
 		a.state.PubKey = reply.PubKey
 		a.state.ACID = reply.ACID
-		a.Log.Info("pinned controller key", "ac_id", reply.ACID, "pubkey", reply.PubKey)
-		return a.saveState()
+		if err := a.saveState(); err != nil {
+			a.state.PubKey, a.state.ACID = previousKey, previousID
+			return err
+		}
 	}
-	if reply.ACID != "" && a.state.ACID != "" && reply.ACID != a.state.ACID {
-		return fmt.Errorf("controller ac_id changed (pinned %s, got %s)", a.state.ACID, reply.ACID)
-	}
+	a.client.controlKey = key
 	return nil
 }
 
@@ -1389,7 +1380,7 @@ func (a *Agent) commitNetworkRevision(ctx context.Context) error {
 
 func (a *Agent) confirmedRevision(reply proto.HelloReply) bool {
 	return a.state.PendingConfirm != nil && reply.State == proto.APStateAdopted &&
-		reply.ACID == a.state.ACID && reply.PubKey == a.Config.ACPublicKey &&
+		reply.ACID == a.state.ACID && reply.PubKey == a.state.PubKey &&
 		reply.AcceptedRev == a.state.PendingConfirm.Rev
 }
 

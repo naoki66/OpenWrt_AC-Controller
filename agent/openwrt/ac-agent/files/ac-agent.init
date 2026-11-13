@@ -25,8 +25,6 @@ start_service() {
 	fi
 
 	ac_addr=$(uci -q get ac.agent.ac_addr)
-	ac_public_key=$(uci -q get ac.agent.ac_public_key)
-	device_key=$(uci -q get ac.agent.device_key)
 	disable_dhcp=$(uci -q get ac.agent.disable_dhcp)
 	secret=$(uci -q get ac.agent.secret)
 	interval=$(uci -q get ac.agent.interval)
@@ -52,7 +50,7 @@ start_service() {
 	# env takes the whole set in one call: a second procd_set_param env would
 	# replace the first, not add to it. Calling it twice silently dropped
 	# AC_SECRET and every hello came back 401 — found only on real hardware.
-	set -- "AC_SECRET=$secret" "AC_PUBLIC_KEY=$ac_public_key" "AC_DEVICE_KEY=$device_key" \
+	set -- "AC_SECRET=$secret" \
 		"AC_DISABLE_DHCP=$disable_dhcp" "AC_PEER_STEER=$peer_steer"
 	[ -z "$interval" ] || set -- "$@" "AC_INTERVAL=${interval}s"
 	[ -z "$health_timeout" ] || set -- "$@" "AC_HEALTH_TIMEOUT=$health_timeout"

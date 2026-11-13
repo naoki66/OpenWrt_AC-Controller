@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// DeviceKeySetting stores a per-device request/encryption credential under a
-// normalized MAC. It is never included in the management config export.
-func DeviceKeySetting(mac string) string { return "ap_device_key:" + mac }
-
 // Settings are the runtime-tunable values an operator sets through the
 // management API (currently the AP shared secret). They survive restarts and
 // take precedence over the environment, so a secret changed in the UI does not

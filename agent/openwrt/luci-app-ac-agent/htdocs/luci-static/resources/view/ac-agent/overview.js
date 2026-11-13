@@ -200,27 +200,12 @@ return view.extend({
 				return uci.get('ac', section_id, 'ac_addr') || discoveredAddr;
 			};
 
-		o = s.option(form.Value, 'ac_public_key', _('Controller signing public key'),
-			_('Enter the 64 hexadecimal digits from ac pubkey, obtained through a trusted administration channel.'));
-		o.rmempty = true;
-		o.validate = function(section_id, value) {
-			return !value || /^[a-fA-F0-9]{64}$/.test(value) || _('Expected a 64-digit hexadecimal Ed25519 public key.');
-		};
-
-		o = s.option(form.Value, 'device_key', _('AP device key'),
-			_('Enter the key issued for this AP by ac ap-key <AP-MAC>. Do not copy it to other APs.'));
+		o = s.option(form.Value, 'secret', _('Shared secret'),
+			_('Copy the shared secret from AP Management in the controller web interface.'));
 		o.password = true;
 		o.rmempty = true;
 		o.validate = function(section_id, value) {
-			return !value || /^[a-fA-F0-9]{64}$/.test(value) || _('Expected a 64-digit hexadecimal device key.');
-		};
-
-		o = s.option(form.Value, 'secret', _('Peer coordination shared secret'),
-			_('Use the same key of at least 12 characters on each peer AP. Leave blank to disable peer coordination.'));
-		o.password = true;
-		o.rmempty = true;
-		o.validate = function(section_id, value) {
-			return !value || value.length >= 12 || _('Use at least 12 characters.');
+			return !value || value.trim().length >= 12 || _('Use at least 12 characters.');
 		};
 
 		o = s.option(form.Value, 'interval', _('Heartbeat interval'),

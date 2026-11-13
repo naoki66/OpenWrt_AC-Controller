@@ -51,12 +51,7 @@ type Config struct {
 	Root string
 	// ACAddr is "host:port" of a known controller. Empty means "discover first".
 	ACAddr string
-	// ACPublicKey is the provisioned Ed25519 controller key in hex.
-	ACPublicKey string
-	// DeviceKey authenticates this AP to the AC and encrypts its packages.
-	DeviceKey string
-	// Secret is the shared secret presented to the controller. It also
-	// authenticates AP-to-AP messages, so a site sets it once.
+	// Secret derives separate credentials for controller and peer authentication.
 	Secret string
 	// Interval is the hello/poll period.
 	Interval time.Duration
@@ -164,17 +159,10 @@ func Load(c Config) Config {
 	if c.ACAddr == "" {
 		c.ACAddr = os.Getenv("AC_ADDR")
 	}
-	if c.ACPublicKey == "" {
-		c.ACPublicKey = os.Getenv("AC_PUBLIC_KEY")
-	}
-	c.ACPublicKey = strings.ToLower(strings.TrimSpace(c.ACPublicKey))
-	if c.DeviceKey == "" {
-		c.DeviceKey = os.Getenv("AC_DEVICE_KEY")
-	}
-	c.DeviceKey = strings.ToLower(strings.TrimSpace(c.DeviceKey))
 	if c.Secret == "" {
 		c.Secret = os.Getenv("AC_SECRET")
 	}
+	c.Secret = strings.TrimSpace(c.Secret)
 	if c.Interval == 0 {
 		c.Interval = defaultInterval
 		if v := os.Getenv("AC_INTERVAL"); v != "" {

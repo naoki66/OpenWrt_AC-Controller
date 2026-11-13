@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -55,62 +53,16 @@ func main() {
 		os.Stdout.WriteString("ac " + version.Version + " (" + version.Commit + ", " + version.Date + ")\n")
 	case "pubkey":
 		err = printPubKey()
-	case "ap-key", "ap-key-rotate", "ap-key-revoke":
-		err = manageDeviceKey(cmd, flag.Args()[1:])
 	case "verify":
 		err = verifyPackage(log)
 	default:
-		log.Error("unknown command", "cmd", cmd, "hint", "supported: serve, version, pubkey, ap-key, ap-key-rotate, ap-key-revoke, verify")
+		log.Error("unknown command", "cmd", cmd, "hint", "supported: serve, version, pubkey, verify")
 		os.Exit(2)
 	}
 	if err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)
 	}
-}
-
-func manageDeviceKey(cmd string, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("usage: ac %s <AP MAC address>", cmd)
-	}
-	mac := discovery.NormalizeMAC(args[0])
-	if mac == "" {
-		return errors.New("invalid AP MAC address")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	st, err := store.Open(config.Load().DBPath())
-	if err != nil {
-		return err
-	}
-	defer st.Close()
-	if err := st.Migrate(ctx); err != nil {
-		return err
-	}
-	name := store.DeviceKeySetting(mac)
-	if cmd == "ap-key-revoke" {
-		return st.DeleteSetting(ctx, name)
-	}
-	if cmd == "ap-key" {
-		key, err := st.GetSetting(ctx, name)
-		if err == nil {
-			fmt.Println(key)
-			return nil
-		}
-		if !errors.Is(err, store.ErrNotFound) {
-			return err
-		}
-	}
-	var raw [32]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return err
-	}
-	key := hex.EncodeToString(raw[:])
-	if err := st.SetSetting(ctx, name, key); err != nil {
-		return err
-	}
-	fmt.Println(key)
-	return nil
 }
 
 func serve(log *slog.Logger) error {

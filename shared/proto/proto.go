@@ -23,7 +23,8 @@ const (
 // v5 — HelloReply gained Bindings; action set gained kick_client.
 // v6 — action set gained led_set (status LED on/off).
 // v7 — Hello gained Caps (hostapd 11k/11v capability) and SteeringStats.
-const ProtocolVersion = 7
+// v8 — site shared-secret authentication for control requests and replies.
+const ProtocolVersion = 8
 
 // Firmware sync states reported in Hello. They mirror the config sync states
 // but are a separate axis: a device can be running the right config on the

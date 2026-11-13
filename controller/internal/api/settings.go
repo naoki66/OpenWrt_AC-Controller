@@ -104,9 +104,8 @@ func (s *Server) handleSetNTP(w http.ResponseWriter, r *http.Request) {
 // update /etc/config/ac on every AP before (or right after) rotating — the UI
 // says so.
 //
-// An empty secret removes the override and falls back to the environment
-// default; it does not disable authentication unless the environment value is
-// empty too.
+// An empty secret removes the override and falls back to the environment.
+// Without an effective secret the production server rejects AP requests.
 func (s *Server) handleSetSharedSecret(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Secret string `json:"secret"`

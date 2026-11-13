@@ -350,18 +350,17 @@ func TestNeighborBodyWorksWithoutControllerCache(t *testing.T) {
 func TestStepRediscoversVanishedController(t *testing.T) {
 	root := t.TempDir()
 	cfg := Config{
-		Root:        root,
-		ACPublicKey: strings.Repeat("aa", 32),
-		DeviceKey:   strings.Repeat("ab", 32),
-		Runner:      newNeighborRunner(),
-		Identity:    Identity{MAC: testSelfMAC, Model: "XR1710G", Hostname: "ap250"},
+		Root:     root,
+		Secret:   "test-shared-secret",
+		Runner:   newNeighborRunner(),
+		Identity: Identity{MAC: testSelfMAC, Model: "XR1710G", Hostname: "ap250"},
 	}
 	a, err := New(cfg, testLog())
 	if err != nil {
 		t.Fatalf("new agent: %v", err)
 	}
 	a.acAddr = "127.0.0.1:1"
-	a.client = NewClient("http://127.0.0.1:1", "")
+	a.client = a.newControlClient(a.acAddr)
 
 	for i := 1; i <= rediscoverAfterFailures; i++ {
 		if err := a.Step(context.Background()); err == nil {

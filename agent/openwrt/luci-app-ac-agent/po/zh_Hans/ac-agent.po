@@ -154,8 +154,8 @@ msgstr "控制器的 host:port。留空则通过本地网段的 UDP 广播自动
 msgid "Shared secret"
 msgstr "共享密钥"
 
-msgid "Must match AC_SHARED_SECRET on the controller and use at least 12 characters. It also authenticates AP-to-AP messages with HMAC-SHA256. Leave empty when the controller does not check one."
-msgstr "必须与控制器上的 AC_SHARED_SECRET 一致，且至少 12 个字符。同一密钥也用于对 AP 间报文做 HMAC-SHA256 认证。控制器不校验时留空。"
+msgid "Copy the shared secret from AP Management in the controller web interface."
+msgstr "复制控制器网页「AP 管理」中的共享密钥。"
 
 msgid "Heartbeat interval"
 msgstr "心跳间隔"

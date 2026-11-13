@@ -1,5 +1,5 @@
 # AC 控制器部署编排（amd64 / arm64 通用，镜像来自 Docker Hub）。
-# 用法：把 AC_SHARED_SECRET 换成随机值 → mkdir -p data && chown 1000:1000 data → docker compose up -d
+# 启动后在 AC 网页「AP 管理」生成共享密钥。
 # 只保留部署必需项；其余变量用内置默认值，NTP / 共享密钥可在「系统配置」页修改。
 # network_mode: host 为必需：AP 发现是 UDP 广播，bridge 网络收不到。
 # 升级：docker compose pull && docker compose up -d

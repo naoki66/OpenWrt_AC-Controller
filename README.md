@@ -10,7 +10,7 @@
 
 > 轻量的 OpenWrt 无线控制器：AC 端是一个 Go 单二进制（内嵌 Web UI、REST API、SQLite），AP 端是跑在 procd 下的 `ac-agent`。一条 compose 就能在 NAS、x86 软路由、ARM 盒子上跑起来，也可以把 AC 编译成 OpenWrt 软件包直接跑在路由器上。
 
-**最快路径**：启动控制器 → 为 AP 预置 AC 签名公钥和设备专属密钥 → 在「设备」页采纳模板。
+**最快路径**：在 AC 网页生成共享密钥 → 粘贴到各 AP 的 LuCI → 在「设备概览」采纳。
 
 > 本文是中文文档，完整英文版见 [README.en.md](README.en.md)。所有命令与配置均可直接复制执行。
 
@@ -36,13 +36,13 @@
 - **段级合并，不整文件覆盖**：应用前备份、失败自动回滚，避免把自己锁在 AP 门外。
 - **防锁死三道防线**（v0.5.1 之后）：下发前 `preflight` 预检管理地址迁移；下发后校验 BSS 与管理地址是否丢失；自动把新增管理接口补进 `lan` 防火墙 zone 并修正 dropbear 绑定。
 - **AC 不主动连 AP**：配置永远由 AP 拉取；AP 之间经 UDP 29821 交换 11k 邻居与客户端信息，AC 失联时本地 11v 漫游建议仍可用（`peer_steer=1`）；检测到 usteer/dawn 时自动让位。
-- **HTTP 下的 AC 信任**：AP 预置唯一的 AC Ed25519 公钥，验证心跳响应和配置包；配置包还有逐文件 SHA-256 与目标校验。
-- **一个密钥，两个用途**：AC 与每个 AP 只填同一个 `AC_SHARED_SECRET`，由 HKDF-SHA256 派生出 AP→AC 鉴权令牌和 AP↔AP 报文 HMAC 密钥，两者互不相同，原始密钥永不上线传输。
+- **AC 与 AP 双向认证**：双方用共享密钥认证控制请求与心跳回复；AP 自动取得签名公钥，验签后才应用配置包。
+- **一个共享密钥**：控制器和各 AP 填同一个值，程序分别派生纳管和漫游协同所需的凭据。
 - **模板 + 设备覆盖 + 分组**：模板定义无线与二层，分组决定成员用哪个模板，设备级 `network_params` / 射频覆盖给出端口、VLAN、管理地址、信道与功率。
 - **运维闭环**：固件镜像仓库与升级、定时重启 / LED、客户端命名与踢除、遥测图表、事件日志、配置导入导出、诊断信息。
 - **两种运行档位**：`full`（Docker 默认，全功能）与 `openwrt`（路由器上关闭遥测历史与固件仓库、限制配置包版本数与事件条数、限制 Go 内存）。
 
-管理界面内置 8 个页面：设备概览、无线终端、运行情况、无线服务、射频管理、设备端口、固件升级、系统配置（含登录密码、共享密钥、NTP、审计日志与备份）。
+管理界面包括设备概览、无线终端、运行情况、AP 管理（含共享密钥）、无线服务、射频管理、设备端口、固件升级与系统配置。
 
 ## 3. 架构与端口
 
@@ -74,7 +74,7 @@ AP：ac-agent ──────┘  验签 → UCI 段级合并 → reload → 
 mkdir -p data && chown 1000:1000 data
 ```
 
-**2. 写 `docker-compose.yml`**：`AC_SHARED_SECRET` 可选——填自己的密钥，或留空后到 Web「系统配置」页设置。compose 只保留部署必需项，其余变量都有内置默认值；NTP、登录密码等可在「系统配置」页修改并持久化，不必写进 compose。完整变量清单见第 6 节。下面这份与仓库里的 [`controller/deploy/docker-compose.yml`](controller/deploy/docker-compose.yml) 一致。
+**2. 写 `docker-compose.yml`**：`AC_SHARED_SECRET` 可选——填自己的密钥，或留空后到 Web「AP 管理」页设置。compose 只保留部署必需项，其余变量都有内置默认值；NTP、登录密码等可在「系统配置」页修改并持久化，不必写进 compose。完整变量清单见第 6 节。下面这份与仓库里的 [`controller/deploy/docker-compose.yml`](controller/deploy/docker-compose.yml) 一致。
 
 ```yaml
 services:
@@ -124,14 +124,14 @@ curl -s http://<宿主机IP>:8090/api/v1/health
 
 ## 6. 配置
 
-compose 只列出 4 个常用部署项。下表是**全部**可用变量与内置默认值，未写进 compose 的都走默认值；共享密钥、NTP、登录密码可在「系统配置」页在线修改并持久化（页面设置优先于环境变量）。只有需要改端口、切运行档位或调优时，才往 compose 里加对应变量。
+compose 只列出 4 个常用部署项。下表是**全部**可用变量与内置默认值，未写进 compose 的都走默认值；共享密钥在「AP 管理」设置，NTP、登录密码在「系统配置」设置（页面设置优先于环境变量）。只有需要改端口、切运行档位或调优时，才往 compose 里加对应变量。
 
 <details>
 <summary>展开全部 19 个环境变量与默认值</summary>
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `AC_SHARED_SECRET` | 空（**可选**） | AC 与所有 AP 共用的密钥；留空可在「系统配置」页设置或在线轮换（设置时 ≥12 位），页面值优先于环境变量 |
+| `AC_SHARED_SECRET` | 空 | 可留空，启动后在「AP 管理」网页设置；页面值优先于环境变量 |
 | `AC_ADMIN_USER` | `admin` | 初始登录账号，**仅首次启动播种一次** |
 | `AC_ADMIN_PASSWORD` | 空 | 首次启动或从旧默认密码迁移时必填，至少 12 字符；OpenWrt 包用 `ac-controller.controller.admin_password` |
 | `AC_ADMIN_TOKEN` | 空 | 自动化用的 Bearer 凭据，必须与共享密钥不同 |
@@ -153,7 +153,7 @@ compose 只列出 4 个常用部署项。下表是**全部**可用变量与内�
 
 </details>
 
-> 首次启动后账号密码写入 SQLite，改环境变量**不再生效**；共享密钥与 NTP 可在「系统配置」页在线修改并持久化，页面设置优先于环境变量。若要改监听端口，加 `AC_HTTP_ADDR` / `AC_DISCOVER_ADDR`，并同步 `AC_HTTP_PORT`。
+> 首次启动后账号密码写入 SQLite，改环境变量**不再生效**；共享密钥在「AP 管理」设置，NTP 在「系统配置」设置，页面设置优先于环境变量。若要改监听端口，加 `AC_HTTP_ADDR` / `AC_DISCOVER_ADDR`，并同步 `AC_HTTP_PORT`。
 
 ## 7. 升级
 
@@ -173,7 +173,7 @@ docker compose pull && docker compose up -d
 
 ### 方式 A：刷入配套固件（最省事）
 
-适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。升级到与 AC 匹配的 agent 后，按下方步骤预置凭据。
+适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。升级到与 AC 匹配的 agent 后，按下方步骤填写共享密钥。
 
 ### 方式 B：从 OpenWrt feed 编译 ipk/apk
 
@@ -218,31 +218,12 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 ### 在 LuCI 里配置 AP
 
-在 AC 本机获取公钥并发放设备密钥。MAC 使用该 AP 的 `ac-agent status` 输出；下例 MAC 需替换：
+1. 在 AC 网页打开「AP 管理 → 共享密钥」，点「生成随机密钥」→「保存密钥」→「复制密钥」。已有密钥可直接复制。
+2. 在每台 AP 的 LuCI 打开「控制 → AC Agent → 控制器连接」，粘贴到「共享密钥」，点「保存并应用」。
 
-```sh
-# 发布镜像（本地开发镜像使用 /usr/local/bin/ac）
-docker compose exec ac /ac pubkey
-docker compose exec ac /ac ap-key 02:00:00:00:00:01
+同一广播域可留空「控制器地址」；跨三层填 `AC地址:端口`，默认端口 `8090`。设备上线后，到 AC 的「设备概览」选择模板并采纳。
 
-# OpenWrt 控制器包：若改过 data_dir，使用服务正在用的目录
-AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller pubkey
-AC_DATA_DIR=/etc/ac-controller /usr/sbin/ac-controller ap-key 02:00:00:00:00:01
-```
-
-通过可信渠道预置完整公钥和设备密钥；可在 LuCI 填写，也可写入 UCI 的 `ac_public_key` 和 `device_key`。同一 AC 下所有 AP 预置同一个公钥，每台 AP 的设备密钥各不相同。不要通过首次 HTTP 响应取得信任根。升级旧部署前请先准备凭据并保留 AC 数据目录和签名私钥；旧 agent 无法在新版 AC 上通过鉴权。替换 AC 签名私钥后，须重新预置公钥。设备密钥可用 `ap-key-rotate <MAC>` 轮换，或用 `ap-key-revoke <MAC>` 撤销；轮换后请更新对应 AP。
-
-打开 LuCI → `Control` → `AC Agent`，填写「控制器连接」后点「保存并应用」：
-
-| 界面字段 | 怎么填 | 是否必填 |
-|---|---|---|
-| 启用 | 保持打开（默认已开），控制启动和开机自启 | 默认即可 |
-| 控制器地址 | 同一广播域**留空**，靠 UDP 广播自动发现，发现后页面会回填并可保存固定；跨三层必须填 `<AC_IP>:8090` | 跨三层必填 |
-| AC 签名公钥 | `pubkey` 输出 | 必填 |
-| AP 设备密钥 | 此 AP 的 `ap-key` 输出 | 必填 |
-| 漫游协同共享密钥 | 同组 AP 使用相同密钥（至少 12 字符）；留空关闭 AP 间协同 | 启用 AP 间协同时配置 |
-
-心跳间隔（默认 20 秒）、AP 间协同端口（29821）、本地漫游建议（默认开）等都不用动。页面上方的状态卡片会显示 `discovering` / `connected` / `managed`，需要立刻重新同步时点「重启 agent」。
+从旧版升级时，请同时更新 AC、AP agent 和 LuCI 插件，保留 AC 数据目录，并确认两端的共享密钥一致。更换密钥后，各 AP 需要更新到相同的新值才能重新连接。
 
 多 AP 离线漫游时，把各 AP 的 `ac.agent.peer_network` 指向彼此可达的同一二层管理 VLAN，并配置相同的协同密钥。该选项是 OpenWrt 的逻辑接口名，例如 `lan3`，不一定是默认的 `lan`。LuCI 和 `ac-agent status` 可查看实际设备名、传输方式和已发现的 AP/BSS 数；AC 心跳正常不能证明 AP 间协同正常。
 
@@ -252,7 +233,7 @@ OpenWrt 的 hostapd 原生处理 802.11k/v/r 帧。11k 还需要同 SSID 的有�
 
 ## 9. 上线流程
 
-1. 在 LuCI 填好 AC 公钥和本机设备密钥，启用并保存；状态卡片从 `discovering` 变为 `connected`。
+1. 在 LuCI 填好与 AC 一致的共享密钥并保存，等待状态变为 `connected`。
 2. AC 的「设备概览」出现 `pending` 设备 → 选模板 → **采纳**。
 3. AP 下一轮心跳拉取 rev1 并应用。
 4. **再点一次 repush**：第一版生成时 AC 还没收到接口/BSS 报告，rev2 才会带上兄弟 AP 的 11k 邻居表。
@@ -286,7 +267,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `POST /api/v1/devices/{mac}/adopt` · `repush` · `release` | 采纳 / 重新下发 / 释放 |
 | `GET /api/v1/devices/{mac}/preflight` | 下发前的地址迁移预检 |
 | `PUT /api/v1/devices/{mac}/network` · `radios` · `group` | 设备级网络 / 射频 / 分组覆盖 |
-| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用设备密钥认证并解密，管理员用会话） |
+| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用共享密钥派生的凭据认证并解密，管理员用会话） |
 | `GET/POST /api/v1/templates` · `clone` · `ssids` · `name` | 模板管理 |
 | `GET/POST /api/v1/groups` | AP 分组 |
 | `GET /api/v1/clients` · `PUT/POST .../{mac}/kick` | 终端查看、命名、踢除 |
@@ -303,7 +284,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 ## 11. 安全须知
 
 - AC 只提供 HTTP。AP 配置包单独加密，Web 登录、管理 API 和心跳遥测仍是明文；请放在隔离的管理 VLAN，仅允许管理终端和 AP 访问，勿暴露 8090 到公网或 WAN。
-- 首次启动需设置管理密码。AP 控制接口使用设备专属密钥和一次性挑战；心跳响应和配置包使用预置公钥验签。共享密钥仅用于 AP 间协同。
+- 首次启动需设置管理密码。AC 与 AP 用共享密钥和一次性挑战双向认证，配置包加密传输并验签。同一个共享密钥用于该站点所有 AP。
 - `ac.db`、`/etc/ac/backup/`、配置导出文件、签名私钥与固件镜像都含敏感信息，需同等保护，别贴到 Issue 里。
 - 固件升级与网络下发会改动 AP 的关键配置，请先用 dry-run / preflight 演练，并保留串口或本地管理口作为兜底。
 
@@ -315,8 +296,8 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | 现象 | 先看什么 |
 |---|---|
 | AP 一直 `discovering` | compose 是否 `network_mode: host`；AC 是否监听 UDP 29820；是否同一广播域；跨三层是否在 LuCI 填了「控制器地址」 |
-| 每 20s 收到 401 | 核对 AP 上报 MAC 与发放设备密钥时使用的 MAC，检查密钥是否被轮换或撤销 |
-| 心跳签名验证失败 | 用可信渠道比对 AP 上的完整 AC 公钥与本机 `pubkey` 输出 |
+| 每 20s 收到 401 | 核对 AC「AP 管理」和 AP 的 LuCI 是否使用相同的共享密钥 |
+| 心跳认证失败 | 核对共享密钥、控制器地址，以及 AC 和 AP 的版本是否匹配 |
 | 容器起不来 / 数据库报错 | `./data` 是否存在且属主 `1000:1000` |
 | `connected` 但没有 rev | 设备仍是 `pending`，页面未采纳 |
 | `sync_state=rollback` | `sync_message`、`/etc/ac/backup/`、`logread`；多半是 BSS 或管理地址自检失败 |

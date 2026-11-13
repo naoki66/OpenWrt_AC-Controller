@@ -16,14 +16,13 @@ const (
 	DevicePackageType     = "application/vnd.ac-controller.encrypted-package"
 )
 
-// ValidDeviceKey accepts a locally provisioned, randomly generated 256-bit key.
-func ValidDeviceKey(key string) bool {
-	var raw [32]byte
-	if len(key) != 2*len(raw) {
-		return false
+// DeviceKey derives a per-MAC control credential from the site's shared secret.
+// Both sides use the canonical MAC; the derived key is never sent or stored.
+func DeviceKey(shared, mac string) string {
+	if len(shared) < 12 || mac == "" {
+		return ""
 	}
-	_, err := hex.Decode(raw[:], []byte(key))
-	return err == nil
+	return derive(shared, "ac-controller/site-device/v1\x00"+mac)
 }
 
 func DeviceProof(key, device, challenge, method, target string, body []byte) string {

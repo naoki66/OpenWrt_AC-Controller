@@ -1073,9 +1073,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
       <div class="panel" id="ap-guide">
         <h2>AP 接入引导</h2>
         <p class="note">
-          在控制器本机运行 <code>ac pubkey</code> 取得签名公钥，
-          运行 <code>ac ap-key &lt;AP MAC&gt;</code> 为每台 AP 发放专属密钥。
-          通过可信渠道将两项填入 AP 的 LuCI「控制器连接」后，设备才会出现在此处。
+          在「AP 管理」设置并复制共享密钥，粘贴到各 AP 的 LuCI「控制器连接 → 共享密钥」。保存后，回到此页采纳设备。
         </p>
         <button class="primary" id="go-apmgmt" type="button">前往 AP 管理</button>
       </div>
@@ -1106,18 +1104,18 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
 
     <section id="view-apmgmt" class="hidden">
       <h1>AP 管理</h1>
-      <div class="sub">漫游协同密钥、周期重启、状态 LED 与 AP 分组的集中管理</div>
+      <div class="sub">共享密钥、周期重启、状态 LED 与 AP 分组</div>
 
       <div class="panel">
         <h2>
-          AP 间漫游协同密钥
+          共享密钥
           <span class="badge offline" id="sec-source" hidden></span>
         </h2>
         <p class="note">
-          可选。用来认证 AP 之间的漫游消息。保存后立即生效并持久化，留空恢复环境变量值。
-          为同组 AP 填写相同的值；轮换期间仍可上报及下发配置。
+          为控制器和所有 AP 设置同一个共享密钥。首次使用请生成并保存，再复制到各 AP。
+          更换密钥后，各 AP 需要更新到相同的新值才能重新连接。
         </p>
-        <div class="sec-label">当前生效密钥（填写到各 AP 的「漫游协同共享密钥」）</div>
+        <label class="sec-label" for="sec-current">当前生效密钥</label>
         <div class="sec-row">
           <input id="sec-current" readonly spellcheck="false" autocomplete="off">
           <button id="sec-copy" type="button">复制密钥</button>
@@ -1567,7 +1565,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
 
       <div class="panel">
         <h2>控制器诊断</h2>
-        <p class="note">密钥值位于「AP 管理」页的「AP 间漫游协同密钥」面板。</p>
+        <p class="note">共享密钥可在「AP 管理」中设置和复制。</p>
         <table style="margin-top:12px"><tbody id="sys-rows"></tbody></table>
       </div>
 
@@ -3283,7 +3281,7 @@ async function refresh() {
 
 // --- AP 共享密钥 -------------------------------------------------------------
 // 运行时覆盖环境变量 AC_SHARED_SECRET：写入 settings 表并立即生效，
-// 重启不丢。放设备页是因为轮换密钥紧接着就要把新值填到各 AP 的 ac-agent「控制器连接 · 下发共享密钥」。
+// 重启不丢。各 AP 在 LuCI「控制器连接」使用相同的值。
 
 function saySec(text, kind) { const m = $('sec-msg'); m.textContent = text || ''; m.className = 'msg' + (kind ? ' ' + kind : ''); }
 
@@ -3303,11 +3301,11 @@ async function loadSecretPanel() {
   try {
     const cfg = await api('GET', '/api/v1/settings');
     const ss = cfg.shared_secret || {};
-    // 完整值直接显示：这个值要填到每台 AP 的 ac-agent「控制器连接 · 下发共享密钥」，脱敏就没法用了。
+    if (secEditing) return;
     $('sec-current').value = ss.set ? ss.value : '（未设置）';
     const badge = $('sec-source');
     badge.hidden = false;
-    badge.textContent = ss.source === 'settings' ? '页面设置' : '来自环境变量';
+    badge.textContent = ss.set ? (ss.source === 'settings' ? '页面设置' : '来自环境变量') : '未设置';
     badge.className = 'badge ' + (ss.set ? 'adopted' : 'offline');
   } catch (e) {
     if (!noteUnauthorized(e)) saySec(e.message, 'err');
@@ -3332,11 +3330,11 @@ $('sec-copy').addEventListener('click', async () => {
       return;
     }
   }
-  saySec('已复制当前生效密钥，粘贴到各 AP 的「漫游协同共享密钥」即可', 'ok');
+  saySec('已复制，粘贴到各 AP 的 LuCI「控制器连接 → 共享密钥」', 'ok');
 });
 
 // 生成 24 位 base64url 随机密钥：控制器和 agent 会各自用 HKDF 派生出真正的
-// 鉴权令牌与 AP 间 HMAC 密钥，所以这里只需一个便于复制到各 AP 的可见值。
+// 纳管凭据和 AP 间漫游凭据，所以这里只需复制同一个值。
 // 只读态下点生成会自动进入编辑态并填入，避免误导以为已生效。
 $('sec-generate').addEventListener('click', () => {
   const raw = new Uint8Array(18);
@@ -3352,7 +3350,7 @@ $('sec-generate').addEventListener('click', () => {
     setSecButtons(true);
   }
   input.value = secret;
-  saySec('已生成随机密钥，保存后请更新同组 AP 的「漫游协同共享密钥」', 'ok');
+  saySec('已生成随机密钥，请点击「保存密钥」', 'ok');
 });
 
 // 「更换密钥」：就地清空输入框进入编辑态。
@@ -3393,7 +3391,7 @@ $('sec-save').addEventListener('click', async () => {
     input.placeholder = '';
     setSecButtons(false);
     if (secret.trim()) {
-      saySec('共享密钥已更新；请同步更新同组 AP 的「漫游协同共享密钥」', 'ok');
+      saySec('共享密钥已保存。复制后粘贴到各 AP 的 LuCI「共享密钥」', 'ok');
     } else {
       saySec('已清除页面设置，恢复使用环境变量中的 AC_SHARED_SECRET', 'ok');
     }
@@ -6316,7 +6314,7 @@ function renderDiagnostics(d) {
     ['心跳采样间隔', d.sample_interval_seconds > 0 ? d.sample_interval_seconds + ' 秒' : '每轮心跳都入库'],
     ['离线判定', (d.offline_after_seconds || 0) + ' 秒'],
     ['管理鉴权', d.admin_auth_required ? '已启用（账户登录）' : '未启用'],
-    ['AP 鉴权', d.ap_auth_required ? '已启用（设备专属密钥）' : '未启用'],
+    ['AP 鉴权', d.ap_auth_required ? '已启用（共享密钥）' : '未启用'],
   ];
   const body = $('sys-rows');
   body.innerHTML = '';
@@ -6932,7 +6930,7 @@ function fillClientPicker(list) {
     if (!e || q('#ui-empty-retry', e)) return;
     const wrap = mk('div', 'ui-empty');
     wrap.innerHTML = '<span class="ui-empty-ic">' + I.wifi + '</span><b>还没有 AP 上线</b>'
-      + '<p>确认 agent 已启动、UDP 29820 可达；跨三层需在 AP 上配置 ac_addr。</p>';
+      + '<p>确认 AP 的 LuCI 已填写相同的共享密钥；跨三层还需填写控制器地址。</p>';
     const b = mk('button', 'ui-btn', '重新检测'); b.type = 'button'; b.id = 'ui-empty-retry';
     b.addEventListener('click', () => { callRefresh(); toast('正在重新检测…', 'info'); });
     wrap.appendChild(b);

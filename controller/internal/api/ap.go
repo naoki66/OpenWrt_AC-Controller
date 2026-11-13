@@ -68,7 +68,7 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		cred, ok = s.verifyDevice(r, body)
 		if !ok {
-			writeError(w, http.StatusUnauthorized, errors.New("device request proof required"))
+			writeError(w, http.StatusUnauthorized, errors.New("shared secret authentication failed"))
 			return
 		}
 	}
@@ -94,7 +94,7 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.RequireSignedAP && cred.mac != mac {
-		writeError(w, http.StatusForbidden, errors.New("hello identity does not match device key"))
+		writeError(w, http.StatusForbidden, errors.New("hello identity does not match request proof"))
 		return
 	}
 	reportingMAC := mac
@@ -383,7 +383,7 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if nonce == "" {
+	if !s.RequireSignedAP {
 		writeJSON(w, http.StatusOK, reply)
 		return
 	}
@@ -392,12 +392,7 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, errors.New("hello response could not be encoded within size limit"))
 		return
 	}
-	sig, err := proto.SignHelloReply(s.Key.Private, nonce, body, response)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, errors.New("hello response could not be signed"))
-		return
-	}
-	w.Header().Set(proto.ControlSignatureHeader, sig)
+	w.Header().Set(proto.ControlReplyProofHeader, proto.HelloReplyProof(cred.key, cred.challenge, nonce, body, response))
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(response)

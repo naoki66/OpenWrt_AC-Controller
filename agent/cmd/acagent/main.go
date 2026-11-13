@@ -26,8 +26,7 @@ func main() {
 	var (
 		verbose     = flag.Bool("v", false, "enable debug logging")
 		acAddr      = flag.String("ac", "", "controller address host:port (empty = discover via broadcast)")
-		secret      = flag.String("secret", "", "peer coordination shared secret (or AC_SECRET)")
-		acPublicKey = flag.String("ac-public-key", "", "provisioned controller Ed25519 public key (or AC_PUBLIC_KEY)")
+		secret      = flag.String("secret", "", "site shared secret (or AC_SECRET)")
 		root        = flag.String("root", "", "filesystem root, defaults to / (or AC_ROOT)")
 		dryRun      = flag.Bool("dry-run", false, "render and stage only, never touch /etc/config")
 		interval    = flag.Duration("interval", 0, "sync interval (or AC_INTERVAL)")
@@ -52,7 +51,6 @@ func main() {
 	valueFlags := map[string]bool{
 		"-ac": true, "--ac": true,
 		"-secret": true, "--secret": true,
-		"-ac-public-key": true, "--ac-public-key": true,
 		"-root": true, "--root": true,
 		"-interval": true, "--interval": true,
 		"-mac": true, "--mac": true,
@@ -91,7 +89,6 @@ func main() {
 	cfg := agent.Load(agent.Config{
 		Root:        *root,
 		ACAddr:      *acAddr,
-		ACPublicKey: *acPublicKey,
 		Secret:      *secret,
 		Interval:    *interval,
 		DryRun:      *dryRun,

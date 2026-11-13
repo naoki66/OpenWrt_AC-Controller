@@ -1,7 +1,7 @@
 package proto
 
 import (
-	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,11 +9,11 @@ import (
 )
 
 const (
-	ControlNonceHeader     = "X-AC-Nonce"
-	ControlSignatureHeader = "X-AC-Signature"
-	MaxHelloRequest        = 1 << 20
-	MaxHelloResponse       = 1 << 20
-	controlNonceSize       = 32
+	ControlNonceHeader      = "X-AC-Nonce"
+	ControlReplyProofHeader = "X-AC-Reply-Proof"
+	MaxHelloRequest         = 1 << 20
+	MaxHelloResponse        = 1 << 20
+	controlNonceSize        = 32
 )
 
 func NewControlNonce() (string, error) {
@@ -33,31 +33,26 @@ func ValidControlNonce(s string) bool {
 	return err == nil
 }
 
-// controlMessage binds the exact response to the exact request and its fresh
-// challenge. The domain separates these signatures from configuration bundles.
-func controlMessage(nonce string, request, response []byte) []byte {
+// HelloReplyProof authenticates the controller response, including its bundle
+// signing key, before the AP uses any fields in it. Its domain is separate
+// from device request proofs, and the AP supplies a fresh nonce every time.
+func HelloReplyProof(key, challenge, nonce string, request, response []byte) string {
 	reqHash := sha256.Sum256(request)
 	resHash := sha256.Sum256(response)
-	msg := []byte("ac-controller/hello-response/v1\x00")
-	msg = append(msg, nonce...)
-	msg = append(msg, reqHash[:]...)
-	return append(msg, resHash[:]...)
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte("ac-controller/site-hello-response/v1\x00"))
+	mac.Write([]byte(challenge))
+	mac.Write([]byte{0})
+	mac.Write([]byte(nonce))
+	mac.Write(reqHash[:])
+	mac.Write(resHash[:])
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func SignHelloReply(key ed25519.PrivateKey, nonce string, request, response []byte) (string, error) {
-	if len(key) != ed25519.PrivateKeySize || !ValidControlNonce(nonce) {
-		return "", errors.New("invalid controller signing key or nonce")
-	}
-	return hex.EncodeToString(ed25519.Sign(key, controlMessage(nonce, request, response))), nil
-}
-
-func VerifyHelloReply(key ed25519.PublicKey, signature, nonce string, request, response []byte) error {
-	if len(key) != ed25519.PublicKeySize || !ValidControlNonce(nonce) || len(signature) != 2*ed25519.SignatureSize {
-		return errors.New("missing or invalid controller response signature")
-	}
-	sig, err := hex.DecodeString(signature)
-	if err != nil || !ed25519.Verify(key, controlMessage(nonce, request, response), sig) {
-		return errors.New("controller response signature did not match the provisioned public key")
+func VerifyHelloReply(key, proof, challenge, nonce string, request, response []byte) error {
+	if key == "" || challenge == "" || !ValidControlNonce(nonce) ||
+		!hmac.Equal([]byte(proof), []byte(HelloReplyProof(key, challenge, nonce, request, response))) {
+		return errors.New("controller response authentication failed (check the shared secret)")
 	}
 	return nil
 }

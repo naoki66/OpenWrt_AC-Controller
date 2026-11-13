@@ -24,8 +24,8 @@ type Config struct {
 	HTTPAddr string
 	// DiscoverAddr is the UDP listen address used for AP discovery.
 	DiscoverAddr string
-	// SharedSecret is required from APs during registration. Empty disables
-	// the check, which is only acceptable on a trusted management segment.
+	// SharedSecret is the environment default for AP authentication; the
+	// AP Management web setting takes precedence.
 	SharedSecret string
 	// AdminToken guards the management REST API and everything it exposes —
 	// templates carry PSKs in clear text. Empty keeps the old open behaviour
@@ -84,7 +84,7 @@ func Load() Config {
 		// apache2 on the NAS deployments this controller targets.
 		HTTPAddr:        env("AC_HTTP_ADDR", ":8090"),
 		DiscoverAddr:    env("AC_DISCOVER_ADDR", ":29820"),
-		SharedSecret:    env("AC_SHARED_SECRET", ""),
+		SharedSecret:    strings.TrimSpace(env("AC_SHARED_SECRET", "")),
 		AdminToken:      env("AC_ADMIN_TOKEN", ""),
 		AdminUser:       env("AC_ADMIN_USER", "admin"),
 		AdminPassword:   env("AC_ADMIN_PASSWORD", ""),
@@ -143,7 +143,7 @@ func (c Config) IDFile() string {
 func (c Config) SecretWarnings() []string {
 	var out []string
 	if c.SharedSecret == "" {
-		out = append(out, "AC_SHARED_SECRET is empty: no AP peer coordination key is configured on the controller")
+		out = append(out, "AC_SHARED_SECRET is empty: configure the shared secret in AP Management before connecting APs")
 	}
 	if c.AdminToken == "" {
 		out = append(out, "AC_ADMIN_TOKEN is empty: automation has no Bearer token "+

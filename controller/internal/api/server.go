@@ -33,13 +33,11 @@ type Server struct {
 	ACID      string
 	Key       keys.Key
 	Provision *provision.Service
-	// SharedSecret guards the AP-facing endpoint. Empty disables the check,
-	// which is only acceptable on a trusted management segment. It is the
-	// environment default; a value set through PUT /api/v1/settings takes
-	// precedence (see secretOverride) so an operator can rotate it without
-	// recreating the container.
+	// SharedSecret is the environment default for AP authentication. The web
+	// setting takes precedence. With RequireSignedAP, an empty effective value
+	// prevents APs from connecting until a secret is configured.
 	SharedSecret string
-	// RequireSignedAP rejects legacy heartbeats without a signing challenge.
+	// RequireSignedAP enforces challenge-response authentication on AP routes.
 	RequireSignedAP   bool
 	challengeOnce     sync.Once
 	challengeKey      [32]byte
@@ -323,7 +321,7 @@ func (s *Server) adminOrAP(next http.HandlerFunc) http.HandlerFunc {
 		if s.RequireSignedAP {
 			cred, ok := s.verifyDevice(r, nil)
 			if !ok {
-				writeError(w, http.StatusUnauthorized, errors.New("device request proof required"))
+				writeError(w, http.StatusUnauthorized, errors.New("shared secret authentication failed"))
 				return
 			}
 			next(w, withDevice(r, cred))

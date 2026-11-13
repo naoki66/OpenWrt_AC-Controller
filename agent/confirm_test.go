@@ -131,8 +131,7 @@ func TestPendingConfirmWaitsForTheWindow(t *testing.T) {
 
 func TestNetworkConfirmationMustMatchAppliedRevision(t *testing.T) {
 	a := &Agent{
-		Config: Config{ACPublicKey: "pinned-key"},
-		state:  State{ACID: "controller", PendingConfirm: &PendingConfirm{Rev: 9}},
+		state: State{ACID: "controller", PubKey: "pinned-key", PendingConfirm: &PendingConfirm{Rev: 9}},
 	}
 	reply := proto.HelloReply{ACID: "controller", PubKey: "pinned-key", State: proto.APStateAdopted}
 	for _, rev := range []int{0, 8, 10} {

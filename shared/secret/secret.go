@@ -1,18 +1,6 @@
 // Package secret derives the per-purpose credentials the controller and the
-// agents share, from the single user-facing secret an operator types in.
-//
-// The goal is one human-facing value with one name. That value is the "site
-// shared secret" (AC_SHARED_SECRET on the controller, option secret on the
-// agent). From it the package derives two purpose-isolated keys so that a leak
-// of one can never be replayed as the other:
-//
-//   - AuthToken is the AP→AC bearer credential. The agent sends it on every
-//     hello, and the controller compares it in constant time.
-//   - PeerKey is the AP↔AP HMAC-SHA256 key that signs the peer-state multicast.
-//
-// Both derivations are deterministic HKDF-SHA256: the controller and every
-// agent reach the same key from the same secret, without the secret ever being
-// sent on the wire.
+// agents share from a single site secret. DeviceKey is used for authenticated
+// controller traffic, and PeerKey authenticates peer roaming messages.
 package secret
 
 import (
@@ -45,8 +33,8 @@ func derive(secret string, info string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// AuthToken is the bearer token an AP presents to the controller. It is a hex
-// string of 64 characters; the raw secret never leaves either side.
+// AuthToken derives the legacy bearer token. Production AP traffic uses
+// challenge-response authentication instead.
 func AuthToken(secret string) string {
 	return derive(secret, domainAuth)
 }
