@@ -162,6 +162,7 @@ func Load(c Config) Config {
 	if c.ACAddr == "" {
 		c.ACAddr = os.Getenv("AC_ADDR")
 	}
+	c.ACAddr = strings.TrimSpace(c.ACAddr)
 	if c.Secret == "" {
 		c.Secret = os.Getenv("AC_SECRET")
 	}
