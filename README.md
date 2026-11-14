@@ -10,7 +10,9 @@
 
 > 轻量的 OpenWrt 无线控制器：AC 端是一个 Go 单二进制（内嵌 Web UI、REST API、SQLite），AP 端是跑在 procd 下的 `ac-agent`。一条 compose 就能在 NAS、x86 软路由、ARM 盒子上跑起来，也可以把 AC 编译成 OpenWrt 软件包直接跑在路由器上。
 
-**最快路径**：在 AC 网页生成共享密钥 → 粘贴到各 AP 的 LuCI → 在「设备概览」采纳。
+**自动采纳**：AP 上电后自动登记 → 在 AC 的「设备概览」核对并采纳 → AP 自动绑定该 AC。无需填写密钥或定制固件。
+
+本次发现、采纳与重置的变更及升级说明见 [修改记录](CHANGELOG.md)。
 
 > 本文是中文文档，完整英文版见 [README.en.md](README.en.md)。所有命令与配置均可直接复制执行。
 
@@ -26,7 +28,7 @@
 
 **动手前请先看这里：**
 
-- 项目处于 **v0.5.x 早期阶段**，功能、API 与配置格式仍可能变化，不建议直接用于关键生产网络。
+- 项目处于 **v0.x 早期阶段**，功能、API 与配置格式仍可能变化，不建议直接用于关键生产网络。
 - AP 侧**已验证的硬件**只有 Brightspeed/Gemtek **XR1710G**（airoha/an7581、arm64、DSA），配套 [ImmortalWrt 固件](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases)。其他 OpenWrt 系设备需自行验证：要求 DSA 网络模型、`procd`/`ubus`/`uci`/`hostapd` 可用，11k/11v 还要求 hostapd 暴露 `rrm_nr_get_own`、`rrm_nr_set`、`bss_transition_request`。设备页的能力徽章是**运行时实测**：11k/11v 探测 ubus 方法面，11r（FT）读取 netifd 生成的 hostapd 运行配置（`/var/run/hostapd-*.conf`）并附带移动域（MDID），全部 BSS 满足才亮。
 - 自动发现要求 AP 与 AC 在**同一广播域**；跨三层需在 AP 的 LuCI 页面填「控制器地址」（见第 8 节）。
 - 镜像为 `linux/amd64` + `linux/arm64` 多架构清单，`docker pull` 会自动选择。
@@ -36,8 +38,8 @@
 - **段级合并，不整文件覆盖**：应用前备份、失败自动回滚，避免把自己锁在 AP 门外。
 - **防锁死三道防线**（v0.5.1 之后）：下发前 `preflight` 预检管理地址迁移；下发后校验 BSS 与管理地址是否丢失；自动把新增管理接口补进 `lan` 防火墙 zone 并修正 dropbear 绑定。
 - **AC 不主动连 AP**：配置永远由 AP 拉取；AP 之间经 UDP 29821 交换 11k 邻居与客户端信息，AC 失联时本地 11v 漫游建议仍可用（`peer_steer=1`）；检测到 usteer/dawn 时自动让位。
-- **AC 与 AP 双向认证**：双方用共享密钥认证控制请求与心跳回复；AP 自动取得签名公钥，验签后才应用配置包。
-- **一个共享密钥**：控制器和各 AP 填同一个值，程序分别派生纳管和漫游协同所需的凭据。
+- **AC 与 AP 双向认证**：每个 AC 部署首次启动时自动生成一把纳管密钥，采纳后加密下发给 AP。之后 AP 只接受该 AC 的管理，并验签配置包。
+- **兼容共享密钥**：通用固件可继续用共享密钥接入。AP 间的离线漫游协同目前仍需共享密钥。
 - **模板 + 设备覆盖 + 分组**：模板定义无线与二层，分组决定成员用哪个模板，设备级 `network_params` / 射频覆盖给出端口、VLAN、管理地址、信道与功率。
 - **运维闭环**：固件镜像仓库与升级、定时重启 / LED、客户端命名与踢除、遥测图表、事件日志、配置导入导出、诊断信息。
 - **两种运行档位**：`full`（Docker 默认，全功能）与 `openwrt`（路由器上关闭遥测历史与固件仓库、限制配置包版本数与事件条数、限制 Go 内存）。
@@ -173,7 +175,7 @@ docker compose pull && docker compose up -d
 
 ### 方式 A：刷入配套固件（最省事）
 
-适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。升级到与 AC 匹配的 agent 后，按下方步骤填写共享密钥。
+适用 Brightspeed/Gemtek XR1710G：从 [ImmortalWrt 固件 Releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) 刷入，固件里已带 agent 与 LuCI 页面。更新到与 AC 匹配的版本后即可自动采纳。
 
 ### 方式 B：从 OpenWrt feed 编译 ipk/apk
 
@@ -196,10 +198,10 @@ src-git --root=agent/openwrt ac_agent https://github.com/naoki66/OpenWrt_AC-Cont
 
 | 包 | 版本 | 源码 | 内容 |
 |---|---|---|---|
-| `ac-agent` | `0.2.1-1` | `main` 分支（不锁 commit） | agent 本体、procd init 脚本、`/etc/config/ac` |
-| `luci-app-ac-agent` | `1.0.0-5` | 随仓库 | LuCI 设置页与 `luci-i18n-ac-agent-zh-cn` 中文语言包 |
+| `ac-agent` | `0.3.0-1` | `main` 分支（不锁 commit） | agent 本体、procd init 脚本、`/etc/config/ac` |
+| `luci-app-ac-agent` | `1.0.0-6` | 随仓库 | LuCI 设置页与 `luci-i18n-ac-agent-zh-cn` 中文语言包 |
 
-AC 端本机包 `ac-controller` 为 `0.1.0-1`，源码同样跟随 `main`，见第 5 节（开发测试中，工作流默认不构建，可打开 `build_controller` 输入）。
+AC 端本机包 `ac-controller` 为 `0.2.0-1`，源码同样跟随 `main`，见第 5 节（开发测试中，工作流默认不构建，可打开 `build_controller` 输入）。
 
 默认只发布 `25.12.6` 的 `.apk`，架构为 `aarch64_cortex-a53`；`x86_64`、`mipsel_24kc` 和 24.10 的 `.ipk` 已从默认矩阵移除。需要其它架构或 `.ipk` 时，手动运行 [OpenWrt Packages 工作流](https://github.com/naoki66/OpenWrt_AC-Controller/actions/workflows/openwrt-packages.yml) 并修改 `targets` 输入即可。每个 Release 还附带 `build-info.txt`（源码 commit、Go 版本、SDK 标签清单）与 `SHA256SUMS`。
 
@@ -216,7 +218,24 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 > 包管理器分界以 OpenWrt 官方为准：**24.10 及更早用 opkg / `.ipk`，25.12 与 snapshots 起用 apk / `.apk`**；当前 Release 默认只提供 `.apk`。资产随本仓库 [Releases](https://github.com/naoki66/OpenWrt_AC-Controller/releases) 发布，请下载与控制器同一 Release 的资产；`apk` 默认拒绝未签名包，本地文件安装必须带 `--allow-untrusted`。旧固件需要 `.ipk` 时可用工作流手动构建。
 
-### 在 LuCI 里配置 AP
+### 自动发现与采纳
+
+1. 在可信的管理网启动 AC 和 AP，共享密钥留空。同一广播域可自动发现；跨三层需填写 AP 可达的 AC 地址。
+2. 未纳管 AP 广播型号、MAC、管理地址、设备公钥和 Agent 版本。AC 回复登记地址；AP 完成一次性挑战验证后才出现在「设备概览」。在目标 AC 核对设备标签上的 MAC，选择模板并点击「采纳」。首次采纳或重置后的 AP 会接受第一台完成采纳的 AC。
+3. AC 首次启动时生成一把纳管密钥，保存在数据目录的 SQLite 中。同一 AC 给所有已采纳 AP 加密下发同一把密钥。保留数据目录重新部署时，密钥保持不变。
+4. 采纳后，AP 停止待采纳广播，向绑定的 AC 发认证心跳。密钥不出现在广播或心跳里。
+
+换 AC 时，在 AP 的 LuCI「控制 → AC Agent」点击「重置纳管」。它会清除原绑定、递增重置代次并重新广播，保留 Wi‑Fi、网络配置和设备身份。原 AC 收到并验证同一 AP 的新代次后，将原记录改回「待采纳」，保留历史并撤销旧的待执行命令；此时可在目标 AC 上重新采纳。若原 AC 已不可达（例如 AP 移到隔离 VLAN），旧记录会保持离线，直到原 AC 收到这台 AP 的新登记。升级与重建时请保留 AC 数据目录及各 AP 自己的纳管状态，勿复制到其他设备。
+
+也可以在 AP 的 SSH 会话里切换：
+
+```sh
+/etc/init.d/ac-agent stop
+ac-agent reset-management
+/etc/init.d/ac-agent start
+```
+
+### 通用 AP 固件：在 LuCI 配置共享密钥
 
 1. 在 AC 网页打开「AP 管理 → 共享密钥」，点「生成随机密钥」→「保存密钥」→「复制密钥」。已有密钥可直接复制。
 2. 在每台 AP 的 LuCI 打开「控制 → AC Agent → 控制器连接」，粘贴到「共享密钥」，点「保存并应用」。
@@ -233,7 +252,7 @@ OpenWrt 的 hostapd 原生处理 802.11k/v/r 帧。11k 还需要同 SSID 的有�
 
 ## 9. 上线流程
 
-1. 在 LuCI 填好与 AC 一致的共享密钥并保存，等待状态变为 `connected`。
+1. 启动 AP，等待状态变为 `connected`。
 2. AC 的「设备概览」出现 `pending` 设备 → 选模板 → **采纳**。
 3. AP 下一轮心跳拉取 rev1 并应用。
 4. **再点一次 repush**：第一版生成时 AC 还没收到接口/BSS 报告，rev2 才会带上兄弟 AP 的 11k 邻居表。
@@ -267,7 +286,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `POST /api/v1/devices/{mac}/adopt` · `repush` · `release` | 采纳 / 重新下发 / 释放 |
 | `GET /api/v1/devices/{mac}/preflight` | 下发前的地址迁移预检 |
 | `PUT /api/v1/devices/{mac}/network` · `radios` · `group` | 设备级网络 / 射频 / 分组覆盖 |
-| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用共享密钥派生的凭据认证并解密，管理员用会话） |
+| `GET /api/v1/devices/{mac}/package` | 下载签名配置包（AP 用设备凭据认证并解密，管理员用会话） |
 | `GET/POST /api/v1/templates` · `clone` · `ssids` · `name` | 模板管理 |
 | `GET/POST /api/v1/groups` | AP 分组 |
 | `GET /api/v1/clients` · `PUT/POST .../{mac}/kick` | 终端查看、命名、踢除 |
@@ -284,7 +303,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 ## 11. 安全须知
 
 - AC 只提供 HTTP。AP 配置包单独加密，Web 登录、管理 API 和心跳遥测仍是明文；请放在隔离的管理 VLAN，仅允许管理终端和 AP 访问，勿暴露 8090 到公网或 WAN。
-- 首次启动需设置管理密码。AC 与 AP 用共享密钥和一次性挑战双向认证，配置包加密传输并验签。同一个共享密钥用于该站点所有 AP。
+- 首次启动需设置管理密码。自动采纳用 AC 纳管密钥和 AP 本次绑定的密钥交换结果来派生通信凭据，因此同一 AC 的 AP 收到相同的纳管密钥，仍不能互相冒充。配置包加密传输并验签。
 - `ac.db`、`/etc/ac/backup/`、配置导出文件、签名私钥与固件镜像都含敏感信息，需同等保护，别贴到 Issue 里。
 - 固件升级与网络下发会改动 AP 的关键配置，请先用 dry-run / preflight 演练，并保留串口或本地管理口作为兜底。
 
@@ -312,6 +331,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 
 - 语义化标签 `vX.Y.Z` → 同名镜像 tag；`latest` 为滚动标签，`sha-<短commit>` 便于回溯。
 - 实际运行版本以 `GET /api/v1/health` 的 `version` / `commit` 字段，或 `ac version` 为准。
+- 变更与升级说明见 [修改记录](CHANGELOG.md)。
 - 发布记录见 [Releases](https://github.com/naoki66/OpenWrt_AC-Controller/releases)，标签见 [Tags](https://github.com/naoki66/OpenWrt_AC-Controller/tags)。
 - 镜像版本状态：[Docker Hub 标签页](https://hub.docker.com/r/naoki66/openwrt_ac-controller/tags) 列出全部 tag 与架构（linux/amd64、linux/arm64）；顶部徽章显示当前最新发布版本与最后更新时间。
 

@@ -10,6 +10,7 @@ package proto
 // UDP discovery message types.
 const (
 	MsgDiscover = "AP_DISCOVER"
+	MsgLookup   = "AC_LOOKUP"
 	MsgOffer    = "AC_OFFER"
 )
 
@@ -24,7 +25,8 @@ const (
 // v6 — action set gained led_set (status LED on/off).
 // v7 — Hello gained Caps (hostapd 11k/11v capability) and SteeringStats.
 // v8 — site shared-secret authentication for control requests and replies.
-const ProtocolVersion = 8
+// v9 — verified enrollment after discovery, with ordered management resets.
+const ProtocolVersion = 9
 
 // Firmware sync states reported in Hello. They mirror the config sync states
 // but are a separate axis: a device can be running the right config on the
@@ -41,14 +43,21 @@ const (
 // same segment while debugging.
 const DiscoverPort = 29820
 
-// Discover is broadcast by an AP on boot and whenever it loses its controller.
+// Discover advertises an unbound AP, or locates a previously bound AC.
+// Enrollment uses the same metadata in an authenticated HTTP request.
 type Discover struct {
-	Type     string `json:"type"`
-	V        int    `json:"v"`
-	MAC      string `json:"mac"`
-	Model    string `json:"model"`
-	Firmware string `json:"firmware"`
-	Hostname string `json:"hostname"`
+	Type            string `json:"type"`
+	V               int    `json:"v"`
+	MAC             string `json:"mac"`
+	Model           string `json:"model"`
+	Firmware        string `json:"firmware"`
+	Hostname        string `json:"hostname"`
+	APIP            string `json:"ap_ip,omitempty"`
+	AgentVersion    string `json:"agent_version,omitempty"`
+	PublicKey       string `json:"public_key,omitempty"`
+	ACID            string `json:"ac_id,omitempty"` // AC_LOOKUP only
+	EnrollmentID    string `json:"enrollment_id,omitempty"`
+	ResetGeneration int64  `json:"reset_generation,omitempty"` // authenticated enrollment only
 }
 
 // Offer is the controller's reply: where to register, and which controller it is.
@@ -59,6 +68,7 @@ type Offer struct {
 	ACIP           string `json:"ac_ip"`
 	HTTPPort       int    `json:"http_port"`
 	SecretRequired bool   `json:"secret_required"`
+	SigningKey     string `json:"signing_key,omitempty"`
 }
 
 // AP-facing sync states reported in Hello.
@@ -73,11 +83,12 @@ const (
 // the report channel, which keeps the AP's outbound traffic to one request per
 // interval and makes the exchange idempotent.
 type Hello struct {
-	MAC        string `json:"mac"`
-	Model      string `json:"model"`
-	Firmware   string `json:"firmware"`
-	Hostname   string `json:"hostname"`
-	AppliedRev int    `json:"applied_rev"`
+	MAC          string `json:"mac"`
+	Model        string `json:"model"`
+	Firmware     string `json:"firmware"`
+	Hostname     string `json:"hostname"`
+	AgentVersion string `json:"agent_version,omitempty"`
+	AppliedRev   int    `json:"applied_rev"`
 	// SyncState reports the outcome of the last apply attempt.
 	SyncState   string `json:"sync_state"`
 	SyncMessage string `json:"sync_message,omitempty"`

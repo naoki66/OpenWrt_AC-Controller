@@ -30,6 +30,34 @@ VALUES (?, ?, strftime('%s','now'), ?, ?, ?)`
 	return nil
 }
 
+// CommitAdoption saves a revision and approves exactly the enrollment that was
+// read before rendering. A reset in between leaves the new enrollment pending.
+func (s *Store) CommitAdoption(ctx context.Context, d Device, templateID string, rev int, digest string, blob []byte) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE devices SET state = ?, template_id = ?, config_rev = ?
+WHERE mac = ? AND enrollment_id = ? AND config_rev = ? AND state = ?`,
+		StateAdopted, templateID, rev, d.MAC, d.EnrollmentID, d.ConfigRev, d.State)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrDeviceChanged
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO packages (mac, rev, created_at, sha256, size, blob)
+VALUES (?, ?, strftime('%s','now'), ?, ?, ?)`, d.MAC, rev, digest, len(blob), blob); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // TrimPackages keeps only the newest keep revisions for one device. Zero means
 // unlimited. The signed blobs are the largest rows in the database, so a
 // flash-constrained deployment wants this at 1; a controller with room to spare

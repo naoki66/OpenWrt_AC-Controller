@@ -58,9 +58,10 @@ type Status struct {
 	// ACAddr is the controller the agent is currently using; ACAddrSource says
 	// whether it came from configuration (the WAN/uplink case, where broadcast
 	// discovery cannot reach) or from a UDP answer on the local segment.
-	ACAddr       string `json:"ac_addr,omitempty"`
-	ACAddrSource string `json:"ac_addr_source,omitempty"`
-	ACID         string `json:"ac_id,omitempty"`
+	ACAddr             string `json:"ac_addr,omitempty"`
+	ACAddrSource       string `json:"ac_addr_source,omitempty"`
+	ControllerOverride bool   `json:"controller_override,omitempty"`
+	ACID               string `json:"ac_id,omitempty"`
 
 	Adopted    bool   `json:"adopted"`
 	AppliedRev int    `json:"applied_rev"`
@@ -192,6 +193,7 @@ func (a *Agent) reflectStatus() {
 	}
 
 	a.rt.ACAddr = a.acAddr
+	a.rt.ControllerOverride = a.state.ManagementKey != "" || a.Config.overrideTrustKey != ""
 	switch {
 	case a.acAddr == "":
 		a.rt.ACAddrSource = ""

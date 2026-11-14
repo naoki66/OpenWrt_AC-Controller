@@ -67,11 +67,8 @@ func (s *Service) Adopt(ctx context.Context, mac, templateID string) (Result, er
 		return Result{}, err
 	}
 
-	res, err := s.generate(ctx, device, templateID)
+	res, err := s.generateAndAdopt(ctx, device, templateID)
 	if err != nil {
-		return Result{}, err
-	}
-	if err := s.Store.MarkAdopted(ctx, mac, templateID, res.Rev); err != nil {
 		return Result{}, err
 	}
 	s.Store.LogEvent(ctx, "adopt", mac, fmt.Sprintf("adopted template %s as rev %d", templateID, res.Rev))
@@ -108,11 +105,8 @@ func (s *Service) AssignTemplate(ctx context.Context, mac, templateID string) (R
 		return Result{}, ErrNotAdopted
 	}
 
-	res, err := s.generate(ctx, device, templateID)
+	res, err := s.generateAndAdopt(ctx, device, templateID)
 	if err != nil {
-		return Result{}, err
-	}
-	if err := s.Store.MarkAdopted(ctx, mac, templateID, res.Rev); err != nil {
 		return Result{}, err
 	}
 	s.Store.LogEvent(ctx, "template", mac, fmt.Sprintf("assigned template %s as rev %d", templateID, res.Rev))
@@ -246,9 +240,8 @@ func (s *Service) resolveTemplate(ctx context.Context, device store.Device, temp
 	return tpl, nil
 }
 
-// generate renders and signs the next revision but does not touch device state;
-// callers decide whether the revision came from an adopt or a repush.
-func (s *Service) generate(ctx context.Context, device store.Device, templateID string) (Result, error) {
+// generateAndAdopt renders the next revision and commits it with the adoption.
+func (s *Service) generateAndAdopt(ctx context.Context, device store.Device, templateID string) (Result, error) {
 	tpl, err := s.resolveTemplate(ctx, device, templateID)
 	if err != nil {
 		return Result{}, err
@@ -321,13 +314,11 @@ func (s *Service) generate(ctx context.Context, device store.Device, templateID 
 
 	sum := sha256.Sum256(blob)
 	digest := hex.EncodeToString(sum[:])
-	if err := s.Store.CreatePackage(ctx, device.MAC, rev, digest, blob); err != nil {
+	if err := s.Store.CommitAdoption(ctx, device, templateID, rev, digest, blob); err != nil {
 		return Result{}, err
 	}
 	if s.PackageHistory > 0 {
-		// Best effort: the new revision is already durable, and failing the
-		// adoption because an old blob could not be pruned would leave the
-		// device in a worse state (package stored, adoption not recorded).
+		// Best effort: the new revision and adoption are already durable.
 		_ = s.Store.TrimPackages(ctx, device.MAC, s.PackageHistory)
 	}
 

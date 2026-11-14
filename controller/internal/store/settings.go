@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -19,6 +21,9 @@ const (
 	// registering with the old secret is rejected the moment this is written,
 	// which is exactly the point of rotating it.
 	SettingSharedSecret = "shared_secret"
+	// SettingManagementKey is generated once per deployment and distributed
+	// to approved APs. It is not the operator-configurable legacy secret.
+	SettingManagementKey = "management_key"
 	// SettingAdminUser is the login name of the management account. Seeded with
 	// "admin" on first start; the system page can rename it.
 	SettingAdminUser = "admin_user"
@@ -29,6 +34,19 @@ const (
 	// as a JSON array. An absent row means "do not manage AP NTP".
 	SettingNTPServers = "ntp_servers"
 )
+
+// EnsureManagementKey creates the deployment key on first start and reuses it
+// when the database survives a restart or container replacement.
+func (s *Store) EnsureManagementKey(ctx context.Context) error {
+	var key [32]byte
+	if _, err := rand.Read(key[:]); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?) ON CONFLICT(key) DO NOTHING`,
+		SettingManagementKey, hex.EncodeToString(key[:]), time.Now().Unix())
+	return err
+}
 
 // GetSetting returns one setting or ErrNotFound.
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {

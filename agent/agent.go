@@ -25,16 +25,18 @@ import (
 	"github.com/naoki66/ac-controller/shared/proto"
 	"github.com/naoki66/ac-controller/shared/render"
 	"github.com/naoki66/ac-controller/shared/secret"
+	"github.com/naoki66/ac-controller/shared/version"
 )
 
 // Client talks to one controller.
 type Client struct {
-	BaseURL    string
-	Secret     string
-	HTTP       *http.Client
-	controlKey ed25519.PublicKey
-	deviceKey  string
-	deviceMAC  string
+	BaseURL        string
+	Secret         string
+	HTTP           *http.Client
+	controlKey     ed25519.PublicKey
+	deviceKey      string
+	deviceMAC      string
+	enrollmentACID string
 }
 
 // Controller HTTP timeouts.
@@ -88,6 +90,15 @@ func NewClient(baseURL, secret string) *Client {
 	}
 }
 
+type helloHTTPError struct {
+	status int
+	body   string
+}
+
+func (e *helloHTTPError) Error() string {
+	return fmt.Sprintf("hello: controller returned %d: %s", e.status, e.body)
+}
+
 // Hello registers, reports and polls in a single round trip.
 func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, error) {
 	ctx, cancel := context.WithTimeout(ctx, controllerTotalTimeout)
@@ -132,7 +143,7 @@ func (c *Client) Hello(ctx context.Context, h proto.Hello) (proto.HelloReply, er
 		return proto.HelloReply{}, errors.New("hello: reply exceeds size limit")
 	}
 	if resp.StatusCode != http.StatusOK {
-		return proto.HelloReply{}, fmt.Errorf("hello: controller returned %d: %s", resp.StatusCode, strings.TrimSpace(string(payload)))
+		return proto.HelloReply{}, &helloHTTPError{status: resp.StatusCode, body: strings.TrimSpace(string(payload))}
 	}
 
 	if nonce != "" {
@@ -199,18 +210,21 @@ func (c *Client) FetchPackage(ctx context.Context, path string) ([]byte, error) 
 
 // Discover broadcasts AP_DISCOVER and waits for one AC_OFFER.
 func Discover(ctx context.Context, cfg Config, id Identity, log *slog.Logger) (string, proto.Offer, error) {
-	msg, err := json.Marshal(proto.Discover{
-		Type:     proto.MsgDiscover,
-		V:        proto.ProtocolVersion,
-		MAC:      id.MAC,
-		Model:    id.Model,
-		Firmware: id.Firmware,
-		Hostname: id.Hostname,
-	})
-	if err != nil {
-		return "", proto.Offer{}, err
-	}
+	return discoverControllers(ctx, cfg, discoveryAnnouncement(id, ""), log, nil)
+}
 
+func discoveryAnnouncement(id Identity, public string) proto.Discover {
+	return proto.Discover{
+		Type: proto.MsgDiscover, V: proto.ProtocolVersion, MAC: id.MAC,
+		Model: id.Model, Firmware: id.Firmware, Hostname: id.Hostname,
+		AgentVersion: version.Version, PublicKey: public,
+	}
+}
+
+// A visitor receives all offers so the first AC to answer does not prevent
+// an unbound AP from being adopted on another AC.
+func discoverControllers(ctx context.Context, cfg Config, announce proto.Discover, log *slog.Logger, visit func(string)) (string, proto.Offer, error) {
+	trustedKey := cfg.controllerTrustKey()
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
 		return "", proto.Offer{}, err
@@ -221,11 +235,21 @@ func Discover(ctx context.Context, cfg Config, id Identity, log *slog.Logger) (s
 	if port == 0 {
 		port = proto.DiscoverPort
 	}
-	targets := broadcastTargets(port)
+	targets := discoveryTargets(port)
 	deadline := time.Now().Add(3 * time.Second)
 	for _, target := range targets {
-		if _, err := conn.WriteToUDP(msg, target); err != nil {
-			log.Debug("discovery send failed", "target", target.String(), "err", err)
+		if announce.Type == proto.MsgDiscover {
+			announce.APIP = target.localIP
+			if announce.APIP == "" {
+				announce.APIP = discoverySourceIP(target.addr)
+			}
+		}
+		msg, err := json.Marshal(announce)
+		if err != nil {
+			return "", proto.Offer{}, err
+		}
+		if _, err := conn.WriteToUDP(msg, target.addr); err != nil {
+			log.Debug("discovery send failed", "target", target.addr.String(), "err", err)
 		}
 	}
 	_ = conn.SetReadDeadline(deadline)
@@ -248,6 +272,14 @@ func Discover(ctx context.Context, cfg Config, id Identity, log *slog.Logger) (s
 		if err := json.Unmarshal(buf[:n], &offer); err != nil || offer.Type != proto.MsgOffer {
 			continue
 		}
+		if announce.Type == proto.MsgLookup && offer.ACID != announce.ACID {
+			continue
+		}
+		// This field only selects offers on a LAN with several controllers.
+		// HTTP enrollment still verifies a signature against the firmware key.
+		if visit == nil && trustedKey != "" && !strings.EqualFold(trustedKey, offer.SigningKey) {
+			continue
+		}
 
 		host := offer.ACIP
 		if host == "" {
@@ -257,16 +289,43 @@ func Discover(ctx context.Context, cfg Config, id Identity, log *slog.Logger) (s
 			continue
 		}
 		addr := fmt.Sprintf("%s:%d", host, offer.HTTPPort)
+		if visit != nil {
+			visit(addr)
+			continue
+		}
 		log.Info("controller discovered", "addr", addr, "ac_id", offer.ACID)
 		return addr, offer, nil
 	}
+}
+
+func discoverySourceIP(addr *net.UDPAddr) string {
+	conn, err := net.DialUDP("udp4", nil, addr)
+	if err != nil {
+		return "" // The AC can still use the packet's source address.
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 // broadcastTargets returns the limited broadcast address plus every interface's
 // directed broadcast, because a switch or firewall may drop 255.255.255.255
 // while still forwarding a subnet broadcast.
 func broadcastTargets(port int) []*net.UDPAddr {
-	targets := []*net.UDPAddr{{IP: net.IPv4bcast, Port: port}}
+	targets := discoveryTargets(port)
+	addrs := make([]*net.UDPAddr, 0, len(targets))
+	for _, target := range targets {
+		addrs = append(addrs, target.addr)
+	}
+	return addrs
+}
+
+type discoveryTarget struct {
+	addr    *net.UDPAddr
+	localIP string
+}
+
+func discoveryTargets(port int) []discoveryTarget {
+	targets := []discoveryTarget{{addr: &net.UDPAddr{IP: net.IPv4bcast, Port: port}}}
 
 	ifaces, err := net.Interfaces()
 	if err != nil {
@@ -297,7 +356,9 @@ func broadcastTargets(port int) []*net.UDPAddr {
 			for i := 0; i < 4; i++ {
 				bcast[i] = ip4[i] | ^mask[i]
 			}
-			targets = append(targets, &net.UDPAddr{IP: bcast, Port: port})
+			targets = append(targets, discoveryTarget{
+				addr: &net.UDPAddr{IP: bcast, Port: port}, localIP: ip4.String(),
+			})
 		}
 	}
 	return targets
@@ -350,7 +411,8 @@ type Agent struct {
 	// pinnedAC is true when the controller address came from configuration
 	// rather than discovery; only a discovered address may be forgotten and
 	// re-resolved, so an operator-provided address is never overridden.
-	pinnedAC bool
+	pinnedAC          bool
+	trustedController ed25519.PublicKey
 	// helloFailures and nextDiscover pace re-discovery. A discovered controller
 	// that stops answering must be re-resolved, but broadcasting every 20s
 	// would be pointless wake-ups on a healthy LAN.
@@ -479,6 +541,36 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	if st.ManagementReset {
+		cfg.Secret = ""
+	} else if err := loadControllerOverride(&cfg, &st); err != nil {
+		return nil, err
+	}
+	configuredAddr := cfg.ACAddr
+	var trusted ed25519.PublicKey
+	pin := ""
+	if !st.ManagementReset {
+		pin = cfg.controllerTrustKey()
+	}
+	if st.ManagementKey != "" {
+		pin = st.PubKey
+		cfg.overrideTrustKey = pin
+		// Try the adopting controller first after restart. An address
+		// change must not allow a different controller to claim the AP.
+		if st.ManagementReset || cfg.ACAddr == "" {
+			cfg.ACAddr = st.ManagementAddr
+		}
+	}
+	if pin != "" {
+		raw, err := hex.DecodeString(pin)
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return nil, errors.New("invalid firmware controller trust key")
+		}
+		trusted = raw
+	}
+	if st.ManagementKey != "" && (len(trusted) != ed25519.PublicKeySize || st.ACID == "" || st.EnrollmentID == "" || st.ManagementTrafficKey == "") {
+		return nil, errors.New("invalid saved management binding")
+	}
 
 	runner := cfg.Runner
 	if runner == nil {
@@ -495,9 +587,10 @@ func New(cfg Config, log *slog.Logger) (*Agent, error) {
 			StartedAt: time.Now().UTC().Format(time.RFC3339),
 			Interval:  int(cfg.Interval / time.Second),
 		},
-		acAddr:   cfg.ACAddr,
-		pinnedAC: cfg.ACAddr != "",
-		Runner:   runner,
+		acAddr:            cfg.ACAddr,
+		pinnedAC:          cfg.ACAddr != "" && (st.ManagementKey == "" || withScheme(configuredAddr) == withScheme(cfg.ACAddr)),
+		trustedController: trusted,
+		Runner:            runner,
 		Applier: &Applier{
 			ConfigDir:     cfg.configDir(),
 			StateDir:      cfg.stateDir(),
@@ -585,7 +678,11 @@ func (a *Agent) State() State { return a.state }
 func (a *Agent) newControlClient(addr string) *Client {
 	c := NewClient(withScheme(addr), "")
 	c.deviceMAC = normalizePeerMAC(a.Identity.MAC)
-	c.deviceKey = secret.DeviceKey(a.Config.Secret, c.deviceMAC)
+	if a.state.ManagementKey != "" {
+		c.deviceKey, c.enrollmentACID = a.state.ManagementTrafficKey, a.state.ACID
+	} else if len(a.trustedController) == 0 && a.state.EnrollmentID == "" {
+		c.deviceKey = secret.DeviceKey(a.Config.Secret, c.deviceMAC)
+	}
 	return c
 }
 
@@ -851,14 +948,29 @@ func (a *Agent) Step(ctx context.Context) error {
 		a.restoreNeighborsOnPeerChange(ctx)
 	}
 
-	if len(a.Config.Secret) < 12 {
-		err := errors.New("configure the same shared secret as the controller (at least 12 characters)")
+	if normalizePeerMAC(a.Identity.MAC) == "" {
+		err := errors.New("no valid AP MAC address available")
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
 		return err
 	}
-	if normalizePeerMAC(a.Identity.MAC) == "" {
-		err := errors.New("no valid AP MAC address available")
+
+	if a.state.ManagementKey == "" && (a.state.EnrollmentID != "" || len(a.trustedController) == 0 && a.Config.Secret == "") {
+		if err := a.pollUnboundControllers(ctx); err != nil {
+			a.rt.LastHelloOK = false
+			a.rt.LastHelloError = err.Error()
+			return err
+		}
+		if a.state.ManagementKey == "" {
+			a.rt.LastHelloOK = true
+			a.rt.LastHelloAt = time.Now().UTC().Format(time.RFC3339)
+			a.rt.LastHelloError = ""
+			a.rt.Adopted = false
+			return nil
+		}
+	}
+	if len(a.trustedController) == 0 && len(a.Config.Secret) < 12 {
+		err := errors.New("legacy shared secret must contain at least 12 characters")
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
 		return err
@@ -869,7 +981,13 @@ func (a *Agent) Step(ctx context.Context) error {
 			a.Log.Debug("controller discovery deferred", "retry_at", a.nextDiscover)
 			return nil
 		}
-		addr, _, err := Discover(ctx, a.Config, a.Identity, a.Log)
+		announce := discoveryAnnouncement(a.Identity, "")
+		if a.state.ManagementKey != "" {
+			// A bound AP may look up its AC after an address change, but
+			// must not advertise itself as available for adoption.
+			announce = proto.Discover{Type: proto.MsgLookup, V: proto.ProtocolVersion, ACID: a.state.ACID}
+		}
+		addr, _, err := discoverControllers(ctx, a.Config, announce, a.Log, nil)
 		if err != nil {
 			a.nextDiscover = time.Now().Add(rediscoverDelay)
 			// Recorded like a failed hello: from an operator's point of view
@@ -883,12 +1001,36 @@ func (a *Agent) Step(ctx context.Context) error {
 		a.client = a.newControlClient(addr)
 	}
 
-	reply, err := a.client.Hello(ctx, hello)
+	minimalHello := len(a.trustedController) > 0 && !a.rt.Adopted
+	var reply proto.HelloReply
+	var err error
+	if len(a.trustedController) > 0 && a.client.deviceKey == "" {
+		err = a.enroll(ctx, a.acceptManagementBinding)
+	}
+	if err == nil {
+		if minimalHello {
+			// Pending APs only send identity metadata until approval.
+			reply, err = a.client.Hello(ctx, proto.Hello{
+				MAC: hello.MAC, Hostname: hello.Hostname, Model: hello.Model, Firmware: hello.Firmware,
+				AgentVersion: hello.AgentVersion,
+			})
+		} else {
+			reply, err = a.client.Hello(ctx, hello)
+		}
+	}
 	if err != nil {
 		// Record the failure before any early return so the status file and the
 		// controller-facing view agree on why this AP is not under control.
 		a.rt.LastHelloOK = false
 		a.rt.LastHelloError = err.Error()
+		var httpErr *helloHTTPError
+		if a.state.ManagementKey == "" && len(a.trustedController) > 0 && errors.As(err, &httpErr) && httpErr.status == http.StatusUnauthorized {
+			// The controller may have restored an older database. Offer the
+			// same AP identity again; the controller still requires approval
+			// for a new pending record and rejects any different registered key.
+			a.client.deviceKey = ""
+			a.rt.Adopted = false
+		}
 
 		// A discovered controller that vanished may have moved (DHCP, reinstall,
 		// a different controller taking over). Forget its address and re-resolve
@@ -912,7 +1054,7 @@ func (a *Agent) Step(ctx context.Context) error {
 	a.helloFailures = 0
 	// A successful hello is the controller's acknowledgement that it can still
 	// reach this AP after an address move; the watchdog can stand down.
-	if a.confirmedRevision(reply) {
+	if !minimalHello && a.confirmedRevision(reply) {
 		a.roamingIO.Lock()
 		err := a.commitNetworkRevision(ctx)
 		a.publishRoamingView()
@@ -931,12 +1073,15 @@ func (a *Agent) Step(ctx context.Context) error {
 	// reflectStatus (a revision already applied on this AP is proof enough),
 	// which covers a controller that lost its database.
 	a.rt.Adopted = (reply.State == proto.APStateAdopted)
+	if len(a.trustedController) > 0 && !a.rt.Adopted {
+		return nil
+	}
 	if a.state.PendingConfirm != nil {
 		return nil
 	}
 
 	// The report, if any, was delivered; clear it before doing more work.
-	if a.state.PendingSync != "" {
+	if !minimalHello && a.state.PendingSync != "" {
 		a.state.PendingSync = ""
 		a.state.PendingSyncMsg = ""
 		if err := a.saveState(); err != nil {
@@ -945,7 +1090,9 @@ func (a *Agent) Step(ctx context.Context) error {
 	}
 	// Same for action results: this hello carried them, and the reply below
 	// already excludes the actions they belong to.
-	a.clearDeliveredActionResults()
+	if !minimalHello {
+		a.clearDeliveredActionResults()
+	}
 
 	// Binding intent is authoritative when present. An empty list clears the
 	// previous set; nil means the controller is too old to know about bindings
@@ -1042,6 +1189,7 @@ func (a *Agent) buildHello(ctx context.Context) proto.Hello {
 		Model:         a.Identity.Model,
 		Firmware:      a.Identity.Firmware,
 		Hostname:      a.Identity.Hostname,
+		AgentVersion:  version.Version,
 		AppliedRev:    a.state.AppliedRev,
 		SyncState:     a.state.PendingSync,
 		SyncMessage:   a.state.PendingSyncMsg,
@@ -1169,11 +1317,14 @@ func (a *Agent) collectClients(ctx context.Context) []proto.ClientStat {
 	return a.Clients.Snapshot(ctx, helloClientReuse)
 }
 
-// pinController records the signing key delivered in a shared-secret-authenticated reply.
+// pinController records the signing key delivered in an authenticated reply.
 func (a *Agent) pinController(reply proto.HelloReply) error {
 	key, err := hex.DecodeString(reply.PubKey)
 	if err != nil || len(key) != ed25519.PublicKeySize || reply.ACID == "" {
 		return errors.New("controller returned an invalid signing identity")
+	}
+	if len(a.trustedController) > 0 && (!bytes.Equal(key, a.trustedController) || reply.ACID != a.client.enrollmentACID) {
+		return errors.New("controller signing identity does not match firmware enrollment")
 	}
 	if a.state.PubKey != reply.PubKey || a.state.ACID != reply.ACID {
 		if a.state.PendingConfirm != nil {

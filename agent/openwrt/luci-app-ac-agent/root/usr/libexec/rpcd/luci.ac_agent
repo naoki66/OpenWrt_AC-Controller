@@ -139,6 +139,36 @@ restart_agent() {
 	fi
 }
 
+reset_management() {
+	local output left
+	if ! "$INIT_SCRIPT" stop >/dev/null 2>&1 && _process_running; then
+		printf '%s\n' '{"ok":false,"message":"could not stop ac-agent"}'
+		return
+	fi
+	# procd can acknowledge stop before its child has released the state lock.
+	# Retry briefly while the old process is shutting down.
+	left=3
+	while ! output=$(/usr/sbin/ac-agent reset-management 2>&1); do
+		case "$output" in
+			*"another agent command is using the state"*)
+				if [ "$left" -gt 0 ]; then
+					left=$((left - 1))
+					sleep 1
+					continue
+				fi
+				;;
+		esac
+		"$INIT_SCRIPT" start >/dev/null 2>&1
+		printf '{"ok":false,"message":"%s"}\n' "$(_json_escape "$output")"
+		return
+	done
+	if ! "$INIT_SCRIPT" start >/dev/null 2>&1; then
+		printf '%s\n' '{"ok":false,"message":"management reset; could not start ac-agent"}'
+		return
+	fi
+	printf '%s\n' '{"ok":true}'
+}
+
 # rpcd invokes the script as `script list` for the method table and as
 # `script call <method>` with the JSON arguments on stdin. Matching on $1 alone
 # answers "Invalid method" to every call — the outer level is the verb, the
@@ -146,7 +176,7 @@ restart_agent() {
 case "$1" in
 	list)
 		# Describe the write methods' parameters so LuCI can type-check calls.
-		printf '%s\n' '{"status":{},"restart":{},"applyEnabled":{}}'
+		printf '%s\n' '{"status":{},"restart":{},"applyEnabled":{},"resetManagement":{}}'
 		;;
 	call)
 		case "$2" in
@@ -158,6 +188,9 @@ case "$1" in
 				;;
 			applyEnabled)
 				apply_enabled
+				;;
+			resetManagement)
+				reset_management
 				;;
 			*)
 				printf '{"error":"Invalid method"}\n'

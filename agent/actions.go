@@ -256,9 +256,20 @@ func (a *Agent) factoryReset(ctx context.Context) error {
 	// Forget what the controller taught this AP, but keep the action memory:
 	// if the result is lost on the way and the controller resends the reset,
 	// running it again after the reboot would loop the box.
+	previous := a.state
 	a.state = State{
-		ExecutedActions: a.state.ExecutedActions,
-		ActionResults:   a.state.ActionResults,
+		EnrollmentID:         a.state.EnrollmentID,
+		ResetGeneration:      a.state.ResetGeneration,
+		ManagementKey:        a.state.ManagementKey,
+		ManagementTrafficKey: a.state.ManagementTrafficKey,
+		ManagementAddr:       a.state.ManagementAddr,
+		ManagementReset:      a.state.ManagementReset,
+		ControllerOverrideID: a.state.ControllerOverrideID,
+		ExecutedActions:      a.state.ExecutedActions,
+		ActionResults:        a.state.ActionResults,
+	}
+	if previous.ManagementKey != "" {
+		a.state.ACID, a.state.PubKey = previous.ACID, previous.PubKey
 	}
 	if err := a.saveState(); err != nil {
 		return fmt.Errorf("persist cleared state: %w", err)

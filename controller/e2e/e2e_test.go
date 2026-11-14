@@ -106,6 +106,14 @@ type acFixture struct {
 const fixtureAPSecret = "e2e-ap-shared-secret"
 
 func newAC(t *testing.T) *acFixture {
+	return newACWithSecret(t, fixtureAPSecret)
+}
+
+func newACWithSecret(t *testing.T, sharedSecret string) *acFixture {
+	return newACWithIdentity(t, sharedSecret, 11, "cafebabecafebabecafebabecafebabe")
+}
+
+func newACWithIdentity(t *testing.T, sharedSecret string, seed byte, acID string) *acFixture {
 	t.Helper()
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "ac.db"))
@@ -116,6 +124,9 @@ func newAC(t *testing.T) *acFixture {
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := st.EnsureManagementKey(ctx); err != nil {
+		t.Fatalf("create deployment key: %v", err)
+	}
 	if _, err := api.EnsureAdminAccount(ctx, st, "admin", "123456"); err != nil {
 		t.Fatalf("seed admin account: %v", err)
 	}
@@ -123,17 +134,17 @@ func newAC(t *testing.T) *acFixture {
 		t.Fatalf("seed template: %v", err)
 	}
 
-	key, err := keys.FromSeed(bytes.Repeat([]byte{11}, 32))
+	key, err := keys.FromSeed(bytes.Repeat([]byte{seed}, 32))
 	if err != nil {
 		t.Fatalf("key: %v", err)
 	}
 
 	srv := &api.Server{
 		Store:           st,
-		ACID:            "cafebabecafebabecafebabecafebabe",
+		ACID:            acID,
 		Key:             key,
-		Provision:       &provision.Service{Store: st, Key: key, ACID: "cafebabecafebabecafebabecafebabe"},
-		SharedSecret:    fixtureAPSecret,
+		Provision:       &provision.Service{Store: st, Key: key, ACID: acID},
+		SharedSecret:    sharedSecret,
 		RequireSignedAP: true,
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -221,7 +232,17 @@ func newAgentFixture(t *testing.T, ac *acFixture, secret string) (*agent.Agent, 
 	if secret == "" {
 		secret = fixtureAPSecret
 	}
+	cfg, runner, root := newAgentConfig(t, ac)
+	cfg.Secret = secret
+	a, err := agent.New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("new agent: %v", err)
+	}
+	return a, runner, root
+}
 
+func newAgentConfig(t *testing.T, ac *acFixture) (agent.Config, *scriptedRunner, string) {
+	t.Helper()
 	root := t.TempDir()
 	configDir := filepath.Join(root, "etc", "config")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -236,7 +257,6 @@ func newAgentFixture(t *testing.T, ac *acFixture, secret string) (*agent.Agent, 
 	cfg := agent.Config{
 		Root:          root,
 		ACAddr:        strings.TrimPrefix(ac.server.URL, "http://"),
-		Secret:        secret,
 		HealthTimeout: 0,
 		Identity: agent.Identity{
 			MAC:      apMAC,
@@ -246,11 +266,7 @@ func newAgentFixture(t *testing.T, ac *acFixture, secret string) (*agent.Agent, 
 		},
 		Runner: runner,
 	}
-	a, err := agent.New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err != nil {
-		t.Fatalf("new agent: %v", err)
-	}
-	return a, runner, root
+	return cfg, runner, root
 }
 
 // TestAgentAppliesRevisionEndToEnd is the closest thing to a real provisioning

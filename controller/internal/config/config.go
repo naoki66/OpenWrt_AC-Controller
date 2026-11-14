@@ -142,9 +142,6 @@ func (c Config) IDFile() string {
 // SecretWarnings reports optional credentials and unsafe credential reuse.
 func (c Config) SecretWarnings() []string {
 	var out []string
-	if c.SharedSecret == "" {
-		out = append(out, "AC_SHARED_SECRET is empty: configure the shared secret in AP Management before connecting APs")
-	}
 	if c.AdminToken == "" {
 		out = append(out, "AC_ADMIN_TOKEN is empty: automation has no Bearer token "+
 			"(the Web UI and management API still require a login account)")

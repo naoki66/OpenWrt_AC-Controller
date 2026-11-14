@@ -22,7 +22,7 @@ LUCI_TITLE:=AC controller agent status
 LUCI_DESCRIPTION:=Shows whether this access point is under the control of an AC controller, how it reaches it, and lets the operator set the uplink address and the boot behaviour.
 LUCI_DEPENDS:=+luci-base +rpcd +ac-agent
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 PKG_LICENSE:=MIT
 
 include $(TOPDIR)/feeds/luci/luci.mk

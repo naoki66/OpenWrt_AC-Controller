@@ -1073,7 +1073,7 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
       <div class="panel" id="ap-guide">
         <h2>AP 接入引导</h2>
         <p class="note">
-          在「AP 管理」设置并复制共享密钥，粘贴到各 AP 的 LuCI「控制器连接 → 共享密钥」。保存后，回到此页采纳设备。
+          未纳管的 AP 会自动出现在列表中。核对 AP 的 MAC 后点击「采纳」，AP 会自动绑定到本站控制器。换控制器时，在 AP 的 LuCI 中点击「重置纳管」。
         </p>
         <button class="primary" id="go-apmgmt" type="button">前往 AP 管理</button>
       </div>
@@ -1104,16 +1104,15 @@ try{var __act=localStorage.getItem('ac_ui_theme');if(__act==='light'||__act==='d
 
     <section id="view-apmgmt" class="hidden">
       <h1>AP 管理</h1>
-      <div class="sub">共享密钥、周期重启、状态 LED 与 AP 分组</div>
+      <div class="sub">设备接入、周期重启、状态 LED 与 AP 分组</div>
 
       <div class="panel">
         <h2>
-          共享密钥
+          共享密钥（兼容旧版 AP）
           <span class="badge offline" id="sec-source" hidden></span>
         </h2>
         <p class="note">
-          为控制器和所有 AP 设置同一个共享密钥。首次使用请生成并保存，再复制到各 AP。
-          更换密钥后，各 AP 需要更新到相同的新值才能重新连接。
+          仅使用共享密钥认证的 AP 需要填写同一值。更换密钥后，这些 AP 需要更新才能重新连接。
         </p>
         <label class="sec-label" for="sec-current">当前生效密钥</label>
         <div class="sec-row">
@@ -6274,7 +6273,7 @@ $('fw-upload').addEventListener('click', async () => {
 const DIAG_KINDS = { network: '网络诊断', system: '系统日志', kernel: '内核日志' };
 const EVENT_LABELS = {
   auth: '登录 / 账户',
-  adopt: '采纳', repush: '重新下发', release: '释放', factory_reset: '恢复出厂',
+  adopt: '采纳', repush: '重新下发', release: '释放', factory_reset: '恢复出厂', management_reset: '重置纳管',
   settings: '设置', template: '模板', group: '分组',
   group_create: '新建分组', group_update: '修改分组', group_delete: '删除分组', group_bind: '绑定分组',
   client_meta: '客户端备注', client_kick: '客户端踢除', firmware: '固件',

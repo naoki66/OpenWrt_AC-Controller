@@ -34,8 +34,7 @@ type Server struct {
 	Key       keys.Key
 	Provision *provision.Service
 	// SharedSecret is the environment default for AP authentication. The web
-	// setting takes precedence. With RequireSignedAP, an empty effective value
-	// prevents APs from connecting until a secret is configured.
+	// setting takes precedence. Automatic enrollment uses the deployment key.
 	SharedSecret string
 	// RequireSignedAP enforces challenge-response authentication on AP routes.
 	RequireSignedAP   bool
@@ -180,6 +179,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/ap/hello", s.handleHello)
 	if s.RequireSignedAP {
 		mux.HandleFunc("GET /api/v1/ap/challenge", s.handleDeviceChallenge)
+		mux.HandleFunc("GET /api/v1/ap/enroll", s.handleEnrollmentInfo)
+		mux.HandleFunc("POST /api/v1/ap/enroll", s.handleEnrollment)
 	}
 
 	// Login itself has to be reachable without a session; the session probe is
@@ -321,7 +322,7 @@ func (s *Server) adminOrAP(next http.HandlerFunc) http.HandlerFunc {
 		if s.RequireSignedAP {
 			cred, ok := s.verifyDevice(r, nil)
 			if !ok {
-				writeError(w, http.StatusUnauthorized, errors.New("shared secret authentication failed"))
+				writeError(w, http.StatusUnauthorized, errors.New("device authentication failed"))
 				return
 			}
 			next(w, withDevice(r, cred))
@@ -725,6 +726,13 @@ func (s *Server) handlePackage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, errors.New("package belongs to another device"))
 		return
 	}
+	if device && cred.enrolled {
+		d, err := s.Store.GetDevice(r.Context(), mac)
+		if err != nil || d.State != store.StateAdopted || d.EnrollmentID != cred.enrollmentID {
+			writeError(w, http.StatusForbidden, errors.New("device is awaiting adoption"))
+			return
+		}
+	}
 	rev := 0
 	if raw := r.URL.Query().Get("rev"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -1033,6 +1041,8 @@ func writeStoreError(w http.ResponseWriter, err error) {
 
 func writeProvisionError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, store.ErrDeviceChanged):
+		writeError(w, http.StatusConflict, err)
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, err)
 	case errors.Is(err, provision.ErrTemplateNotFound),

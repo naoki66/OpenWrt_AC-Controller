@@ -103,6 +103,23 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if cmd == "run" || cmd == "once" || cmd == "reset-management" {
+		unlock, err := lockAgentState(cfg.Root)
+		if err != nil {
+			log.Error("lock agent state", "err", err)
+			os.Exit(1)
+		}
+		defer unlock()
+	}
+	if cmd == "reset-management" {
+		if err := agent.ResetManagement(cfg); err != nil {
+			log.Error("reset management", "err", err)
+			os.Exit(1)
+		}
+		fmt.Println("Management binding cleared. Start the agent and adopt it from the controller.")
+		return
+	}
+
 	a, err := agent.New(cfg, log)
 	if err != nil {
 		log.Error("fatal", "err", err)
@@ -284,7 +301,7 @@ func main() {
 			os.Exit(1)
 		}
 	default:
-		log.Error("unknown command", "cmd", cmd, "hint", "supported: run, once, status, peers, stations, version")
+		log.Error("unknown command", "cmd", cmd, "hint", "supported: run, once, reset-management, status, peers, stations, version")
 		os.Exit(2)
 	}
 }

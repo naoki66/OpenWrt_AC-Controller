@@ -122,7 +122,7 @@ func (s *Server) handleFirmwareImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if cred, ok := deviceFrom(r); ok {
 		d, err := s.Store.GetDevice(r.Context(), cred.mac)
-		if err != nil || d.State != store.StateAdopted ||
+		if err != nil || d.State != store.StateAdopted || d.EnrollmentID != cred.enrollmentID ||
 			!strings.EqualFold(d.Model, model) || d.FwTarget != version {
 			writeError(w, http.StatusForbidden, errors.New("firmware is not assigned to this device"))
 			return

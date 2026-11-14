@@ -53,6 +53,9 @@ type Config struct {
 	ACAddr string
 	// Secret derives separate credentials for controller and peer authentication.
 	Secret string
+	// TrustedControllerKey is a public key provisioned by the firmware build.
+	TrustedControllerKey string
+	overrideTrustKey     string
 	// Interval is the hello/poll period.
 	Interval time.Duration
 	// HealthTimeout bounds how long the agent waits for BSSes to come up.
@@ -365,12 +368,19 @@ func systemUptime(root string) int64 {
 // State is the agent's own memory. It is the source of truth for "what has this
 // AP actually applied", which the controller can only ever learn second hand.
 type State struct {
-	ACID       string `json:"ac_id,omitempty"`
-	PubKey     string `json:"pubkey,omitempty"`
-	AppliedRev int    `json:"applied_rev"`
-	SHA256     string `json:"sha256,omitempty"`
-	AppliedAt  string `json:"applied_at,omitempty"`
-	LastError  string `json:"last_error,omitempty"`
+	EnrollmentID         string `json:"enrollment_id,omitempty"`
+	ResetGeneration      int64  `json:"reset_generation,omitempty"`
+	ManagementKey        string `json:"management_key,omitempty"`
+	ManagementTrafficKey string `json:"management_traffic_key,omitempty"`
+	ManagementAddr       string `json:"management_addr,omitempty"`
+	ManagementReset      bool   `json:"management_reset,omitempty"`
+	ControllerOverrideID string `json:"controller_override_id,omitempty"`
+	ACID                 string `json:"ac_id,omitempty"`
+	PubKey               string `json:"pubkey,omitempty"`
+	AppliedRev           int    `json:"applied_rev"`
+	SHA256               string `json:"sha256,omitempty"`
+	AppliedAt            string `json:"applied_at,omitempty"`
+	LastError            string `json:"last_error,omitempty"`
 	// PendingSync is a report that has not reached the controller yet. Keeping
 	// it on disk means a reboot does not swallow the outcome of an apply that
 	// already happened.
@@ -461,7 +471,7 @@ func LoadState(path string) (State, error) {
 	return st, nil
 }
 
-// Save writes the state atomically (0600: it holds the pinned public key, and a
+// SaveState writes the state atomically (0600: it holds management credentials, and a
 // half-written file must never be readable as valid).
 func SaveState(path string, st State) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

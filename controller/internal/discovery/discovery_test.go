@@ -6,34 +6,23 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/naoki66/ac-controller/controller/internal/store"
 	"github.com/naoki66/ac-controller/shared/proto"
 )
 
 // newTestListener starts a real listener on an ephemeral loopback port with a
-// throwaway SQLite database, so the tests exercise the actual wire handling
-// rather than a mock.
+// real UDP socket, so the tests exercise the actual wire handling.
 func newTestListener(t *testing.T) *Listener {
 	t.Helper()
 
-	st, err := store.Open(filepath.Join(t.TempDir(), "ac.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
 	ctx := context.Background()
-	if err := st.Migrate(ctx); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 
 	l := &Listener{
 		ACID:           "0123456789abcdef0123456789abcdef",
 		HTTPPort:       8080,
 		SecretRequired: true,
-		Store:          st,
 		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
@@ -54,7 +43,6 @@ func newTestListener(t *testing.T) *Listener {
 		cancel()
 		uc.Close()
 		<-done
-		st.Close()
 	})
 	return l
 }
@@ -145,64 +133,11 @@ func TestSecretNotRequiredWhenUnset(t *testing.T) {
 	}
 }
 
-func TestDiscoveryRecordsPendingDevice(t *testing.T) {
+func TestBoundLookupOnlyReceivesOfferFromMatchingController(t *testing.T) {
 	l := newTestListener(t)
-
-	if _, err := exchange(t, l, mustDiscover(t, "8C:DE:52:11:22:33", "ap250", "20261026")); err != nil {
-		t.Fatalf("discover: %v", err)
-	}
-
-	devices, err := l.Store.ListDevices(context.Background())
-	if err != nil {
-		t.Fatalf("list devices: %v", err)
-	}
-	if len(devices) != 1 {
-		t.Fatalf("device count = %d, want 1", len(devices))
-	}
-
-	d := devices[0]
-	if d.MAC != "8c:de:52:11:22:33" {
-		t.Errorf("mac = %q, want lower-cased", d.MAC)
-	}
-	if d.State != store.StatePending {
-		t.Errorf("state = %q, want %q", d.State, store.StatePending)
-	}
-	if d.Hostname != "ap250" || d.Model != "XR1710G" || d.Firmware != "20261026" {
-		t.Errorf("unexpected fields: %+v", d)
-	}
-	if d.IP == "" {
-		t.Error("ip is empty")
-	}
-}
-
-func TestRepeatAnnounceIsIdempotent(t *testing.T) {
-	l := newTestListener(t)
-	ctx := context.Background()
-
-	if _, err := exchange(t, l, mustDiscover(t, "8c:de:52:11:22:44", "ap251", "20261026")); err != nil {
-		t.Fatalf("announce: %v", err)
-	}
-	first, err := l.Store.ListDevices(ctx)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-
-	if _, err := exchange(t, l, mustDiscover(t, "8c:de:52:11:22:44", "ap251", "20261101")); err != nil {
-		t.Fatalf("re-announce: %v", err)
-	}
-	second, err := l.Store.ListDevices(ctx)
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
-
-	if len(second) != 1 {
-		t.Fatalf("device count = %d, want 1 (announce must upsert)", len(second))
-	}
-	if second[0].Firmware != "20261101" {
-		t.Errorf("firmware = %q, want updated value", second[0].Firmware)
-	}
-	if second[0].CreatedAt != first[0].CreatedAt {
-		t.Error("created_at changed on re-announce")
+	payload := []byte(`{"type":"AC_LOOKUP","ac_id":"` + l.ACID + `"}`)
+	if offer, err := exchange(t, l, payload); err != nil || offer.ACID != l.ACID {
+		t.Fatalf("lookup: %+v, %v", offer, err)
 	}
 }
 
@@ -213,19 +148,13 @@ func TestUnrelatedPacketsAreIgnored(t *testing.T) {
 		`not json`,
 		`{"type":"SOMETHING_ELSE","mac":"8c:de:52:11:22:55"}`,
 		`{"type":"AP_DISCOVER","mac":"bogus"}`,
+		`{"type":"AC_LOOKUP","ac_id":"another-controller"}`,
 	} {
 		if offer, err := exchange(t, l, []byte(payload)); err == nil {
 			t.Errorf("payload %q should be ignored, got reply %+v", payload, offer)
 		}
 	}
 
-	n, err := l.Store.CountDevices(context.Background())
-	if err != nil {
-		t.Fatalf("count: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("device count = %d, want 0", n)
-	}
 }
 
 func TestNormalizeMAC(t *testing.T) {

@@ -120,9 +120,9 @@ func TestSecretWarnings(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "nothing configured is open on purpose",
+			name: "site enrollment does not require a shared secret",
 			cfg:  Config{},
-			want: []string{"AC_SHARED_SECRET is empty", "AC_ADMIN_TOKEN is empty"},
+			want: []string{"AC_ADMIN_TOKEN is empty"},
 		},
 		{
 			name: "two different strong credentials warn about nothing",

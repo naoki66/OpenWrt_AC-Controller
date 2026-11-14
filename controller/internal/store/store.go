@@ -23,17 +23,20 @@ const (
 )
 
 type Device struct {
-	MAC      string `json:"mac"`
-	Model    string `json:"model"`
-	Firmware string `json:"firmware"`
-	IP       string `json:"ip"`
-	Hostname string `json:"hostname"`
-	State    string `json:"state"`
+	MAC          string `json:"mac"`
+	Model        string `json:"model"`
+	Firmware     string `json:"firmware"`
+	AgentVersion string `json:"agent_version,omitempty"`
+	IP           string `json:"ip"`
+	Hostname     string `json:"hostname"`
+	State        string `json:"state"`
 	// TemplateID is the assigned wireless template; only set once adopted.
 	TemplateID string `json:"template_id"`
 	// ConfigRev is the newest revision generated for this device. 0 means no
 	// package has ever been produced.
 	ConfigRev int `json:"config_rev"`
+	// Internal binding snapshot used when committing a generated package.
+	EnrollmentID string `json:"-"`
 	// AppliedRev is the newest revision the AP reported as applied.
 	AppliedRev int `json:"applied_rev"`
 	// SyncState is the AP's own verdict on its last apply: idle/applied/
@@ -141,9 +144,13 @@ CREATE TABLE IF NOT EXISTS devices (
 	mac        TEXT PRIMARY KEY,
 	model      TEXT NOT NULL DEFAULT '',
 	firmware   TEXT NOT NULL DEFAULT '',
+	agent_version TEXT NOT NULL DEFAULT '',
 	ip         TEXT NOT NULL DEFAULT '',
 	hostname   TEXT NOT NULL DEFAULT '',
 	state      TEXT NOT NULL DEFAULT 'pending',
+	enrollment_public TEXT NOT NULL DEFAULT '',
+	enrollment_id TEXT NOT NULL DEFAULT '',
+	reset_generation INTEGER NOT NULL DEFAULT 0,
 	template_id TEXT NOT NULL DEFAULT '',
 	config_rev INTEGER NOT NULL DEFAULT 0,
 	applied_rev INTEGER NOT NULL DEFAULT 0,
@@ -397,6 +404,10 @@ CREATE TABLE IF NOT EXISTS settings (
 	// "ADD COLUMN IF NOT EXISTS", so check first.
 	for _, col := range []struct{ name, ddl string }{
 		{"template_id", `ALTER TABLE devices ADD COLUMN template_id TEXT NOT NULL DEFAULT ''`},
+		{"enrollment_public", `ALTER TABLE devices ADD COLUMN enrollment_public TEXT NOT NULL DEFAULT ''`},
+		{"enrollment_id", `ALTER TABLE devices ADD COLUMN enrollment_id TEXT NOT NULL DEFAULT ''`},
+		{"reset_generation", `ALTER TABLE devices ADD COLUMN reset_generation INTEGER NOT NULL DEFAULT 0`},
+		{"agent_version", `ALTER TABLE devices ADD COLUMN agent_version TEXT NOT NULL DEFAULT ''`},
 		{"config_rev", `ALTER TABLE devices ADD COLUMN config_rev INTEGER NOT NULL DEFAULT 0`},
 		{"applied_rev", `ALTER TABLE devices ADD COLUMN applied_rev INTEGER NOT NULL DEFAULT 0`},
 		{"sync_state", `ALTER TABLE devices ADD COLUMN sync_state TEXT NOT NULL DEFAULT ''`},
@@ -519,28 +530,113 @@ func (s *Store) addColumnIfMissing(ctx context.Context, table, column, ddl strin
 func (s *Store) UpsertDiscovered(ctx context.Context, d Device) error {
 	now := time.Now().Unix()
 	const q = `
-INSERT INTO devices (mac, model, firmware, ip, hostname, state, last_seen, created_at)
-VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+INSERT INTO devices (mac, model, firmware, agent_version, ip, hostname, state, last_seen, created_at)
+VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
 ON CONFLICT(mac) DO UPDATE SET
 	model     = CASE WHEN excluded.model <> '' THEN excluded.model ELSE devices.model END,
 	firmware  = CASE WHEN excluded.firmware <> '' THEN excluded.firmware ELSE devices.firmware END,
+	agent_version = CASE WHEN excluded.agent_version <> '' THEN excluded.agent_version ELSE devices.agent_version END,
 	ip        = excluded.ip,
 	hostname  = excluded.hostname,
 	last_seen = excluded.last_seen`
-	_, err := s.db.ExecContext(ctx, q, d.MAC, d.Model, d.Firmware, d.IP, d.Hostname, now, now)
+	_, err := s.db.ExecContext(ctx, q, d.MAC, d.Model, d.Firmware, d.AgentVersion, d.IP, d.Hostname, now, now)
 	if err != nil {
 		return fmt.Errorf("upsert device %s: %w", d.MAC, err)
 	}
 	return nil
 }
 
+// RegisterEnrollment claims a new MAC for this device key or refreshes the
+// same claim. Even an unapproved claim cannot replace a different key or a
+// legacy device; approving a request always refers to the same identity.
+func (s *Store) RegisterEnrollment(ctx context.Context, d Device, public, id string, generation int64) (bool, error) {
+	now := time.Now().Unix()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var previousKey, previousID string
+	var previousGeneration int64
+	err = tx.QueryRowContext(ctx, `SELECT enrollment_public, enrollment_id, reset_generation FROM devices WHERE mac = ?`, d.MAC).
+		Scan(&previousKey, &previousID, &previousGeneration)
+	reset := false
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return false, err
+	case previousKey != public || generation < previousGeneration:
+		return false, nil
+	case generation == previousGeneration:
+		if previousID != id {
+			return false, nil
+		}
+	default:
+		if id == "" || previousID == id {
+			return false, nil
+		}
+		reset = true
+	}
+	const q = `
+INSERT INTO devices (mac, model, firmware, agent_version, ip, hostname, state, last_seen, created_at, enrollment_public, enrollment_id, reset_generation)
+VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+ON CONFLICT(mac) DO UPDATE SET
+	model = COALESCE(NULLIF(excluded.model, ''), devices.model),
+	firmware = COALESCE(NULLIF(excluded.firmware, ''), devices.firmware),
+	agent_version = COALESCE(NULLIF(excluded.agent_version, ''), devices.agent_version),
+	hostname = COALESCE(NULLIF(excluded.hostname, ''), devices.hostname),
+	ip = excluded.ip, last_seen = excluded.last_seen,
+	state = CASE WHEN devices.enrollment_id <> excluded.enrollment_id THEN 'pending' ELSE devices.state END,
+	template_id = CASE WHEN devices.enrollment_id <> excluded.enrollment_id THEN '' ELSE devices.template_id END,
+	enrollment_id = excluded.enrollment_id, reset_generation = excluded.reset_generation`
+	if _, err := tx.ExecContext(ctx, q, d.MAC, d.Model, d.Firmware, d.AgentVersion, d.IP, d.Hostname, now, now, public, id, generation); err != nil {
+		return false, err
+	}
+	if reset {
+		// Commands approved before the AP reset must not run after readoption.
+		if _, err := tx.ExecContext(ctx, `UPDATE device_actions SET state = 'expired', message = 'AP management reset', finished_at = ?
+WHERE mac = ? AND state = 'pending'`, now, d.MAC); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE devices SET applied_rev = 0, sync_state = '', sync_message = '', sync_at = 0,
+fw_target = '', fw_state = '', fw_message = '', fw_at = 0
+WHERE mac = ?`, d.MAC); err != nil {
+			return false, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO events (ts, kind, mac, message) VALUES (?, 'management_reset', ?, ?)`,
+			now, d.MAC, fmt.Sprintf("AP management reset (generation %d); awaiting adoption", generation)); err != nil {
+			return false, err
+		}
+	}
+	return true, tx.Commit()
+}
+
+func (s *Store) EnrollmentCredentials(ctx context.Context, mac string) (public, id string, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT enrollment_public, enrollment_id FROM devices WHERE mac = ?`, mac).Scan(&public, &id)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return
+}
+
+// ClaimManagementKey returns the deployment key only for an approved enrollment.
+func (s *Store) ClaimManagementKey(ctx context.Context, mac, id string) (string, error) {
+	var key string
+	err := s.db.QueryRowContext(ctx, `SELECT settings.value FROM devices JOIN settings ON settings.key = ?
+WHERE mac = ? AND enrollment_id = ? AND state = 'adopted'`, SettingManagementKey, mac, id).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return key, err
+}
+
 // deviceColumns keeps SELECT lists and Scan order in one place.
-const deviceColumns = `mac, model, firmware, ip, hostname, state, template_id, config_rev, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, radio_overrides, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, reboot_weekday, reboot_monthday, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id, wifi_caps, steer_stats`
+const deviceColumns = `mac, model, firmware, agent_version, ip, hostname, state, template_id, config_rev, enrollment_id, applied_rev, sync_state, sync_message, sync_at, steering, last_seen, created_at, network_params, radio_overrides, fw_target, fw_state, fw_message, fw_at, uptime, reboot_period_days, reboot_at, reboot_next_at, reboot_weekday, reboot_monthday, led_on_at, led_off_at, led_on_next_at, led_off_next_at, group_id, wifi_caps, steer_stats`
 
 func scanDevice(row interface{ Scan(...any) error }) (Device, error) {
 	var d Device
-	err := row.Scan(&d.MAC, &d.Model, &d.Firmware, &d.IP, &d.Hostname,
-		&d.State, &d.TemplateID, &d.ConfigRev, &d.AppliedRev,
+	err := row.Scan(&d.MAC, &d.Model, &d.Firmware, &d.AgentVersion, &d.IP, &d.Hostname,
+		&d.State, &d.TemplateID, &d.ConfigRev, &d.EnrollmentID, &d.AppliedRev,
 		&d.SyncState, &d.SyncMessage, &d.SyncAt, &d.Steering, &d.LastSeen, &d.CreatedAt,
 		&d.NetworkParams, &d.RadioOverrides, &d.FwTarget, &d.FWState, &d.FWMessage, &d.FWAt, &d.Uptime,
 		&d.RebootPeriodDays, &d.RebootAt, &d.RebootNextAt, &d.RebootWeekday, &d.RebootMonthday,
@@ -570,6 +666,8 @@ func (s *Store) ListDevices(ctx context.Context) ([]Device, error) {
 
 // ErrNotFound is returned when a device or template does not exist.
 var ErrNotFound = errors.New("not found")
+
+var ErrDeviceChanged = errors.New("device enrollment or revision changed; refresh and retry")
 
 // GetDevice returns one device or ErrNotFound.
 func (s *Store) GetDevice(ctx context.Context, mac string) (Device, error) {

@@ -148,14 +148,23 @@ msgstr "启动 agent 并设为开机自启，同时在 WAN 防火墙上放行 TC
 msgid "Controller address"
 msgstr "控制器地址"
 
-msgid "host:port of the controller. Leave empty to find the controller by UDP broadcast on the local segment; once it answers, the discovered address is filled in here and can be saved to pin it. A controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
-msgstr "控制器的 host:port。留空则通过本地网段的 UDP 广播自动发现；控制器应答后，发现的地址会自动填入此处，保存即可固定。路由器另一侧的控制器收不到广播，必须在此明确填写。"
+msgid "host:port of the controller. Leave empty to find the controller by UDP broadcast on the local segment; A controller on the other side of a router must be entered explicitly, because broadcast never crosses layer 3."
+msgstr "控制器的 host:port。留空则通过本地网段的 UDP 广播自动发现。跨网段时，请填写控制器地址。"
 
 msgid "Shared secret"
 msgstr "共享密钥"
 
-msgid "Copy the shared secret from AP Management in the controller web interface."
-msgstr "复制控制器网页「AP 管理」中的共享密钥。"
+msgid "Reset management"
+msgstr "重置纳管"
+
+msgid "Could not reset management: %s"
+msgstr "无法重置纳管：%s"
+
+msgid "This removes the controller binding and keeps current Wi-Fi and network settings. Adopt this AP on the controller you want to use."
+msgstr "此操作会解除控制器绑定，保留当前 Wi-Fi 和网络配置。请在要使用的控制器上采纳此 AP。"
+
+msgid "Leave blank for automatic adoption. Only legacy enrollment uses a shared secret."
+msgstr "自动采纳时留空。只有旧版接入方式需要共享密钥。"
 
 msgid "Heartbeat interval"
 msgstr "心跳间隔"

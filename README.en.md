@@ -10,7 +10,7 @@
 
 > A lightweight OpenWrt wireless controller: a single Go binary on the AC side (Web UI, REST API and SQLite embedded) plus `ac-agent` running under procd on each AP. One compose file runs it on a NAS, x86 soft-router or ARM board; the controller can also be built as an OpenWrt package and run directly on a router.
 
-**Fastest path**: generate a shared secret in the AC web interface → paste it into LuCI on each AP → adopt on the Devices page.
+**Automatic adoption**: boot the AP, verify it on the AC Devices page, and click **Adopt**. No shared secret or custom firmware is required.
 
 > This is the English README. The Chinese version is [README.md](README.md). Every command and config below is copy-paste ready.
 
@@ -26,7 +26,7 @@ It **does not forward user traffic** and does not implement CAPWAP. It does exac
 
 **Before you try it:**
 
-- This is an **early v0.5.x** project. Features, API and config formats may still change; do not put it on a critical production network.
+- This is an **early v0.x** project. Features, API and config formats may still change; do not put it on a critical production network.
 - **Verified AP hardware** is the Brightspeed/Gemtek **XR1710G** only (airoha/an7581, arm64, DSA), using the companion [ImmortalWrt firmware](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases). Other OpenWrt-family devices are unverified and need a DSA network model plus `procd`/`ubus`/`uci`/`hostapd`; 11k/11v additionally requires hostapd to expose `rrm_nr_get_own`, `rrm_nr_set` and `bss_transition_request`. The capability badges on the devices page are **measured at runtime**: 11k/11v probe the ubus method surface, while 11r (FT) is read from the netifd-generated hostapd configs (`/var/run/hostapd-*.conf`) together with the mobility domain (MDID); a badge only lights when every BSS satisfies it.
 - Auto-discovery requires the AP and AC to share a **broadcast domain**; across L3, fill in "Controller address" on the AP's LuCI page (see section 8).
 - The image is a `linux/amd64` + `linux/arm64` multi-arch manifest; Docker picks the right platform automatically.
@@ -36,8 +36,8 @@ It **does not forward user traffic** and does not implement CAPWAP. It does exac
 - **Segment-level merge, not full-file overwrite**: backup before apply and automatic rollback on failure, so you never lock yourself out of an AP.
 - **Three anti-lockout guards** (added after v0.5.1): a `preflight` check for management-address moves before a push; a post-apply BSS/address watchdog; and automatic repair of the `lan` firewall zone and dropbear binding for newly added management interfaces.
 - **The AC never connects to APs**: config is always pulled. APs exchange 11k neighbour and client state over UDP 29821, so local 11v roaming advice survives an AC outage (`peer_steer=1`); the agent steps aside when usteer/dawn is detected.
-- **Mutual AC and AP authentication**: the shared secret authenticates control requests and heartbeat replies. APs receive the signing public key automatically and verify bundles before applying them.
-- **One shared secret**: the AC and all APs use the same value to derive separate credentials for controller traffic and peer roaming.
+- **Mutual AC and AP authentication**: each AC deployment generates one management key on first start and sends it encrypted to adopted APs. The AP accepts only that AC and verifies configuration bundle signatures.
+- **Shared-secret compatibility**: generic firmware can still use shared-secret onboarding. Offline peer roaming still needs a site shared secret.
 - **Templates + per-device overrides + groups**: templates define wireless/L2, groups decide which template their members run, and per-device `network_params` / radio overrides supply ports, VLANs, management addresses, channels and power.
 - **Operations loop**: firmware repository and upgrades, scheduled reboot/LED, client naming and kick, telemetry charts, event log, config import/export and diagnostics.
 - **Two runtime profiles**: `full` (Docker default, everything on) and `openwrt` (trims telemetry history and firmware storage, caps config revisions and events, and limits Go memory).
@@ -173,7 +173,7 @@ The image contains only the **AC side**; every AP also needs `ac-agent`.
 
 ### Option A: Flash the companion firmware (easiest)
 
-For the Brightspeed/Gemtek XR1710G: the [ImmortalWrt firmware releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) include the agent and LuCI page. Update the agent to a version matching the controller and enter the shared secret as described below.
+For the Brightspeed/Gemtek XR1710G: the [ImmortalWrt firmware releases](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/releases) include the agent and LuCI page. Update the agent to a version matching the controller and follow the site or generic firmware instructions below.
 
 ### Option B: Build ipk/apk from the OpenWrt feed
 
@@ -196,10 +196,10 @@ Both packages set `PKG_SOURCE_VERSION` to the default branch `main` instead of a
 
 | Package | Version | Source | Contents |
 |---|---|---|---|
-| `ac-agent` | `0.2.1-1` | `main` (unpinned) | Agent binary, procd init script, `/etc/config/ac` |
-| `luci-app-ac-agent` | `1.0.0-5` | in-tree | LuCI page and the `luci-i18n-ac-agent-zh-cn` catalogue |
+| `ac-agent` | `0.3.0-1` | `main` (unpinned) | Agent binary, procd init script, `/etc/config/ac` |
+| `luci-app-ac-agent` | `1.0.0-6` | in-tree | LuCI page and the `luci-i18n-ac-agent-zh-cn` catalogue |
 
-The optional AC-side package `ac-controller` is `0.1.0-1` and follows `main` as well; see section 5 (experimental; the workflow skips it unless `build_controller` is enabled).
+The optional AC-side package `ac-controller` is `0.2.0-1` and follows `main` as well; see section 5 (experimental; the workflow skips it unless `build_controller` is enabled).
 
 The default matrix publishes only `25.12.6` `.apk` for `aarch64_cortex-a53`; `x86_64`, `mipsel_24kc` and all 24.10 `.ipk` targets have been dropped. For other architectures or `.ipk`, run the [OpenWrt Packages workflow](https://github.com/naoki66/OpenWrt_AC-Controller/actions/workflows/openwrt-packages.yml) manually and edit the `targets` input. Every Release also carries `build-info.txt` (source commit, Go version, SDK tag list) and `SHA256SUMS`.
 
@@ -217,7 +217,16 @@ apk add --allow-untrusted /tmp/*ac-agent*.apk
 
 > The package-manager split follows upstream OpenWrt: **24.10 and older use opkg / `.ipk`; 25.12 and snapshots use apk / `.apk`**. The current Release ships `.apk` only. Packages are published in this repository's [Releases](https://github.com/naoki66/OpenWrt_AC-Controller/releases); use assets from the same Release as your controller. `apk` refuses unsigned packages by default, so local files need `--allow-untrusted`. For an older firmware that needs `.ipk`, run the workflow manually with a 24.10 SDK target.
 
-### Configure the AP in LuCI
+### Automatic discovery and adoption
+
+1. Start the AC and AP on a trusted management network and leave the shared secret blank. Enter a reachable AC address only if the AP is on a routed network.
+2. An unbound AP broadcasts its model, MAC, management address, device public key and agent version. The AC replies with its enrollment endpoint; the AP completes a one-time challenge before it appears in the device list. Check the AP label against its MAC on the intended AC, select a template and click **Adopt**. A new or reset AP accepts the first AC that completes adoption.
+3. The AC stores one deployment key in its SQLite database and sends the same key encrypted to every adopted AP. The key stays the same when the data directory is reused.
+4. The adopted AP stops broadcasting its availability and sends authenticated heartbeats to its bound AC. Neither packet carries the management key.
+
+To move an AP, open **LuCI → Control → AC Agent → Reset management**, then adopt it on the intended AC. The reset increments a persistent counter and keeps Wi-Fi, network settings and the device identity. When the original AC verifies the same identity with a newer counter, it returns the existing record to **Pending**, keeps history and expires queued commands. If the AP moves to an isolated VLAN before the original AC receives the new registration, that record stays offline. Over SSH, stop the agent, run `ac-agent reset-management`, then start the agent.
+
+### Generic firmware: configure the shared secret in LuCI
 
 1. In the AC web interface, open **AP Management → Shared secret**. Generate, save, and copy the secret. If one is already set, copy the existing value.
 2. On each AP, open **LuCI → Control → AC Agent → Controller connection**. Paste the value into **Shared secret** and click **Save & apply**.
@@ -234,7 +243,7 @@ OpenWrt's hostapd handles 802.11k/v/r frames natively. 11k needs valid neighbor 
 
 ## 9. Onboarding flow
 
-1. In LuCI, enter the same shared secret as the AC, save, and wait for the AP to show `connected`.
+1. Boot the AP and wait for it to show `connected`.
 2. The device appears as `pending` on the AC's Devices page → pick a template → **adopt**.
 3. The AP pulls rev1 on its next heartbeat and applies it.
 4. **Repush once more**: the first revision is built before the AC has received interface/BSS reports, so only rev2 carries sibling APs' 11k neighbour table.
@@ -268,7 +277,7 @@ curl -s -b ac.jar http://<AC_IP>:8090/api/v1/devices
 | `POST /api/v1/devices/{mac}/adopt` · `repush` · `release` | Adopt / repush / release |
 | `GET /api/v1/devices/{mac}/preflight` | Pre-push management-address check |
 | `PUT /api/v1/devices/{mac}/network` · `radios` · `group` | Per-device network / radio / group overrides |
-| `GET /api/v1/devices/{mac}/package` | Download a signed bundle (AP authenticates and decrypts using a credential derived from the shared secret; operator uses a session) |
+| `GET /api/v1/devices/{mac}/package` | Download a signed bundle (AP authenticates and decrypts using its device credential; operator uses a session) |
 | `GET/POST /api/v1/templates` · `clone` · `ssids` · `name` | Template management |
 | `GET/POST /api/v1/groups` | AP groups |
 | `GET /api/v1/clients` · `PUT/POST .../{mac}/kick` | Clients, rename, kick |
@@ -285,7 +294,7 @@ See [`controller/internal/api/server.go`](controller/internal/api/server.go) for
 ## 11. Security notes
 
 - The AC serves HTTP only. AP configuration bundles are encrypted separately, while browser login, management API calls and heartbeat telemetry remain plaintext. Use an isolated management VLAN and do not expose port 8090 to the internet or WAN.
-- The AC and AP authenticate each other with the shared secret and single-use challenges. Bundles are encrypted in transit and signature-checked by the AP. All APs at the site use the same shared secret.
+- Automatic adoption combines the shared deployment key with each AP's enrollment exchange to authenticate traffic. Knowing the deployment key alone does not let an AP impersonate another. Bundles are encrypted in transit and signature-checked.
 - `ac.db`, `/etc/ac/backup/`, config exports, the signing key and firmware images all contain sensitive data. Protect them equally and never paste them into an issue.
 - Firmware upgrades and network pushes rewrite critical AP config: rehearse with dry-run / preflight and keep a serial console or local management port as a fallback.
 
@@ -313,6 +322,7 @@ See [`controller/internal/api/server.go`](controller/internal/api/server.go) for
 
 - A semantic tag `vX.Y.Z` maps to an image tag of the same name; `latest` rolls, and `sha-<short-commit>` lets you pin a build.
 - Always trust `health.version` / `health.commit` from `GET /api/v1/health`, or `ac version`, over the image tag.
+- See the [changelog](CHANGELOG.md) for changes and upgrade notes.
 - See [Releases](https://github.com/naoki66/OpenWrt_AC-Controller/releases) and [Tags](https://github.com/naoki66/OpenWrt_AC-Controller/tags).
 - Image status: [Docker Hub tags](https://hub.docker.com/r/naoki66/openwrt_ac-controller/tags) lists every tag and architecture (linux/amd64, linux/arm64); the badges above show the latest published version and last update.
 

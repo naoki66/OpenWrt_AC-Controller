@@ -12,7 +12,7 @@
 		},
 		"write": {
 			"ubus": {
-				"luci.ac_agent": [ "restart", "applyEnabled" ],
+				"luci.ac_agent": [ "restart", "applyEnabled", "resetManagement" ],
 				"uci": [ "apply" ]
 			},
 			"uci": {

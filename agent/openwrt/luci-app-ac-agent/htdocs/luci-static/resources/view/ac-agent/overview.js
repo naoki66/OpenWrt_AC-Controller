@@ -25,6 +25,9 @@ var POLL_INTERVAL = 10;
 var callStatus = rpc.declare({ object: 'luci.ac_agent', method: 'status' });
 var callRestart = rpc.declare({ object: 'luci.ac_agent', method: 'restart' });
 var callApplyEnabled = rpc.declare({ object: 'luci.ac_agent', method: 'applyEnabled' });
+var callResetManagement = rpc.declare({
+	object: 'luci.ac_agent', method: 'resetManagement'
+});
 
 /* The agent's closed state set; see internal/agent/status.go. */
 var STATES = {
@@ -181,28 +184,20 @@ return view.extend({
 		o = s.option(form.Value, 'ac_addr', _('Controller address'),
 			_('host:port of the controller. ' +
 			  'Leave empty to find the controller by UDP broadcast on the local segment; ' +
-			  'once it answers, the discovered address is filled in here and can be saved to pin it. ' +
 			  'A controller on the other side of a router must be entered explicitly, ' +
 			  'because broadcast never crosses layer 3.'));
 		o.placeholder = 'controller:8090';
 		o.rmempty = true;
 
-		/* Prefill the field with the address the agent actually discovered, but
-		 * only while UCI has none: saving the form pins it, and a pinned address
-		 * survives a reboot without another broadcast. cfgvalue is overridden
-		 * rather than default set, because the shipped config carries an empty
-		 * "option ac_addr ''" and LuCI then treats the value as present. */
 		var discovered = this.data.status;
-		var discoveredAddr = (discovered && discovered.ac_addr &&
-			discovered.ac_addr_source === 'discovered') ? discovered.ac_addr : '';
-		if (discoveredAddr && !uci.get('ac', 'agent', 'ac_addr'))
-			o.cfgvalue = function(section_id) {
-				return uci.get('ac', section_id, 'ac_addr') || discoveredAddr;
-			};
 
 		o = s.option(form.Value, 'secret', _('Shared secret'),
-			_('Copy the shared secret from AP Management in the controller web interface.'));
+			_('Leave blank for automatic adoption. Only legacy enrollment uses a shared secret.'));
 		o.password = true;
+		if (discovered && discovered.controller_override) {
+			o.readonly = true;
+			o.cfgvalue = function() { return ''; };
+		}
 		o.rmempty = true;
 		o.validate = function(section_id, value) {
 			return !value || value.trim().length >= 12 || _('Use at least 12 characters.');
@@ -418,7 +413,12 @@ return view.extend({
 			E('button', {
 				class: 'btn cbi-button cbi-button-action',
 				click: ui.createHandlerFn(this, 'handleRestart')
-			}, _('Restart agent'))
+			}, _('Restart agent')),
+			' ',
+			E('button', {
+				class: 'btn cbi-button cbi-button-action',
+				click: ui.createHandlerFn(this, 'handleResetManagement')
+			}, _('Reset management'))
 		]));
 	},
 
@@ -438,5 +438,25 @@ return view.extend({
 			ui.addNotification(null, E('p', {},
 				_('Could not restart the agent: %s').format(err)), 'error');
 		});
+	},
+
+	handleResetManagement: function() {
+		var submit = E('button', { class: 'btn cbi-button cbi-button-action', type: 'button' }, _('Reset management'));
+		var cancel = E('button', { class: 'btn cbi-button', type: 'button', click: ui.hideModal }, _('Cancel'));
+		submit.addEventListener('click', function() {
+			submit.disabled = cancel.disabled = true;
+			callResetManagement().then(function(res) {
+				if (!res || !res.ok)
+					throw new Error((res && res.message) || 'unknown error');
+				window.location.reload();
+			}).catch(function(err) {
+				submit.disabled = cancel.disabled = false;
+				ui.addNotification(null, E('p', {}, _('Could not reset management: %s').format(err)), 'error');
+			});
+		});
+		ui.showModal(_('Reset management'), [
+			E('p', {}, _('This removes the controller binding and keeps current Wi-Fi and network settings. Adopt this AP on the controller you want to use.')),
+			E('div', { class: 'right' }, [ cancel, ' ', submit ])
+		]);
 	}
 });

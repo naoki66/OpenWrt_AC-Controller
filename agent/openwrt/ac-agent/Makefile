@@ -30,7 +30,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ac-agent
-PKG_VERSION:=0.2.1
+PKG_VERSION:=0.3.0
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_LICENSE_FILES:=LICENSE
@@ -59,6 +59,9 @@ GO_PKG_BUILD_PKG:=github.com/naoki66/ac-controller/agent/cmd/acagent
 # commit that produced the published packages.
 GO_PKG_LDFLAGS_X:= \
 	github.com/naoki66/ac-controller/shared/version.Version=$(PKG_VERSION)
+ifneq ($(strip $(AC_CONTROLLER_PUBKEY)),)
+GO_PKG_LDFLAGS_X += github.com/naoki66/ac-controller/agent.FirmwareControllerKey=$(AC_CONTROLLER_PUBKEY)
+endif
 
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/golang/golang-package.mk
@@ -87,6 +90,9 @@ define Package/ac-agent/install
 
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./files/ac.config $(1)/etc/config/ac
+
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	$(INSTALL_DATA) ./files/ac-agent.keep $(1)/lib/upgrade/keep.d/ac-agent
 endef
 
 $(eval $(call GoBinPackage,ac-agent))

@@ -80,6 +80,9 @@ func serve(log *slog.Logger) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
+	if err := st.EnsureManagementKey(ctx); err != nil {
+		return fmt.Errorf("initialize management key: %w", err)
+	}
 
 	acID, err := store.LoadOrCreateID(cfg.IDFile())
 	if err != nil {
@@ -185,10 +188,9 @@ func serve(log *slog.Logger) error {
 		ACID:               acID,
 		HTTPPort:           cfg.HTTPPort,
 		AdvertiseIP:        cfg.AdvertiseIP,
-		Store:              st,
+		SigningKey:         key.PublicHex(),
 		Log:                log,
 		SecretRequiredFunc: func() bool { return true },
-		OfferOnly:          true,
 	}
 
 	errCh := make(chan error, 2)

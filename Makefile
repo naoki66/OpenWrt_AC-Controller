@@ -4,6 +4,11 @@ AGENT  := bin/ac-agent
 AGENT_GOARCH ?= arm64
 AGENT_GOOS   ?= linux
 
+# Public Ed25519 key for a site-specific firmware image.
+ifneq ($(strip $(AC_CONTROLLER_PUBKEY)),)
+AGENT_LDFLAGS := -X github.com/naoki66/ac-controller/agent.FirmwareControllerKey=$(AC_CONTROLLER_PUBKEY)
+endif
+
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -24,12 +29,12 @@ build:
 # OpenWrt build regardless of libc.
 agent:
 	CGO_ENABLED=0 GOOS=$(AGENT_GOOS) GOARCH=$(AGENT_GOARCH) \
-		go build -trimpath -ldflags "$(LDFLAGS)" -o $(AGENT)-$(AGENT_GOOS)-$(AGENT_GOARCH) ./agent/cmd/acagent
+		go build -trimpath -ldflags "$(LDFLAGS) $(AGENT_LDFLAGS)" -o $(AGENT)-$(AGENT_GOOS)-$(AGENT_GOARCH) ./agent/cmd/acagent
 	@ls -lh $(AGENT)-$(AGENT_GOOS)-$(AGENT_GOARCH)
 
 # Host build of the agent: used for dry runs against a local controller.
 agent-local:
-	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(AGENT) ./agent/cmd/acagent
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS) $(AGENT_LDFLAGS)" -o $(AGENT) ./agent/cmd/acagent
 
 # Rehearse a revision without touching this machine's /etc: renders, verifies
 # and stages only. Requires a reachable controller and root-owned flag.

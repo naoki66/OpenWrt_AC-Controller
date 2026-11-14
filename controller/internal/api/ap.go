@@ -68,7 +68,7 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		cred, ok = s.verifyDevice(r, body)
 		if !ok {
-			writeError(w, http.StatusUnauthorized, errors.New("shared secret authentication failed"))
+			writeError(w, http.StatusUnauthorized, errors.New("device authentication failed"))
 			return
 		}
 	}
@@ -108,14 +108,30 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		hostname = "unknown"
 	}
 	if err := s.Store.UpsertDiscovered(ctx, store.Device{
-		MAC:      mac,
-		Model:    hello.Model,
-		Firmware: hello.Firmware,
-		Hostname: hostname,
-		IP:       clientIP(r),
+		MAC:          mac,
+		Model:        hello.Model,
+		Firmware:     hello.Firmware,
+		AgentVersion: hello.AgentVersion,
+		Hostname:     hostname,
+		IP:           clientIP(r),
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+	if cred.enrolled {
+		device, err := s.Store.GetDevice(ctx, mac)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if device.EnrollmentID != cred.enrollmentID {
+			writeError(w, http.StatusUnauthorized, errors.New("device enrollment changed"))
+			return
+		}
+		if device.State != store.StateAdopted {
+			s.writeHelloReply(w, proto.HelloReply{ACID: s.ACID, State: device.State, PubKey: s.Key.PublicHex()}, cred, nonce, body)
+			return
+		}
 	}
 
 	// A nil list means the agent does not collect client data; an empty list is a
@@ -383,6 +399,10 @@ func (s *Server) handleHello(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.writeHelloReply(w, reply, cred, nonce, body)
+}
+
+func (s *Server) writeHelloReply(w http.ResponseWriter, reply proto.HelloReply, cred deviceCredentials, nonce string, body []byte) {
 	if !s.RequireSignedAP {
 		writeJSON(w, http.StatusOK, reply)
 		return

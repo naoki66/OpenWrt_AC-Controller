@@ -3,11 +3,77 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 
 	_ "modernc.org/sqlite"
 )
+
+func TestEnrollmentResetRejectsStaleRegistrationAndApproval(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "ac.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureManagementKey(ctx); err != nil {
+		t.Fatal(err)
+	}
+	d := Device{MAC: "02:00:00:00:00:01", AgentVersion: "0.3.0"}
+	register := func(public, id string, generation int64, want bool) {
+		t.Helper()
+		if ok, err := st.RegisterEnrollment(ctx, d, public, id, generation); err != nil || ok != want {
+			t.Fatalf("register %s generation %d = %v, %v; want %v", id, generation, ok, err, want)
+		}
+	}
+	read := func() Device {
+		t.Helper()
+		current, err := st.GetDevice(ctx, d.MAC)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return current
+	}
+	register("ap-key", "original", 0, true)
+	if err := st.CommitAdoption(ctx, read(), "default", 1, "digest", []byte("rev1")); err != nil {
+		t.Fatal(err)
+	}
+	previous := read()
+	if _, err := st.CreateAction(ctx, d.MAC, "reboot", nil); err != nil {
+		t.Fatal(err)
+	}
+	register("different-device", "new", 2, false)
+	if got := read(); got.State != StateAdopted || got.EnrollmentID != "original" {
+		t.Fatal("different device identity changed the existing adoption")
+	}
+	// An AC may miss intermediate resets while the AP is on a different LAN.
+	register("ap-key", "new", 2, true)
+	if got := read(); got.State != StatePending || got.EnrollmentID != "new" || got.TemplateID != "" || got.ConfigRev != 1 {
+		t.Fatalf("verified reset should retain the record and invalidate adoption: %+v", got)
+	}
+	if key, err := st.ClaimManagementKey(ctx, d.MAC, "new"); err != nil || key != "" {
+		t.Fatalf("pending enrollment received a management credential: %v", err)
+	}
+	if pending, err := st.PendingActions(ctx, d.MAC, 10); err != nil || len(pending) != 0 {
+		t.Fatalf("old actions survived reset: %v, %v", pending, err)
+	}
+	if err := st.CommitAdoption(ctx, previous, "default", 2, "digest", []byte("stale")); !errors.Is(err, ErrDeviceChanged) {
+		t.Fatalf("old approval during reset should fail: %v", err)
+	}
+	if err := st.CommitAdoption(ctx, read(), "default", 2, "digest", []byte("rev2")); err != nil {
+		t.Fatal(err)
+	}
+	register("ap-key", "original", 0, false)
+	register("ap-key", "conflicting-id", 2, false)
+	register("ap-key", "new", 2, true)
+	if got := read(); got.State != StateAdopted || got.EnrollmentID != "new" || got.ConfigRev != 2 {
+		t.Fatalf("stale or repeated enrollment changed the new adoption: %+v", got)
+	}
+}
 
 // The devices table gained template_id and config_rev in P2. An SQLite database
 // created by the P1 skeleton must keep working after an in-place upgrade, so the

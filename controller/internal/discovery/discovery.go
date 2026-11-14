@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/naoki66/ac-controller/controller/internal/store"
 	"github.com/naoki66/ac-controller/shared/proto"
 )
 
@@ -18,6 +17,7 @@ type Listener struct {
 	ACID        string
 	HTTPPort    int
 	AdvertiseIP string
+	SigningKey  string
 	// SecretRequired mirrors whether the controller actually enforces
 	// AC_SHARED_SECRET. Advertising true when no secret is configured would make
 	// the AP look for credentials that cannot exist. Static default; a runtime
@@ -26,10 +26,7 @@ type Listener struct {
 	// SecretRequiredFunc, when set, wins over SecretRequired so the offer
 	// tracks the live effective secret (it is consulted per offer).
 	SecretRequiredFunc func() bool
-	// OfferOnly leaves durable registration to authenticated heartbeats.
-	OfferOnly bool
-	Store     *store.Store
-	Log       *slog.Logger
+	Log                *slog.Logger
 }
 
 // secretRequired reports whether APs must authenticate right now.
@@ -82,42 +79,31 @@ func (l *Listener) serve(ctx context.Context, uc *net.UDPConn) error {
 			l.Log.Warn("discovery read failed", "err", err)
 			continue
 		}
-		l.handle(ctx, uc, buf[:n], peer)
+		l.handle(uc, buf[:n], peer)
 	}
 }
 
-func (l *Listener) handle(ctx context.Context, uc *net.UDPConn, payload []byte, peer *net.UDPAddr) {
+func (l *Listener) handle(uc *net.UDPConn, payload []byte, peer *net.UDPAddr) {
 	var p proto.Discover
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return // not ours, stay quiet
 	}
-	if p.Type != proto.MsgDiscover {
-		return
-	}
-
 	mac := NormalizeMAC(p.MAC)
-	if mac == "" {
-		l.Log.Debug("discovery ignored: missing mac", "peer", peer.IP.String())
+	switch p.Type {
+	case proto.MsgDiscover:
+		if mac == "" {
+			return
+		}
+	case proto.MsgLookup:
+		if p.ACID == "" || p.ACID != l.ACID {
+			return
+		}
+	default:
 		return
 	}
 
-	hostname := p.Hostname
-	if hostname == "" {
-		hostname = "unknown"
-	}
-
-	if !l.OfferOnly {
-		if err := l.Store.UpsertDiscovered(ctx, store.Device{
-			MAC:      mac,
-			Model:    p.Model,
-			Firmware: p.Firmware,
-			IP:       peer.IP.String(),
-			Hostname: hostname,
-		}); err != nil {
-			l.Log.Warn("record discovery failed", "mac", mac, "err", err)
-		}
-	}
-
+	// UDP only supplies the enrollment address. Device state and metadata
+	// change only after authentication on the AP-facing HTTP endpoints.
 	reply := proto.Offer{
 		Type:           proto.MsgOffer,
 		V:              proto.ProtocolVersion,
@@ -125,6 +111,7 @@ func (l *Listener) handle(ctx context.Context, uc *net.UDPConn, payload []byte, 
 		ACIP:           l.advertiseIP(peer),
 		HTTPPort:       l.HTTPPort,
 		SecretRequired: l.secretRequired(),
+		SigningKey:     l.SigningKey,
 	}
 	out, err := json.Marshal(reply)
 	if err != nil {
