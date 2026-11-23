@@ -5,7 +5,7 @@
 # --platform=$BUILDPLATFORM 让构建阶段始终跑在宿主机架构上，
 # 配合下面的 TARGETOS/TARGETARCH 交叉编译目标架构的二进制，
 # buildx 构建多架构镜像时不需要 QEMU 模拟整个 Go 编译过程。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 WORKDIR /src
 
 # Dependencies first so the module layer caches across source edits.
