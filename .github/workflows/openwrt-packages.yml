@@ -191,7 +191,7 @@ jobs:
           fi
           ls -lh "${files[@]}"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: packages-${{ matrix.sdk }}
           path: out/${{ matrix.sdk }}/*
